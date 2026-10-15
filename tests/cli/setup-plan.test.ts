@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildSetupPlan } from '../../src/cli/setup-plan';
 
 const options = {
+  backupDirectory: '/Users/kien/Library/Application Support/OwnDomains/backups/setup-1',
   brewPrefix: '/opt/homebrew',
   homeDirectory: '/Users/kien',
   repositoryRoot: '/Users/kien/workspace/domains',
@@ -29,10 +30,12 @@ describe('buildSetupPlan', () => {
 
   it('records every owned system artifact for reversible removal', () => {
     const plan = buildSetupPlan(options);
-    const manifest = JSON.parse(plan.artifacts.at(-1)?.content ?? '{}') as { schemaVersion: number; ownedPaths: string[] };
+    const manifest = JSON.parse(plan.artifacts.at(-1)?.content ?? '{}') as { schemaVersion: number; backupDirectory: string; artifacts: { path: string; sha256: string }[] };
 
     expect(manifest.schemaVersion).toBe(1);
-    expect(manifest.ownedPaths).toEqual(plan.artifacts.slice(0, -1).map((artifact) => artifact.path));
+    expect(manifest.backupDirectory).toBe(options.backupDirectory);
+    expect(manifest.artifacts.map((artifact) => artifact.path)).toEqual(plan.artifacts.slice(0, -1).map((artifact) => artifact.path));
+    expect(manifest.artifacts.every((artifact) => /^[a-f\d]{64}$/.test(artifact.sha256))).toBe(true);
     expect(plan.artifacts.slice(0, -1).every((artifact) => artifact.backupExisting)).toBe(true);
   });
 

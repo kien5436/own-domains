@@ -2,8 +2,10 @@
 
 Own Domains requires Caddy, dnsmasq, and administrator-approved macOS service configuration. Start the API and dashboard during development with `pnpm run dev:server` and `pnpm run dev` in separate terminals.
 
-Run `pnpm run setup -- --dry-run` to preview host changes and `pnpm run doctor` to inspect prerequisites. Automated privileged installation is intentionally disabled until its generated files and rollback behavior have been reviewed on the target Mac.
+Run `pnpm run setup -- --dry-run --lan-address 192.168.1.20` to preview host changes and `pnpm run doctor` to inspect prerequisites. Replace the example address with the Mac's reserved LAN IPv4 address. Applying the reviewed files requires the explicit `--apply` flag and administrator approval; setup creates backups and a hash-based installation manifest before replacing managed files.
 
 For phone access, reserve the Mac's LAN IPv4 address in the router, configure that address as the phone's only DNS server for the Wi-Fi network, and allow ports 53, 80, and 443 through the Mac firewall. Install Caddy's public local root CA certificate on the phone and enable full SSL trust. Never copy the CA private key.
 
 `.own` is private local convention rather than an IANA-reserved special-use suffix. Restore automatic phone DNS whenever the Mac is unavailable.
+
+Preview removal with `pnpm run uninstall -- --dry-run`. Apply it with administrator approval and `--apply`. Uninstall restores backed-up files or removes files that still match the installation manifest; files changed after setup are preserved for manual review. Caddy CA files and device trust settings are never removed automatically.

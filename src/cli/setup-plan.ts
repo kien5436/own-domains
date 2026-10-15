@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import { buildDnsConfig } from '../server/network/dns-config';
@@ -12,6 +13,7 @@ export type SetupArtifact = {
 export type SetupPlan = { artifacts: SetupArtifact[] };
 
 type SetupPlanOptions = {
+  backupDirectory: string;
   brewPrefix: string;
   homeDirectory: string;
   repositoryRoot: string;
@@ -21,7 +23,7 @@ type SetupPlanOptions = {
 };
 
 export function buildSetupPlan(options: SetupPlanOptions): SetupPlan {
-  const { brewPrefix, homeDirectory, repositoryRoot, userName, lanAddress, upstreamDns } = options;
+  const { backupDirectory, brewPrefix, homeDirectory, repositoryRoot, userName, lanAddress, upstreamDns } = options;
   const applicationDirectory = join(homeDirectory, 'Library/Application Support/OwnDomains');
   const dnsmasqConfig = join(brewPrefix, 'etc/dnsmasq.d/own-domains.conf');
   const caddyConfig = join(applicationDirectory, 'caddy-bootstrap.json');
@@ -34,7 +36,12 @@ export function buildSetupPlan(options: SetupPlanOptions): SetupPlan {
     artifact(join(homeDirectory, 'Library/LaunchAgents/dev.owndomains.backend.plist'), launchdPlist('dev.owndomains.backend', [join(brewPrefix, 'bin/pnpm'), 'exec', 'tsx', 'src/server/index.ts'], repositoryRoot, true), 0o644),
   ];
   const manifestPath = join(applicationDirectory, 'install-manifest.json');
-  const manifest = { schemaVersion: 1, userName, ownedPaths: artifacts.map((item) => item.path) };
+  const manifest = {
+    schemaVersion: 1,
+    userName,
+    backupDirectory,
+    artifacts: artifacts.map((item) => ({ path: item.path, sha256: createHash('sha256').update(item.content).digest('hex') })),
+  };
 
   artifacts.push({ path: manifestPath, content: `${JSON.stringify(manifest, null, 2)}\n`, mode: 0o600, backupExisting: false });
 

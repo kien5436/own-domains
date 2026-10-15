@@ -35,6 +35,27 @@ describe('inspectSetupPlan', () => {
     expect(issues).toContainEqual(expect.objectContaining({ severity: 'error', message: expect.stringMatching(/owner.*own/i) }));
   });
 
+  it('allows updates to files recorded in the hashed install manifest', async () => {
+    const directory = await temporaryDirectory();
+    const target = join(directory, 'own.conf');
+    const manifestPath = join(directory, 'install-manifest.json');
+    const manifest = { schemaVersion: 1, backupDirectory: join(directory, 'backups'), artifacts: [{ path: target, sha256: '0'.repeat(64) }] };
+    const nextManifest = { ...manifest, artifacts: [{ path: target, sha256: '1'.repeat(64) }] };
+
+    await writeFile(target, 'old managed content\n');
+    await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
+    const plan: SetupPlan = {
+      artifacts: [
+        { path: target, content: 'new managed content\n', mode: 0o644, backupExisting: true },
+        { path: manifestPath, content: `${JSON.stringify(nextManifest)}\n`, mode: 0o600, backupExisting: false },
+      ],
+    };
+    const issues = await inspectSetupPlan(plan, options());
+
+    expect(issues).toContainEqual(expect.objectContaining({ severity: 'warning', message: expect.stringContaining(target) }));
+    expect(issues.some((issue) => 'error' === issue.severity && issue.message.includes('conflict'))).toBe(false);
+  });
+
   it('blocks unrelated listeners on required addresses but permits WARP on its own loopback', async () => {
     const listeners: PortListener[] = [
       { address: '127.0.2.2', port: 53, process: 'CloudflareWARP' },

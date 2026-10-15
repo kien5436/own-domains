@@ -86,9 +86,11 @@ async function readOwnedPaths(plan: SetupPlan): Promise<Set<string>> {
   if (!manifest) return new Set();
 
   try {
-    const parsed = JSON.parse(await readFile(manifest.path, 'utf8')) as { ownedPaths?: unknown };
+    const parsed = JSON.parse(await readFile(manifest.path, 'utf8')) as { ownedPaths?: unknown; artifacts?: unknown };
+    const legacyPaths = Array.isArray(parsed.ownedPaths) ? parsed.ownedPaths.filter((path): path is string => 'string' === typeof path) : [];
+    const artifactPaths = Array.isArray(parsed.artifacts) ? parsed.artifacts.flatMap((artifact) => artifact && 'object' === typeof artifact && 'path' in artifact && 'string' === typeof artifact.path ? [artifact.path] : []) : [];
 
-    return new Set(Array.isArray(parsed.ownedPaths) ? parsed.ownedPaths.filter((path): path is string => 'string' === typeof path) : []);
+    return new Set([...legacyPaths, ...artifactPaths, manifest.path]);
   }
   catch (error) {
     if (isErrorCode(error, 'ENOENT') || error instanceof SyntaxError) return new Set();
