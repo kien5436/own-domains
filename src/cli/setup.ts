@@ -1,16 +1,32 @@
-const apply = process.argv.includes('--apply');
-const steps = [
-  'Install Caddy and dnsmasq with Homebrew if missing',
-  'Create a dedicated dnsmasq configuration for .own',
-  'Create /etc/resolver/own pointing to 127.0.0.1',
-  'Install reviewed launchd services for DNS and Caddy',
-  'Start the Own Domains user service on 127.0.0.1:4780',
-];
+import { homedir, userInfo } from 'node:os';
+import { join } from 'node:path';
 
-process.stdout.write(`${apply ? 'Apply mode requested.' : 'Dry run; no system changes will be made.'}\n`);
-for (const [index, step] of steps.entries()) process.stdout.write(`${index + 1}. ${step}\n`);
+import { executeSetup, parseSetupArguments } from './setup-command';
+import { buildSetupPlan } from './setup-plan';
 
-if (apply) {
-  process.stderr.write('Automatic privileged setup is not enabled yet. Follow docs/setup.md and review each command.\n');
+try {
+  const setupArguments = parseSetupArguments(process.argv.slice(2));
+  const userName = process.env.SUDO_USER ?? userInfo().username;
+  const homeDirectory = process.env.SUDO_USER ? join('/Users', process.env.SUDO_USER) : homedir();
+  const applicationDirectory = join(homeDirectory, 'Library/Application Support/OwnDomains');
+  const plan = buildSetupPlan({
+    brewPrefix: process.env.HOMEBREW_PREFIX ?? ('arm64' === process.arch ? '/opt/homebrew' : '/usr/local'),
+    homeDirectory,
+    repositoryRoot: process.cwd(),
+    userName,
+    lanAddress: setupArguments.lanAddress,
+    upstreamDns: setupArguments.upstreamDns,
+  });
+
+  if (setupArguments.apply && 0 !== process.getuid?.()) throw new Error('Apply requires administrator approval. Re-run this command with sudo.');
+  const backupDirectory = join(applicationDirectory, 'backups', new Date().toISOString().replaceAll(':', '-'));
+  const result = await executeSetup({ apply: setupArguments.apply, backupDirectory, plan });
+
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exitCode = result.exitCode;
+}
+catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 2;
 }
