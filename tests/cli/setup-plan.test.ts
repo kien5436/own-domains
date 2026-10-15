@@ -48,6 +48,7 @@ describe('buildSetupPlan', () => {
     expect(contents).toContain('/opt/homebrew/bin/caddy');
     expect(contents).toContain('/opt/homebrew/bin/pnpm');
     expect(contents).toContain('/Users/kien/workspace/domains');
+    expect(contents).toContain('<key>PATH</key>\n      <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>');
   });
 
   it('keeps system files root-owned and application files user-owned', () => {
