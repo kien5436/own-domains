@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { executeSetup, parseSetupArguments } from './setup-command';
 import { buildSetupPlan } from './setup-plan';
 import { inspectSetupPlan } from './setup-preflight';
+import { activateLaunchdServices } from './setup-services';
 
 try {
   const setupArguments = parseSetupArguments(process.argv.slice(2));
@@ -25,7 +26,10 @@ try {
   if (setupArguments.apply && 0 !== process.getuid?.()) throw new Error('Apply requires administrator approval. Re-run this command with sudo.');
   const result = await executeSetup(
     { apply: setupArguments.apply, backupDirectory, plan },
-    { inspect: (setupPlan) => inspectSetupPlan(setupPlan, { listenAddresses: ['127.0.0.1', setupArguments.lanAddress], userId }) },
+    {
+      activate: () => activateLaunchdServices(homeDirectory, userId),
+      inspect: (setupPlan) => inspectSetupPlan(setupPlan, { listenAddresses: ['127.0.0.1', setupArguments.lanAddress], userId }),
+    },
   );
 
   process.stdout.write(result.stdout);

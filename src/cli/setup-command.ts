@@ -1,6 +1,7 @@
 import type { SetupPlan } from './setup-plan';
 import { inspectSetupPlan, type SetupIssue } from './setup-preflight';
 import { applySetupPlan } from './setup-writer';
+import { applyUninstallPlan, buildUninstallPlan } from './uninstall-plan';
 
 type SetupCommandOptions = {
   apply: boolean;
@@ -9,6 +10,7 @@ type SetupCommandOptions = {
 };
 
 type SetupCommandDependencies = {
+  activate: () => Promise<void>;
   inspect: (plan: SetupPlan) => Promise<SetupIssue[]>;
   write: typeof applySetupPlan;
 };
@@ -17,7 +19,7 @@ type SetupCommandResult = { exitCode: number; stdout: string; stderr: string };
 
 export type SetupArguments = { apply: boolean; lanAddress: string; upstreamDns: string[] };
 
-const defaultDependencies: SetupCommandDependencies = { inspect: inspectSetupPlan, write: applySetupPlan };
+const defaultDependencies: SetupCommandDependencies = { activate: () => Promise.resolve(), inspect: inspectSetupPlan, write: applySetupPlan };
 
 export async function executeSetup(options: SetupCommandOptions, dependencies: Partial<SetupCommandDependencies> = {}): Promise<SetupCommandResult> {
   const { apply, backupDirectory, plan } = options;
@@ -31,6 +33,18 @@ export async function executeSetup(options: SetupCommandOptions, dependencies: P
   if (errors.length) return { exitCode: 2, stdout: `${preview}\n`, stderr: `${issueOutput}\n` };
 
   const result = await services.write(plan, backupDirectory);
+
+  try {
+    await services.activate();
+  }
+  catch (error) {
+    const manifest = plan.artifacts.find((artifact) => artifact.path.endsWith('/install-manifest.json'));
+
+    if (manifest) await applyUninstallPlan(await buildUninstallPlan(manifest.path));
+
+    return { exitCode: 2, stdout: `${preview}\n`, stderr: `Service activation failed; setup files were rolled back: ${error instanceof Error ? error.message : String(error)}\n` };
+  }
+
   const changes = [...result.written.map((path) => `WROTE ${path}`), ...result.skipped.map((path) => `UNCHANGED ${path}`), ...result.backups.map((path) => `BACKUP ${path}`)];
 
   return { exitCode: 0, stdout: `${preview}\n${changes.join('\n')}\n`, stderr: issueOutput ? `${issueOutput}\n` : '' };

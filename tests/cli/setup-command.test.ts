@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,6 +50,30 @@ describe('executeSetup', () => {
 
     expect(result).toMatchObject({ exitCode: 0, stdout: expect.stringContaining(`WROTE ${target}`), stderr: '' });
     expect(await readFile(target, 'utf8')).toBe('nameserver 127.0.0.1\n');
+  });
+
+  it('rolls back installed artifacts when service activation fails', async () => {
+    const directory = await temporaryDirectory();
+    const target = join(directory, 'resolver/own');
+    const backupDirectory = join(directory, 'backups');
+    const content = 'nameserver 127.0.0.1\n';
+    const manifestPath = join(directory, 'install-manifest.json');
+    const manifest = { schemaVersion: 1, backupDirectory, artifacts: [{ path: target, sha256: createHash('sha256').update(content).digest('hex') }] };
+    const plan: SetupPlan = {
+      artifacts: [
+        { path: target, content, mode: 0o644, backupExisting: true },
+        { path: manifestPath, content: `${JSON.stringify(manifest)}\n`, mode: 0o600, backupExisting: false },
+      ],
+    };
+
+    const result = await executeSetup(
+      { apply: true, backupDirectory, plan },
+      { activate: () => Promise.reject(new Error('launchctl failed')), inspect: () => Promise.resolve([]) },
+    );
+
+    expect(result).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('launchctl failed') });
+    await expect(readFile(target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(manifestPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
 
