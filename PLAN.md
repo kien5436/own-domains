@@ -1,24 +1,25 @@
-# Local .own Domain Manager Implementation Plan
+# Cross-Platform Local .own Domain Manager Implementation Plan
 
-> **For agentic workers:** Use `superpowers:executing-plans` to implement this plan task by task. Steps use checkboxes for progress. Implementation is a separate task; this document does not authorize package installation, system changes, commits, or publishing.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task by task. Steps use checkboxes for progress. Implementation is a separate task; this document does not authorize package installation, system changes, commits, or publishing.
 
-**Goal:** Manage local websites through a dashboard, assigning `.own` domains and subdomains that work on the host Mac and phones on the same local network, with optional trusted HTTPS.
+**Goal:** Manage local websites through a dashboard, assigning `.own` domains and subdomains that work on macOS, Linux, and Windows hosts plus phones on the same local network, with optional trusted HTTPS.
 
-**Architecture:** A local application stores domain mappings and configures a dedicated Caddy reverse proxy. A local DNS service resolves `.own` names to the Mac's LAN address. The administration interface stays on loopback; registered websites are reachable over the LAN.
+**Architecture:** A platform-neutral application core stores domain mappings and configures dedicated DNS and Caddy services. A typed host-platform adapter owns filesystem paths, privilege checks, service management, split-DNS configuration, port inspection, and reversible setup for each OS. The administration interface stays on loopback; registered websites are reachable over the LAN.
 
-**Tech stack:** React with TypeScript and Vite for the frontend, Tailwind CSS for styling, and ESLint configured through `eslint-config-pk`. Proposed backend/infrastructure: Node.js, Caddy, and dnsmasq. Use pnpm for JavaScript tooling, Vitest for unit/integration tests, React Testing Library for component tests, and Playwright for browser tests. Use a versioned JSON settings file with serialized writes for this single-user MVP; a database is unnecessary initially. Confirm any additional production dependencies before installation and pin compatible supported versions during scaffolding.
+**Tech stack:** React with TypeScript and Vite for the frontend, Tailwind CSS for styling, and ESLint configured through `eslint-config-pk`. The backend uses Node.js; Caddy provides the reverse proxy and CoreDNS provides consistent authoritative `.own` answers and upstream forwarding on every supported host. Use pnpm for JavaScript tooling, Vitest for unit/integration tests, React Testing Library for component tests, and Playwright for browser tests. Use a versioned JSON settings file with serialized writes for this single-user MVP; a database is unnecessary initially. Confirm any additional production dependencies or managed binaries before installation and pin compatible supported versions.
 
-**Spec:** The agreed requirements and design decisions are recorded below; no separate specification exists. The repository currently contains `AGENTS.md` and this plan, has no commits or remotes, and has no existing implementation or test commands.
+**Spec:** The agreed requirements and design decisions are recorded below; no separate specification exists. Tasks 1–5 and the initial macOS setup safety foundation have been implemented. Remaining work must preserve those interfaces while extracting platform-specific behavior.
 
 ## Requirements and Scope
 
 - Register names such as `shop.own`, `api.shop.own`, and `admin.api.shop.own`, each with an independent local destination and HTTPS setting.
 - Create, edit, disable, enable, and delete mappings; preserve settings across restarts.
-- Serve registered websites on the Mac and on phones connected to the same reachable LAN.
+- Serve registered websites on the host computer and on phones connected to the same reachable LAN.
 - Keep existing development servers running independently; this application routes traffic but does not launch projects.
 - Provide setup guidance, service diagnostics, and understandable failure messages.
-- Support macOS hosting and IPv4 LAN connectivity first. Provide iPhone and Android browser setup instructions; verify against the user's actual phone before declaring LAN support complete.
-- Defer wildcard registrations, IPv6 serving, remote administration, public hosting, accounts, billing, Docker-only deployment, and Windows/Linux host support.
+- Support macOS 13+, Ubuntu 22.04+/compatible systemd Linux distributions, and Windows 11 as hosts. Detect unsupported operating systems before planning or changing host files.
+- Provide iPhone and Android browser setup instructions; verify a physical phone against each host family before declaring that platform's LAN workflow complete.
+- Defer wildcard registrations, IPv6 serving, remote administration, public hosting, accounts, billing, Docker-only deployment, non-systemd Linux service installation, and older Windows versions.
 
 ## Global Constraints
 
@@ -27,7 +28,8 @@
 - Planning creates only `PLAN.md`. Implementation must separately obtain approval for privileged setup, trust-store changes, service installation, and changes outside the workspace.
 - Do not run the web backend as root. Privileged setup uses a reviewed CLI workflow with fixed operations, never arbitrary browser-provided commands.
 - Keep secrets, CA private keys, generated configurations, logs, and runtime settings out of Git. Export only the CA's public certificate.
-- Keep Caddy's administration endpoint on a permission-restricted Unix socket. Bind the application management server to `127.0.0.1:4780` only.
+- Keep Caddy's administration endpoint on a permission-restricted Unix socket on macOS/Linux and loopback-only TCP on Windows. Bind the application management server to `127.0.0.1:4780` only.
+- Put every host mutation behind a `HostPlatform` adapter selected from `process.platform`; unsupported platforms must fail before generating or applying artifacts.
 - Expose DNS and proxy listeners only on loopback and the selected LAN address. Never automatically configure router port forwarding or DHCP.
 - Use React, Tailwind CSS, and `eslint-config-pk` as requested. Keep frontend code in focused modules; `App.tsx` composes the application shell rather than containing all screens, state, API calls, and styling.
 
@@ -36,23 +38,23 @@
 ### Request path
 
 ```text
-Phone or Mac browser
-  -> local DNS: shop.own resolves to the Mac's selected LAN IPv4 address
-  -> Caddy on that Mac, port 80 or 443
+Phone or host browser
+  -> local DNS: shop.own resolves to the host's selected LAN IPv4 address
+  -> Caddy on that host, port 80 or 443
   -> configured local app, for example http://127.0.0.1:3000
 
-Mac browser -> http://127.0.0.1:4780 -> dashboard and management API
+Host browser -> http://127.0.0.1:4780 -> dashboard and management API
 ```
 
-Reserve `setup.own` for a read-only device setup page containing DNS instructions and the public CA certificate. It must not expose management endpoints or proxy arbitrary destinations. Provide the same page at the Mac's LAN IP over HTTP for initial setup before DNS or certificate trust works; unknown named hosts receive a generic 404.
+Reserve `setup.own` for a read-only device setup page containing DNS instructions and the public CA certificate. It must not expose management endpoints or proxy arbitrary destinations. Provide the same page at the host's LAN IP over HTTP for initial setup before DNS or certificate trust works; unknown named hosts receive a generic 404.
 
 ### DNS and phone setup
 
-Use dnsmasq to answer `.own` A queries with the selected LAN IPv4 address and keep the entire `.own` namespace local, including unsupported query types. Return no IPv6 address initially. Forward other domains to explicitly configured upstream DNS servers, with checks preventing forwarding back to this service. Disable DHCP/TFTP features. Validate generated configuration before activation. See the [dnsmasq manual](https://thekelleys.org.uk/dnsmasq/docs/dnsmasq-man.html).
+Use CoreDNS to answer `.own` A queries with the selected LAN IPv4 address and keep the entire `.own` namespace local, including unsupported query types. Return no IPv6 address initially. Forward other domains to explicitly configured upstream DNS servers, with checks preventing forwarding back to this service. Validate generated configuration before activation. The existing dnsmasq generator remains supported only during the macOS migration and is removed after equivalent CoreDNS integration tests pass.
 
-Configure the Mac's `/etc/resolver/own` through the privileged setup workflow. For phones, guide the user to set the Wi-Fi DNS server to the Mac's LAN IP. All configured phone DNS servers must understand `.own`; a public secondary server can cause intermittent failures. Normal Internet lookups continue through forwarding while the Mac is available. Explain how to restore automatic DNS when the Mac is asleep or unavailable.
+Configure split DNS through the host adapter: `/etc/resolver/own` on macOS, systemd-resolved/NetworkManager integration on supported Linux, and an NRPT rule on Windows. For phones, guide the user to set the Wi-Fi DNS server to the host's LAN IP. All configured phone DNS servers must understand `.own`; a public secondary server can cause intermittent failures. Normal Internet lookups continue through forwarding while the host is available. Explain how to restore automatic DNS when the host is asleep or unavailable.
 
-Recommend a router DHCP reservation for the Mac. Detect IP/interface changes and show a repair action; never silently choose a VPN interface. Explain guest-network client isolation, firewall blocks, VPNs, and encrypted DNS overrides when connectivity fails. Being on the same Wi-Fi name alone does not prove connectivity.
+Recommend a router DHCP reservation for the host. Detect IP/interface changes and show a repair action; never silently choose a VPN interface. Explain guest-network client isolation, host firewalls, VPNs, and encrypted DNS overrides when connectivity fails. Being on the same Wi-Fi name alone does not prove connectivity.
 
 DNS can resolve unregistered names, but only explicitly registered, enabled routes are served. Registration controls routing, not ownership in public DNS.
 
@@ -67,7 +69,7 @@ DNS can resolve unregistered names, but only explicitly registered, enabled rout
 
 ### Persistence and interfaces
 
-Store runtime data in `~/Library/Application Support/OwnDomains/`, resolved using OS APIs. Keep settings schema-versioned and user-readable; protect application secrets and CA storage with restrictive permissions.
+Resolve runtime data through the host adapter: `~/Library/Application Support/OwnDomains/` on macOS, `$XDG_STATE_HOME/own-domains` or `~/.local/state/own-domains` on Linux, and `%LOCALAPPDATA%\OwnDomains` on Windows. Keep settings schema-versioned and user-readable; protect application secrets and CA storage with restrictive permissions or Windows ACLs.
 
 ```ts
 type DomainMapping = {
@@ -108,6 +110,8 @@ Serialize mutations and write desired state through a temporary file, flush, and
 | `src/server/domains/{validation,store,service}.ts` | Validation, durable settings, serialized mutations |
 | `src/server/proxy/{config,client,reconcile}.ts` | Generate Caddy configuration and apply/recover revisions |
 | `src/server/network/{dns-config,diagnostics}.ts` | DNS configuration and connectivity checks |
+| `src/platform/{types,detect,paths}.ts` | Platform contract, OS detection, and portable application paths |
+| `src/platform/{darwin,linux,win32}/` | OS-specific resolver, service, privilege, firewall, and listener adapters |
 | `src/server/http/{server,security,routes}.ts` | Loopback API, session protection, static dashboard |
 | `src/web/main.tsx` | React bootstrap and global stylesheet import |
 | `src/web/app/App.tsx` | Application shell and feature composition only |
@@ -120,10 +124,10 @@ Serialize mutations and write desired state through a temporary file, flush, and
 | `src/web/components/ui/` | Small shared controls with typed props and accessible behavior |
 | `src/web/styles/app.css` | Tailwind entry, shared theme tokens, and minimal global styles |
 | `eslint.config.js` | `eslint-config-pk` integration and scoped project overrides |
-| `src/cli/{setup,doctor,uninstall}.ts` | Explicit host setup, diagnosis, reversible removal |
+| `src/cli/{setup,doctor,uninstall}.ts` | Platform-neutral command orchestration over the selected host adapter |
 | `assets/` | Static UI resources, if needed |
 | `tests/` | Mirrored unit tests, integration fixtures, and browser tests |
-| `docs/{setup,troubleshooting}.md` | Mac setup, phone DNS/trust, recovery instructions |
+| `docs/{setup,troubleshooting}.md` | Per-platform setup, phone DNS/trust, and recovery instructions |
 
 ### Frontend maintainability rules
 
@@ -139,9 +143,9 @@ Serialize mutations and write desired state through a temporary file, flush, and
 
 1. Mixed-case, trailing-dot, and nested hostnames must not create duplicates or route to another project: Task 1.
 2. Concurrent updates or crashes between disk writes and proxy reloads must recover predictably: Task 2.
-3. A phone using IPv6 queries, encrypted DNS, or an isolated Wi-Fi network must receive actionable diagnosis: Tasks 3 and 7.
-4. TLS toggles and restarts must preserve HTTP-only behavior and stable CA identity: Tasks 2 and 7.
-5. A hostile website or LAN client must not mutate local settings or reach Caddy administration: Tasks 4 and 7.
+3. A phone using IPv6 queries, encrypted DNS, or an isolated Wi-Fi network must receive actionable diagnosis: Tasks 3 and 10.
+4. TLS toggles and restarts must preserve HTTP-only behavior and stable CA identity: Tasks 2 and 10.
+5. A hostile website or LAN client must not mutate local settings or reach Caddy administration: Tasks 4 and 10.
 
 ## Implementation Tasks
 
@@ -176,7 +180,7 @@ Serialize mutations and write desired state through a temporary file, flush, and
 
 - [ ] Write failing tests for `.own` A answers, no unintended AAAA answer, no `.own` upstream leakage, normal public-domain forwarding, and rejected upstream forwarding loops.
 - [ ] Add tests for missing/changed LAN addresses, occupied ports, missing binaries, unavailable upstream apps, and distinct DNS/proxy failures.
-- [ ] Implement configuration generation and bounded-time diagnostic probes; validate via `dnsmasq --test` against generated fixtures before applying.
+- [ ] Implement configuration generation and bounded-time diagnostic probes; retain `dnsmasq --test` coverage for the initial macOS provider until Task 7 replaces it with validated CoreDNS fixtures.
 - [ ] Run network tests and real UDP/TCP DNS integration checks on an unprivileged test port; confirm expected answers and no forwarding loops.
 
 ### Task 4: Provide a protected management API
@@ -204,29 +208,65 @@ Serialize mutations and write desired state through a temporary file, flush, and
 - [ ] Review component responsibilities, hook/API boundaries, repeated UI patterns, and Tailwind theme usage; extract unrelated responsibilities from oversized modules without adding unnecessary abstractions.
 - [ ] Run frontend unit/component tests, `pnpm run lint`, `pnpm run typecheck`, and `pnpm run test:e2e`; require the documented flows to pass with fixture services.
 
-### Task 6: Add explicit Mac setup and recovery workflows
+### Task 6: Extract the platform-neutral host contract
 
-**Files:** `src/cli/{setup,doctor,uninstall}.ts`; launchd/config templates; `docs/{setup,troubleshooting}.md`; CLI tests.
+**Files:** `src/platform/{types,detect,paths}.ts`; refactor `src/cli/{setup,doctor,uninstall}.ts`, `src/cli/{setup-plan,setup-preflight,setup-writer,uninstall-plan}.ts`; mirrored platform and CLI tests.
 
-**Interfaces:** `pnpm run setup -- --dry-run`, `pnpm run doctor`, and `pnpm run uninstall -- --dry-run`; installation requires an explicit apply option and normal privilege approval.
+**Interfaces:** `detectHostPlatform(): HostPlatformId`, `getHostPlatform(id): HostPlatform`, and `HostPlatform` methods `paths()`, `planSetup()`, `inspect()`, `activate()`, `planUninstall()`, and `deactivate()`. Setup, doctor, and uninstall commands consume only this interface. Installation still requires explicit `--apply` and normal OS privilege approval.
 
-- [ ] Write tests for setup dry runs, idempotent repeat setup, conflicting existing services/resolver files, incorrect ownership, and unavailable ports 53/80/443.
-- [ ] Implement reviewed service/resolver installation with least-privilege service identities, explicit launchd configuration, backups, and a manifest of owned changes. Start the user backend at login and infrastructure through launchd; document that the Mac must be awake.
-- [ ] Implement removal previews that restore only owned settings and do not remove unrelated configurations or CA data automatically. Document separate trust removal on each device.
-- [ ] Document phone DNS and certificate installation, Android browser-versus-native-app trust differences, DHCP reservation, DNS bypass settings, firewall checks, and restoring automatic DNS.
-- [ ] Run CLI tests and inspect dry-run output without modifying the host until privileged setup is authorized.
+- [ ] Write failing tests proving `darwin`, `linux`, and `win32` select distinct adapters while every other `process.platform` value exits before filesystem, command, or network effects.
+- [ ] Add path tests for macOS Application Support, Linux XDG fallback, and Windows LocalAppData; reject missing or relative platform roots.
+- [ ] Move shared dry-run, hash-manifest, backup, rollback, conflict, ownership, and port-validation behavior behind platform-neutral artifact/action types. Preserve current manifest compatibility and test idempotent upgrades.
+- [ ] Add an OS guard to every executable before it builds a plan. Keep platform commands as fixed argument arrays; never interpolate browser or settings input into a shell.
+- [ ] Run platform/CLI tests, lint, type checking, and existing integration tests; commit before implementing any OS adapter.
 
-### Task 7: Verify the complete Mac-to-phone workflow
+### Task 7: Complete the macOS adapter and migrate DNS to CoreDNS
 
-**Files:** `tests/integration/lan.test.ts`; `tests/e2e/domains.spec.ts`; final setup/troubleshooting documentation and command updates in `AGENTS.md`.
+**Files:** `src/platform/darwin/{index,paths,resolver,services,diagnostics}.ts`; CoreDNS/Caddy/launchd templates; macOS CLI and integration tests; `docs/setup.md`.
 
-- [ ] Run `pnpm test`, `pnpm run lint`, `pnpm run typecheck`, `pnpm run build`, and `pnpm run test:e2e`; record real results.
-- [ ] After authorized setup, open `http://shop.own` and `https://api.shop.own` on the Mac and a physical phone on the same LAN; install/trust the public CA and verify HTTPS without bypassing warnings.
+**Interfaces:** Implement `HostPlatform` for `darwin`; generate `/etc/resolver/own`, root LaunchDaemons for CoreDNS/Caddy, and a per-user LaunchAgent for the backend. Preserve legacy dnsmasq detection and provide a reviewed migration preview before removal.
+
+- [ ] Write failing tests for Intel/Apple Silicon binary locations, root-versus-user ownership, launchd labels, existing dnsmasq migration, WARP listeners on non-conflicting loopback addresses, and unavailable ports 53/80/443.
+- [ ] Generate and validate a CoreDNS configuration equivalent to the existing `.own` behavior before changing services. Back up resolver/service files and record hashes in the installation manifest.
+- [ ] Implement `launchctl bootstrap/bootout` activation and rollback with root infrastructure services and a logged-in-user backend. Never run the backend as root.
+- [ ] Extend doctor/uninstall for launchd state, resolver drift, firewall guidance, and manifest-owned restoration while preserving CA data.
+- [ ] Run macOS dry runs without host mutation; perform real activation only after separate privileged authorization.
+
+### Task 8: Add the systemd Linux adapter
+
+**Files:** `src/platform/linux/{index,paths,resolver,services,diagnostics}.ts`; systemd/CoreDNS/Caddy templates; Linux CLI and integration tests; Linux sections in setup/troubleshooting docs.
+
+**Interfaces:** Implement `HostPlatform` for `linux`; support systemd system services for CoreDNS/Caddy and a systemd user service for the backend. Support systemd-resolved first and NetworkManager when detected; reject unsupported resolver managers with actionable dry-run output.
+
+- [ ] Write failing tests for XDG paths, root/user ownership, systemd unit hardening, resolver-manager detection, firewall diagnostics, occupied ports, and unsupported non-systemd hosts.
+- [ ] Implement split-DNS setup for `.own`, fixed service commands, daemon reload/start/stop, manifest-safe rollback, and least-privilege service users/capabilities for ports below 1024.
+- [ ] Add Ubuntu CI fixtures for CoreDNS, Caddy, setup dry runs, uninstall previews, and service-template validation without modifying the CI host resolver.
+- [ ] Document `ufw`/firewalld guidance, NetworkManager/systemd-resolved recovery, CA installation, and automatic DNS restoration.
+- [ ] Verify on a supported Linux VM before claiming Linux host support.
+
+### Task 9: Add the Windows adapter
+
+**Files:** `src/platform/win32/{index,paths,resolver,services,diagnostics}.ts`; PowerShell/Windows Service templates; Windows CLI and integration tests; Windows sections in setup/troubleshooting docs.
+
+**Interfaces:** Implement `HostPlatform` for `win32`; store data under `%LOCALAPPDATA%\OwnDomains`, configure `.own` through a manifest-owned NRPT rule, run CoreDNS/Caddy as restricted Windows services, and start the backend in the interactive user's context. Use argument-array process execution and PowerShell `-File`, never generated command strings.
+
+- [ ] Write failing tests for Windows path/ACL handling, administrator detection, NRPT conflicts, service-name collisions, occupied IPv4 listeners, CRLF/escaping, and rollback after partial service installation.
+- [ ] Implement reviewed PowerShell scripts with fixed parameters, Authenticode-friendly files, Windows Service creation/removal, firewall-rule previews, and manifest-scoped recovery.
+- [ ] Bind Caddy administration to a loopback-only TCP port and confirm it is unreachable from LAN interfaces. Preserve the same-user local-process trust assumption explicitly.
+- [ ] Add Windows CI fixtures for dry-run planning, CoreDNS/Caddy configuration validation, and uninstall previews without changing CI DNS or services.
+- [ ] Verify on Windows 11 before claiming Windows host support.
+
+### Task 10: Verify the cross-platform host-to-phone workflow
+
+**Files:** `tests/integration/lan.test.ts`; platform integration fixtures; `tests/e2e/domains.spec.ts`; final setup/troubleshooting documentation and command updates in `AGENTS.md`.
+
+- [ ] Run `pnpm test`, `pnpm run lint`, `pnpm run typecheck`, `pnpm run build`, and `pnpm run test:e2e` on macOS, Ubuntu, and Windows CI; record real results and platform-specific skips.
+- [ ] On each supported host family, after authorized setup, open `http://shop.own` and `https://api.shop.own` locally and from a physical phone on the same LAN; install/trust the public CA and verify HTTPS without bypassing warnings.
 - [ ] Verify nested subdomains, hot reload/WebSockets, HTTP-only behavior beside HTTPS routes, and public Internet DNS on the phone.
-- [ ] Test application restart, service restart, Mac sleep/wake, changed LAN IP, stopped upstream apps, port conflicts, disabled mappings, and rejected proxy configuration; confirm accurate recovery guidance and persistent CA identity.
+- [ ] Test application/service restart, sleep/wake or suspend/resume, changed LAN IP, stopped upstream apps, port conflicts, disabled mappings, and rejected proxy configuration; confirm accurate recovery guidance and persistent CA identity.
 - [ ] From the phone, confirm that the management API and Caddy administration are inaccessible. Exercise cross-origin mutation attempts from a separate test origin.
-- [ ] Record phone OS/browser and any unresolved environment limitations. Do not claim physical-device verification from mocked/browser-only tests.
+- [ ] Record host OS/version, phone OS/browser, resolver manager, and unresolved limitations. Do not claim platform or physical-device verification from mocks, CI, or browser-only tests.
 
 ## Definition of Done
 
-The React dashboard uses Tailwind CSS and focused feature/component/hook modules, with ESLint based on `eslint-config-pk`. It reliably manages independent `.own` domain/subdomain mappings; a real phone reaches HTTP and trusted HTTPS websites through the Mac; WebSockets work; settings and certificate identity survive restart; failed updates do not silently replace working routes; administration remains local; setup and recovery are documented and reversible. All configured tests, lint, type checks, and builds pass with recorded evidence.
+The React dashboard uses Tailwind CSS and focused feature/component/hook modules, with ESLint based on `eslint-config-pk`. It reliably manages independent `.own` domain/subdomain mappings on macOS, supported systemd Linux, and Windows 11; a real phone reaches HTTP and trusted HTTPS websites through each host family; WebSockets work; settings and certificate identity survive restart; failed updates do not silently replace working routes; administration remains local; setup and recovery are documented and reversible. Platform detection blocks unsupported hosts before side effects. All configured tests, lint, type checks, builds, platform CI jobs, and authorized physical-device checks pass with recorded evidence.
