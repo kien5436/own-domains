@@ -3,10 +3,12 @@ import { join } from 'node:path';
 
 import { executeSetup, parseSetupArguments } from './setup-command';
 import { buildSetupPlan } from './setup-plan';
+import { inspectSetupPlan } from './setup-preflight';
 
 try {
   const setupArguments = parseSetupArguments(process.argv.slice(2));
   const userName = process.env.SUDO_USER ?? userInfo().username;
+  const userId = Number(process.env.SUDO_UID ?? process.getuid?.() ?? 0);
   const homeDirectory = process.env.SUDO_USER ? join('/Users', process.env.SUDO_USER) : homedir();
   const applicationDirectory = join(homeDirectory, 'Library/Application Support/OwnDomains');
   const plan = buildSetupPlan({
@@ -20,7 +22,10 @@ try {
 
   if (setupArguments.apply && 0 !== process.getuid?.()) throw new Error('Apply requires administrator approval. Re-run this command with sudo.');
   const backupDirectory = join(applicationDirectory, 'backups', new Date().toISOString().replaceAll(':', '-'));
-  const result = await executeSetup({ apply: setupArguments.apply, backupDirectory, plan });
+  const result = await executeSetup(
+    { apply: setupArguments.apply, backupDirectory, plan },
+    { inspect: (setupPlan) => inspectSetupPlan(setupPlan, { listenAddresses: ['127.0.0.1', setupArguments.lanAddress], userId }) },
+  );
 
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
