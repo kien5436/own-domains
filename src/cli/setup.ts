@@ -18,6 +18,7 @@ try {
     brewPrefix: process.env.HOMEBREW_PREFIX ?? ('arm64' === process.arch ? '/opt/homebrew' : '/usr/local'),
     homeDirectory,
     repositoryRoot: process.cwd(),
+    userId,
     userName,
     lanAddress: setupArguments.lanAddress,
     upstreamDns: setupArguments.upstreamDns,

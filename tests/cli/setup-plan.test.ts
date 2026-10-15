@@ -7,6 +7,7 @@ const options = {
   brewPrefix: '/opt/homebrew',
   homeDirectory: '/Users/kien',
   repositoryRoot: '/Users/kien/workspace/domains',
+  userId: 501,
   userName: 'kien',
   lanAddress: '192.168.1.20',
   upstreamDns: ['1.1.1.1', '9.9.9.9'],
@@ -47,5 +48,16 @@ describe('buildSetupPlan', () => {
     expect(contents).toContain('/opt/homebrew/bin/caddy');
     expect(contents).toContain('/opt/homebrew/bin/pnpm');
     expect(contents).toContain('/Users/kien/workspace/domains');
+  });
+
+  it('keeps system files root-owned and application files user-owned', () => {
+    const plan = buildSetupPlan(options);
+    const owners = new Map(plan.artifacts.map((artifact) => [artifact.path, artifact.ownerId]));
+
+    expect(owners.get('/etc/resolver/own')).toBe(0);
+    expect(owners.get('/Library/LaunchDaemons/dev.owndomains.caddy.plist')).toBe(0);
+    expect(owners.get('/opt/homebrew/etc/dnsmasq.d/own-domains.conf')).toBe(501);
+    expect(owners.get('/Users/kien/Library/LaunchAgents/dev.owndomains.backend.plist')).toBe(501);
+    expect(owners.get('/Users/kien/Library/Application Support/OwnDomains/install-manifest.json')).toBe(501);
   });
 });

@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { chmod, copyFile, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { chmod, chown, copyFile, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -7,7 +7,7 @@ import type { SetupPlan } from './setup-plan';
 
 export type ApplySetupResult = { written: string[]; skipped: string[]; backups: string[] };
 
-type PreviousState = { path: string; content?: Buffer; mode?: number };
+type PreviousState = { path: string; content?: Buffer; mode?: number; ownerId?: number };
 
 export async function applySetupPlan(plan: SetupPlan, backupDirectory: string): Promise<ApplySetupResult> {
   const result: ApplySetupResult = { written: [], skipped: [], backups: [] };
@@ -52,7 +52,7 @@ async function applyArtifacts(artifacts: SetupPlan['artifacts'], index: number, 
   }
 
   previousStates.push(previous);
-  await atomicWrite(artifact.path, artifact.content, artifact.mode);
+  await atomicWrite(artifact.path, artifact.content, artifact.mode, artifact.ownerId);
   result.written.push(artifact.path);
   await applyArtifacts(artifacts, index + 1, backupDirectory, result, previousStates);
 }
@@ -61,7 +61,7 @@ async function readPreviousState(path: string): Promise<PreviousState> {
   try {
     const [content, metadata] = await Promise.all([readFile(path), stat(path)]);
 
-    return { path, content, mode: metadata.mode & 0o777 };
+    return { path, content, mode: metadata.mode & 0o777, ownerId: metadata.uid };
   }
   catch (error) {
     if (isErrorCode(error, 'ENOENT')) return { path };
@@ -69,7 +69,7 @@ async function readPreviousState(path: string): Promise<PreviousState> {
   }
 }
 
-async function atomicWrite(path: string, content: string | Buffer, mode: number): Promise<void> {
+async function atomicWrite(path: string, content: string | Buffer, mode: number, ownerId?: number): Promise<void> {
   const parent = dirname(path);
 
   await mkdir(parent, { recursive: true });
@@ -88,6 +88,7 @@ async function atomicWrite(path: string, content: string | Buffer, mode: number)
 
     await rename(temporaryPath, path);
     await chmod(path, mode);
+    if (undefined !== ownerId) await chown(path, ownerId, -1);
   }
   catch (error) {
     await rm(temporaryPath, { force: true });
@@ -99,7 +100,7 @@ async function rollback(previousStates: PreviousState[]): Promise<void> {
   const previous = previousStates.pop();
 
   if (!previous) return;
-  if (previous.content && undefined !== previous.mode) await atomicWrite(previous.path, previous.content, previous.mode);
+  if (previous.content && undefined !== previous.mode) await atomicWrite(previous.path, previous.content, previous.mode, previous.ownerId);
   else await rm(previous.path, { force: true });
   await rollback(previousStates);
 }
