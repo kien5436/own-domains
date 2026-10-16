@@ -34,6 +34,13 @@ describe('diagnoseNetwork', () => {
     expect(diagnostics).toContainEqual(expect.objectContaining({ code: 'dns-port', status: 'error', message: expect.stringContaining('OtherDNS') }));
   });
 
+  it('accepts a successful DNS probe when root-owned listeners are hidden', async () => {
+    const inspect = () => Promise.resolve({ dnsConfiguration: '', port53Listeners: '', warpSettings: '', dnsProbeSucceeded: true });
+    const diagnostics = await diagnoseNetwork({ lanAddress: '192.168.1.20', mappings: [] }, () => Promise.resolve(true), inspect);
+
+    expect(diagnostics).toContainEqual(expect.objectContaining({ code: 'dns-port', status: 'ok' }));
+  });
+
   it('warns when WARP DNS is active without a confirmed .own fallback', async () => {
     const inspect = () => Promise.resolve({ dnsConfiguration: 'nameserver[0] : 127.0.2.2', port53Listeners: 'CloudflareWARP 20 root UDP 127.0.2.2:53', warpSettings: 'Local Domain Fallback: example.internal' });
     const diagnostics = await diagnoseNetwork({ lanAddress: '192.168.1.20', mappings: [] }, () => Promise.resolve(true), inspect);

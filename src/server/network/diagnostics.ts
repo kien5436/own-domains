@@ -5,8 +5,8 @@ import type { Diagnostic, DomainMapping } from '../../shared/types';
 
 type NetworkState = { lanAddress: string; mappings: DomainMapping[] };
 type Probe = (port: number) => Promise<boolean>;
-type DnsEnvironment = { dnsConfiguration: string; port53Listeners: string; warpSettings: string };
-type InspectDns = () => Promise<DnsEnvironment>;
+type DnsEnvironment = { dnsConfiguration: string; port53Listeners: string; warpSettings: string; dnsProbeSucceeded?: boolean };
+type InspectDns = (lanAddress: string) => Promise<DnsEnvironment>;
 
 export async function diagnoseNetwork(state: NetworkState, probe: Probe = probePort, inspectDns: InspectDns = inspectDnsEnvironment): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
@@ -22,7 +22,7 @@ export async function diagnoseNetwork(state: NetworkState, probe: Probe = probeP
   diagnostics.push(...upstreamDiagnostics);
 
   try {
-    diagnostics.push(...diagnoseDnsEnvironment(state.lanAddress, await inspectDns()));
+    diagnostics.push(...diagnoseDnsEnvironment(state.lanAddress, await inspectDns(state.lanAddress)));
   }
   catch (error) {
     diagnostics.push({ code: 'dns-inspection', status: 'warning', message: 'Unable to inspect local DNS services', remedy: error instanceof Error ? error.message : 'Run Own Domains doctor from a terminal.' });
@@ -43,7 +43,7 @@ function diagnoseDnsEnvironment(lanAddress: string, environment: DnsEnvironment)
 
     diagnostics.push({ code: 'dns-port', status: 'error', message: `DNS port 53 conflicts with: ${services}`, remedy: 'Stop or reconfigure the listed service so dnsmasq can bind 127.0.0.1 and the selected LAN address.' });
   }
-  else if (dnsmasqListening) {
+  else if (dnsmasqListening || environment.dnsProbeSucceeded) {
     diagnostics.push({ code: 'dns-port', status: 'ok', message: 'dnsmasq owns the required port 53 listeners' });
   }
   else {
@@ -63,14 +63,23 @@ function diagnoseDnsEnvironment(lanAddress: string, environment: DnsEnvironment)
   return diagnostics;
 }
 
-async function inspectDnsEnvironment(): Promise<DnsEnvironment> {
-  const [dnsConfiguration, port53Listeners, warpSettings] = await Promise.all([
+async function inspectDnsEnvironment(lanAddress: string): Promise<DnsEnvironment> {
+  const [dnsConfiguration, port53Listeners, warpSettings, dnsProbeSucceeded] = await Promise.all([
     commandOutput('/usr/sbin/scutil', ['--dns']),
     commandOutput('/usr/sbin/lsof', ['-nP', '-iUDP:53', '-iTCP:53']),
     commandOutput('warp-cli', ['settings']),
+    probeDns(lanAddress),
   ]);
 
-  return { dnsConfiguration, port53Listeners, warpSettings };
+  return { dnsConfiguration, port53Listeners, warpSettings, dnsProbeSucceeded };
+}
+
+async function probeDns(lanAddress: string): Promise<boolean> {
+  if (!lanAddress) return false;
+  const addresses = ['127.0.0.1', lanAddress];
+  const results = await Promise.all(addresses.map((address) => commandOutput('/usr/bin/dig', ['+short', '+time=1', '+tries=1', `@${address}`, 'healthcheck.own', 'A'])));
+
+  return results.every((output) => output.split('\n').some((line) => line.trim() === lanAddress));
 }
 
 function commandOutput(command: string, commandArguments: string[]): Promise<string> {
