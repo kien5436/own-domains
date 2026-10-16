@@ -18,7 +18,7 @@ type ProxyConfigOptions = {
 
 export function buildProxyConfig(settings: Settings, options: ProxyConfigOptions = {}) {
   if (4 !== isIP(settings.lanAddress)) throw new Error('A valid LAN IPv4 address is required');
-  const { adminListen = 'unix//tmp/own-domains-caddy.sock', addresses = ['127.0.0.1', settings.lanAddress], httpPort = 80, httpsPort = 443, setupPort = 4781 } = options;
+  const { adminListen = '127.0.0.1:2020', addresses = ['127.0.0.1', settings.lanAddress], httpPort = 80, httpsPort = 443, setupPort = 4781 } = options;
   const enabled = settings.mappings.filter((mapping) => mapping.enabled);
   const setupRoute = proxyRouteForHosts(['setup.own', settings.lanAddress], setupPort);
   const httpRoutes: CaddyRoute[] = [

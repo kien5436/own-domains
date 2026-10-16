@@ -19,6 +19,7 @@ describe('buildProxyConfig', () => {
   it('creates exact HTTP routes only for enabled mappings', () => {
     const config = buildProxyConfig(settings);
 
+    expect(config.admin.listen).toBe('127.0.0.1:2020');
     expect(config.apps.http.servers.http.listen).toEqual(['127.0.0.1:80', '192.168.1.20:80']);
     expect(config.apps.http.servers.https.listen).toEqual(['127.0.0.1:443', '192.168.1.20:443']);
     expect(config.apps.http.servers.http.routes).toEqual([
