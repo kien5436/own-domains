@@ -24,7 +24,16 @@ cd domains
 ./scripts/install.sh 192.168.1.20
 ```
 
-Find the address with `ipconfig getifaddr en0` or, when needed, `ipconfig getifaddr en1`. The script installs locked dependencies, builds the dashboard, previews system changes, and requests administrator approval before installing launchd services. Open `http://registry.own` afterward. Use `pnpm doctor` to check prerequisites.
+Find the address with `ipconfig getifaddr en0` or, when needed, `ipconfig getifaddr en1`. The script installs locked dependencies, builds the dashboard, previews system changes, and requests administrator approval before installing launchd services.
+
+After installation:
+
+1. Open `http://registry.own`.
+2. Under **Network settings**, enter the same LAN address passed to `install.sh`.
+3. Keep or change the upstream DNS addresses, then click **Save network settings**.
+4. Refresh the dashboard and confirm that the LAN address and dnsmasq checks are healthy.
+
+Use `pnpm doctor` to check prerequisites.
 
 ## Register and Run a Website
 
@@ -57,3 +66,17 @@ For a clean first-run test, also erase saved mappings, backups, and the local Ca
 ```
 
 Uninstall is best-effort: independent cleanup steps continue after an error, every failure is reported, and the script returns a nonzero status at the end if anything failed. Trusted certificates installed on phones or other computers must be removed manually on those devices.
+
+## Troubleshooting
+
+If the dashboard says **dnsmasq is not listening on the required port 53 addresses** immediately after installation, first check **Network settings**. Enter the Mac LAN address used during installation, save it, and refresh the page. The dashboard cannot run its LAN DNS probe until this value is saved.
+
+If the warning remains, run:
+
+```bash
+pnpm doctor
+dig +short @127.0.0.1 healthcheck.own A
+dig +short @<MAC_LAN_IP> healthcheck.own A
+```
+
+Both `dig` commands should return the Mac LAN address. If they do not, rerun `./scripts/install.sh <MAC_LAN_IP>` to validate the configuration and restart the managed services.

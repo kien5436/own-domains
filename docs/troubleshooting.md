@@ -1,5 +1,6 @@
 # Troubleshooting
 
+- **dnsmasq listener warning after first setup:** open **Network settings**, enter the same Mac LAN address used by `install.sh`, save it, and refresh the dashboard. If the warning remains, run `dig +short @127.0.0.1 healthcheck.own A` and `dig +short @<MAC_LAN_IP> healthcheck.own A`; both must return the Mac LAN address.
 - **Domain does not resolve:** confirm the phone can reach the Mac, uses the Mac as its only Wi-Fi DNS server, and is not on an isolated guest network or overriding DNS through a VPN/private DNS feature.
 - **502 response:** start the target app on the configured IPv4 loopback port. Some development servers must allow the custom `.own` Host header.
 - **HTTPS warning:** install Caddy's public root certificate on the device and explicitly enable SSL trust. Certificate issuance alone does not establish device trust.
