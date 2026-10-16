@@ -12,7 +12,8 @@ describe('DomainForm', () => {
 
     render(<DomainForm busy={false} onSubmit={onSubmit} />);
 
-    await user.type(screen.getByLabelText('Domain'), 'Shop.OWN.');
+    expect(screen.getByText('.own')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Domain'), 'Shop');
     await user.clear(screen.getByLabelText('Local port'));
     await user.type(screen.getByLabelText('Local port'), '3000');
     await user.click(screen.getByLabelText('Use HTTPS'));
@@ -21,13 +22,25 @@ describe('DomainForm', () => {
     expect(onSubmit).toHaveBeenCalledWith({ hostname: 'shop.own', upstreamPort: 3000, tls: true, enabled: true });
   });
 
+  it('accepts a pasted .own hostname without duplicating the suffix', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(<DomainForm busy={false} onSubmit={onSubmit} />);
+
+    await user.type(screen.getByLabelText('Domain'), 'Api.Shop.OWN');
+    await user.click(screen.getByRole('button', { name: 'Register domain' }));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ hostname: 'api.shop.own' }));
+  });
+
   it('shows validation without submitting invalid input', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
 
     render(<DomainForm busy={false} onSubmit={onSubmit} />);
 
-    await user.type(screen.getByLabelText('Domain'), '*.own');
+    await user.type(screen.getByLabelText('Domain'), '*');
     await user.click(screen.getByRole('button', { name: 'Register domain' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Enter a valid .own domain');

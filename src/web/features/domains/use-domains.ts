@@ -26,7 +26,7 @@ export function useDomains(api: DomainApi) {
 
   useEffect(() => { void Promise.resolve().then(() => load()) }, [load]);
 
-  async function mutate(operation: () => ReturnType<DomainApi['create']>) {
+  async function mutate(operation: () => ReturnType<DomainApi['create']>, reportError = true) {
     setBusy(true);
 
     try {
@@ -37,7 +37,7 @@ export function useDomains(api: DomainApi) {
       setError('error' === result.apply.status ? result.apply.message ?? 'Unable to apply configuration' : '');
     }
     catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Request failed');
+      if (reportError) setError(cause instanceof Error ? cause.message : 'Request failed');
       await load(true);
       throw cause;
     }
@@ -50,7 +50,7 @@ export function useDomains(api: DomainApi) {
     loading,
     busy,
     error,
-    create: (input: MappingInput) => mutate(() => api.create(input, revision)),
+    create: (input: MappingInput) => mutate(() => api.create(input, revision), false),
     toggle: (mapping: DomainMapping) => mutate(() => api.update(mapping.id, { enabled: !mapping.enabled, tls: mapping.tls }, revision)),
     setTls: (mapping: DomainMapping) => mutate(() => api.update(mapping.id, { tls: !mapping.tls }, revision)),
     updatePort: (mapping: DomainMapping, upstreamPort: number) => mutate(() => api.update(mapping.id, { upstreamPort }, revision)),

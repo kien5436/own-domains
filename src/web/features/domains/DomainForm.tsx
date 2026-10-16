@@ -45,7 +45,10 @@ export function DomainForm({ busy, onSubmit }: DomainFormProps) {
   return <form className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" onSubmit={submit}>
     <div>
       <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="hostname">Domain</label>
-      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200" id="hostname" onChange={(event) => setHostname(event.target.value)} placeholder="shop.own" value={hostname} />
+      <div className="flex rounded-lg border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200">
+        <input aria-describedby="hostname-suffix" className="min-w-0 flex-1 rounded-l-lg px-3 py-2 focus:outline-none" id="hostname" onChange={(event) => setHostname(event.target.value)} placeholder="shop" value={hostname} />
+        <span className="flex items-center rounded-r-lg border-l border-slate-300 bg-slate-50 px-3 text-slate-500" id="hostname-suffix">.own</span>
+      </div>
     </div>
     <div>
       <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="port">Local port</label>

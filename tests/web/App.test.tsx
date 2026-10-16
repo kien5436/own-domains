@@ -19,11 +19,30 @@ describe('App', () => {
     render(<App api={api} />);
 
     expect(await screen.findByText('No domains registered yet.')).toBeInTheDocument();
-    await user.type(screen.getByLabelText('Domain'), 'shop.own');
+    await user.type(screen.getByLabelText('Domain'), 'shop');
     await user.click(screen.getByRole('button', { name: 'Register domain' }));
 
     expect(await screen.findByText('shop.own')).toBeInTheDocument();
     expect(api.create).toHaveBeenCalledWith(expect.objectContaining({ hostname: 'shop.own' }), 0);
+  });
+
+  it('shows registration errors only beside the registration form', async () => {
+    const user = userEvent.setup();
+    const api: DomainApi = {
+      load: vi.fn().mockResolvedValue({ revision: 0, mappings: [] }),
+      create: vi.fn().mockRejectedValue(new Error('shop.own is already registered')),
+      update: vi.fn(),
+      remove: vi.fn(),
+    };
+
+    render(<App api={api} />);
+
+    await screen.findByText('No domains registered yet.');
+    await user.type(screen.getByLabelText('Domain'), 'shop');
+    await user.click(screen.getByRole('button', { name: 'Register domain' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('shop.own is already registered');
+    expect(screen.getAllByText('shop.own is already registered')).toHaveLength(1);
   });
 
   it('edits the upstream port for an existing domain', async () => {
