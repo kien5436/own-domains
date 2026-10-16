@@ -56,6 +56,12 @@ Configure split DNS through the host adapter: `/etc/resolver/own` on macOS, syst
 
 Recommend a router DHCP reservation for the host. Detect IP/interface changes and show a repair action; never silently choose a VPN interface. Explain guest-network client isolation, host firewalls, VPNs, and encrypted DNS overrides when connectivity fails. Being on the same Wi-Fi name alone does not prove connectivity.
 
+#### Deferred: encrypted DNS coexistence
+
+Review after the local HTTP/TLS workflow is stable. Phone-level encrypted DNS clients such as NextDNS, WARP, Private DNS, or browser DoH can bypass the Wi-Fi resolver and make `.own` unreachable; listing both the host and a public resolver is not a reliable fallback because clients may query either one.
+
+Prefer one provider-neutral integration over provider-specific adapters: the phone uses Own Domains as its only LAN DNS server, `.own` stays authoritative locally, and public queries may be forwarded through an optional RFC 8484 DNS-over-HTTPS endpoint on loopback. Keep plain IPv4 upstream DNS as an explicit fallback mode. Before implementation, review credential storage, HTTPS-only URL validation, bootstrap resolution, forwarding-loop and SSRF prevention, timeout/failure behavior, privacy implications of fallback, provider analytics/profile preservation, and behavior while the host is asleep. Do not add a production dependency or managed binary without approval.
+
 DNS can resolve unregistered names, but only explicitly registered, enabled routes are served. Registration controls routing, not ownership in public DNS.
 
 ### Proxy and TLS behavior
@@ -263,6 +269,7 @@ Serialize mutations and write desired state through a temporary file, flush, and
 - [ ] Run `pnpm test`, `pnpm run lint`, `pnpm run typecheck`, `pnpm run build`, and `pnpm run test:e2e` on macOS, Ubuntu, and Windows CI; record real results and platform-specific skips.
 - [ ] On each supported host family, after authorized setup, open `http://shop.own` and `https://api.shop.own` locally and from a physical phone on the same LAN; install/trust the public CA and verify HTTPS without bypassing warnings.
 - [ ] Verify nested subdomains, hot reload/WebSockets, HTTP-only behavior beside HTTPS routes, and public Internet DNS on the phone.
+- [ ] Review the deferred encrypted-DNS coexistence design using NextDNS plus at least one other RFC 8484 provider; decide whether generic DoH forwarding belongs in scope before implementing it.
 - [ ] Test application/service restart, sleep/wake or suspend/resume, changed LAN IP, stopped upstream apps, port conflicts, disabled mappings, and rejected proxy configuration; confirm accurate recovery guidance and persistent CA identity.
 - [ ] From the phone, confirm that the management API and Caddy administration are inaccessible. Exercise cross-origin mutation attempts from a separate test origin.
 - [ ] Record host OS/version, phone OS/browser, resolver manager, and unresolved limitations. Do not claim platform or physical-device verification from mocks, CI, or browser-only tests.
