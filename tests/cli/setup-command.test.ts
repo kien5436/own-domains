@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -57,14 +57,19 @@ describe('executeSetup', () => {
     const target = join(directory, 'resolver/own');
     const backupDirectory = join(directory, 'backups');
     const content = 'nameserver 127.0.0.1\n';
+    const unchanged = join(directory, 'unchanged.conf');
+    const unchangedContent = 'keep me\n';
     const manifestPath = join(directory, 'install-manifest.json');
-    const manifest = { schemaVersion: 1, backupDirectory, artifacts: [{ path: target, sha256: createHash('sha256').update(content).digest('hex') }] };
+    const manifest = { schemaVersion: 1, backupDirectory, artifacts: [{ path: target, sha256: createHash('sha256').update(content).digest('hex') }, { path: unchanged, sha256: createHash('sha256').update(unchangedContent).digest('hex') }] };
     const plan: SetupPlan = {
       artifacts: [
         { path: target, content, mode: 0o644, backupExisting: true },
+        { path: unchanged, content: unchangedContent, mode: 0o644, backupExisting: true },
         { path: manifestPath, content: `${JSON.stringify(manifest)}\n`, mode: 0o600, backupExisting: false },
       ],
     };
+
+    await writeFile(unchanged, unchangedContent, { mode: 0o644 });
 
     const lifecycle: string[] = [];
     const result = await executeSetup(
@@ -87,6 +92,7 @@ describe('executeSetup', () => {
     expect(result).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('launchctl failed') });
     expect(lifecycle).toEqual(['activate', 'deactivate']);
     await expect(readFile(target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(unchanged, 'utf8')).toBe(unchangedContent);
     await expect(readFile(manifestPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

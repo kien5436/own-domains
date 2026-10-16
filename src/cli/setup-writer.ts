@@ -5,12 +5,14 @@ import { randomUUID } from 'node:crypto';
 
 import type { SetupPlan } from './setup-plan';
 
-export type ApplySetupResult = { written: string[]; skipped: string[]; backups: string[] };
+export type ApplySetupResult = { written: string[]; skipped: string[]; backups: string[]; rollback: () => Promise<void> };
+
+type ApplySetupChanges = Omit<ApplySetupResult, 'rollback'>;
 
 type PreviousState = { path: string; content?: Buffer; mode?: number; ownerId?: number };
 
 export async function applySetupPlan(plan: SetupPlan, backupDirectory: string): Promise<ApplySetupResult> {
-  const result: ApplySetupResult = { written: [], skipped: [], backups: [] };
+  const result: ApplySetupChanges = { written: [], skipped: [], backups: [] };
   const previousStates: PreviousState[] = [];
 
   try {
@@ -21,10 +23,10 @@ export async function applySetupPlan(plan: SetupPlan, backupDirectory: string): 
     throw error;
   }
 
-  return result;
+  return { ...result, rollback: () => rollback(previousStates) };
 }
 
-async function applyArtifacts(artifacts: SetupPlan['artifacts'], index: number, backupDirectory: string, result: ApplySetupResult, previousStates: PreviousState[]): Promise<void> {
+async function applyArtifacts(artifacts: SetupPlan['artifacts'], index: number, backupDirectory: string, result: ApplySetupChanges, previousStates: PreviousState[]): Promise<void> {
   const artifact = artifacts[index];
 
   if (!artifact) return;

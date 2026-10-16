@@ -1,7 +1,6 @@
 import type { SetupPlan } from './setup-plan';
 import { inspectSetupPlan, type SetupIssue } from './setup-preflight';
 import { applySetupPlan } from './setup-writer';
-import { applyUninstallPlan, buildUninstallPlan } from './uninstall-plan';
 
 type SetupCommandOptions = {
   apply: boolean;
@@ -40,9 +39,7 @@ export async function executeSetup(options: SetupCommandOptions, dependencies: P
   }
   catch (error) {
     await services.deactivate();
-    const manifest = plan.artifacts.find((artifact) => artifact.path.endsWith('/install-manifest.json'));
-
-    if (manifest) await applyUninstallPlan(await buildUninstallPlan(manifest.path));
+    await result.rollback();
 
     return { exitCode: 2, stdout: `${preview}\n`, stderr: `Service activation failed; setup files were rolled back: ${error instanceof Error ? error.message : String(error)}\n` };
   }

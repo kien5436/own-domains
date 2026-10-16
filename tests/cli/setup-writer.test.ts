@@ -29,6 +29,22 @@ describe('applySetupPlan', () => {
     expect(await readFile(result.backups[0]!, 'utf8')).toBe('old resolver\n');
   });
 
+  it('can restore only artifacts changed by a completed write', async () => {
+    const directory = await temporaryDirectory();
+    const changed = join(directory, 'changed.conf');
+    const unchanged = join(directory, 'unchanged.conf');
+
+    await writeFile(changed, 'before\n', { mode: 0o600 });
+    await writeFile(unchanged, 'same\n', { mode: 0o644 });
+    const result = await applySetupPlan({ artifacts: [artifact(changed, 'after\n'), artifact(unchanged, 'same\n')] }, join(directory, 'backups'));
+
+    await result.rollback();
+
+    expect(await readFile(changed, 'utf8')).toBe('before\n');
+    expect((await stat(changed)).mode & 0o777).toBe(0o600);
+    expect(await readFile(unchanged, 'utf8')).toBe('same\n');
+  });
+
   it('skips an artifact that already has the requested content and mode', async () => {
     const directory = await temporaryDirectory();
     const target = join(directory, 'own.conf');
@@ -37,7 +53,7 @@ describe('applySetupPlan', () => {
     await writeFile(target, 'current\n', { mode: 0o644 });
     const result = await applySetupPlan(plan, join(directory, 'backups'));
 
-    expect(result).toEqual({ written: [], skipped: [target], backups: [] });
+    expect(result).toMatchObject({ written: [], skipped: [target], backups: [] });
   });
 
   it('restores earlier artifacts when a later write fails', async () => {
