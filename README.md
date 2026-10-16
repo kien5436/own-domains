@@ -1,0 +1,59 @@
+# Own Domains
+
+Own Domains registers private `.own` hostnames for web applications running on your Mac. It provides a React dashboard, dnsmasq DNS, Caddy reverse proxying, optional local HTTPS, and access from devices on the same network.
+
+## Requirements
+
+- macOS with [Homebrew](https://brew.sh/)
+- A reserved LAN IPv4 address for the Mac
+- Ports 53, 80, and 443 available on that address
+
+Install the required tools:
+
+```bash
+brew install node pnpm caddy dnsmasq
+```
+
+## Installation
+
+Clone the repository, then run the installer with the Mac's LAN address:
+
+```bash
+git clone <repository-url>
+cd domains
+./scripts/install.sh 192.168.1.20
+```
+
+Find the address with `ipconfig getifaddr en0` or, when needed, `ipconfig getifaddr en1`. The script installs locked dependencies, builds the dashboard, previews system changes, and requests administrator approval before installing launchd services. Open `http://registry.own` afterward. Use `pnpm doctor` to check prerequisites.
+
+## Register and Run a Website
+
+Start the website on an IPv4 loopback port, for example:
+
+```bash
+cd ~/projects/my-site
+pnpm dev -- --host 127.0.0.1 --port 3000
+```
+
+Open `http://registry.own`, register `my-site.own` with port `3000`, and choose whether to enable HTTPS. Then visit `http://my-site.own` or `https://my-site.own`. The app must remain running on the registered port and accept the custom Host header.
+
+## Phone Access and HTTPS
+
+Connect the phone to the same Wi-Fi and set its DNS server to the Mac's LAN address. Disable conflicting VPN/private DNS handling or configure `.own` as a local-domain fallback. Visit `http://setup.own` to download the iOS profile or root certificate. On iOS, install the profile and enable it under **Settings → General → About → Certificate Trust Settings**.
+
+## Removal
+
+Preview removal, then uninstall the services and managed files:
+
+```bash
+./scripts/uninstall.sh --dry-run
+./scripts/uninstall.sh
+```
+
+For a clean first-run test, also erase saved mappings, backups, and the local Caddy CA:
+
+```bash
+./scripts/uninstall.sh --purge
+```
+
+Trusted certificates installed on phones or other computers must be removed manually on those devices.
