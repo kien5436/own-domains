@@ -66,12 +66,26 @@ describe('executeSetup', () => {
       ],
     };
 
+    const lifecycle: string[] = [];
     const result = await executeSetup(
       { apply: true, backupDirectory, plan },
-      { activate: () => Promise.reject(new Error('launchctl failed')), inspect: () => Promise.resolve([]) },
+      {
+        activate() {
+          lifecycle.push('activate');
+
+          return Promise.reject(new Error('launchctl failed'));
+        },
+        deactivate() {
+          lifecycle.push('deactivate');
+
+          return Promise.resolve();
+        },
+        inspect: () => Promise.resolve([]),
+      },
     );
 
     expect(result).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('launchctl failed') });
+    expect(lifecycle).toEqual(['activate', 'deactivate']);
     await expect(readFile(target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(manifestPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });

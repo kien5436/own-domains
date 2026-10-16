@@ -11,6 +11,7 @@ type SetupCommandOptions = {
 
 type SetupCommandDependencies = {
   activate: () => Promise<void>;
+  deactivate: () => Promise<void>;
   inspect: (plan: SetupPlan) => Promise<SetupIssue[]>;
   write: typeof applySetupPlan;
 };
@@ -19,7 +20,7 @@ type SetupCommandResult = { exitCode: number; stdout: string; stderr: string };
 
 export type SetupArguments = { apply: boolean; lanAddress: string; upstreamDns: string[] };
 
-const defaultDependencies: SetupCommandDependencies = { activate: () => Promise.resolve(), inspect: inspectSetupPlan, write: applySetupPlan };
+const defaultDependencies: SetupCommandDependencies = { activate: () => Promise.resolve(), deactivate: () => Promise.resolve(), inspect: inspectSetupPlan, write: applySetupPlan };
 
 export async function executeSetup(options: SetupCommandOptions, dependencies: Partial<SetupCommandDependencies> = {}): Promise<SetupCommandResult> {
   const { apply, backupDirectory, plan } = options;
@@ -38,6 +39,7 @@ export async function executeSetup(options: SetupCommandOptions, dependencies: P
     await services.activate();
   }
   catch (error) {
+    await services.deactivate();
     const manifest = plan.artifacts.find((artifact) => artifact.path.endsWith('/install-manifest.json'));
 
     if (manifest) await applyUninstallPlan(await buildUninstallPlan(manifest.path));

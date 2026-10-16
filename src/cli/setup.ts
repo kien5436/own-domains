@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { executeSetup, parseSetupArguments } from './setup-command';
 import { buildSetupPlan } from './setup-plan';
 import { inspectSetupPlan } from './setup-preflight';
-import { activateLaunchdServices } from './setup-services';
+import { activateLaunchdServices, deactivateLaunchdServices } from './setup-services';
 
 try {
   const setupArguments = parseSetupArguments(process.argv.slice(2));
@@ -29,6 +29,7 @@ try {
     { apply: setupArguments.apply, backupDirectory, plan },
     {
       activate: () => activateLaunchdServices(homeDirectory, userId),
+      deactivate: () => deactivateLaunchdServices(userId),
       inspect: (setupPlan) => inspectSetupPlan(setupPlan, { listenAddresses: ['127.0.0.1', setupArguments.lanAddress], userId }),
     },
   );

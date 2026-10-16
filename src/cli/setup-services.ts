@@ -7,15 +7,27 @@ export function buildLaunchdActivationCommands(homeDirectory: string, userId: nu
   return [
     bootout('system/dev.owndomains.dnsmasq'),
     bootout('system/dev.owndomains.caddy'),
-    bootout(`gui/${userId}/dev.owndomains.backend`),
+    asUser(userId, bootout(`gui/${userId}/dev.owndomains.backend`)),
     bootstrap('system', '/Library/LaunchDaemons/dev.owndomains.dnsmasq.plist'),
     bootstrap('system', '/Library/LaunchDaemons/dev.owndomains.caddy.plist'),
-    bootstrap(`gui/${userId}`, join(homeDirectory, 'Library/LaunchAgents/dev.owndomains.backend.plist')),
+    asUser(userId, bootstrap(`gui/${userId}`, join(homeDirectory, 'Library/LaunchAgents/dev.owndomains.backend.plist'))),
+  ];
+}
+
+export function buildLaunchdDeactivationCommands(userId: number): ServiceCommand[] {
+  return [
+    asUser(userId, bootout(`gui/${userId}/dev.owndomains.backend`)),
+    bootout('system/dev.owndomains.caddy'),
+    bootout('system/dev.owndomains.dnsmasq'),
   ];
 }
 
 export async function activateLaunchdServices(homeDirectory: string, userId: number): Promise<void> {
   await executeCommands(buildLaunchdActivationCommands(homeDirectory, userId), 0);
+}
+
+export async function deactivateLaunchdServices(userId: number): Promise<void> {
+  await executeCommands(buildLaunchdDeactivationCommands(userId), 0);
 }
 
 async function executeCommands(commands: ServiceCommand[], index: number): Promise<void> {
@@ -45,4 +57,8 @@ function bootout(domain: string): ServiceCommand {
 
 function bootstrap(domain: string, path: string): ServiceCommand {
   return { command: '/bin/launchctl', args: ['bootstrap', domain, path], ignoreFailure: false };
+}
+
+function asUser(userId: number, serviceCommand: ServiceCommand): ServiceCommand {
+  return { ...serviceCommand, args: ['asuser', String(userId), serviceCommand.command, ...serviceCommand.args] };
 }
