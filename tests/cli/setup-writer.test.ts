@@ -53,6 +53,18 @@ describe('applySetupPlan', () => {
     await expect(applySetupPlan(plan, join(directory, 'backups'))).rejects.toThrow();
     expect(await readFile(first, 'utf8')).toBe('before\n');
   });
+
+  it('applies an explicit owner to the artifact directory', async () => {
+    const directory = await temporaryDirectory();
+    const applicationDirectory = join(directory, 'Library/Application Support/OwnDomains');
+    const target = join(applicationDirectory, 'settings-bootstrap.json');
+    const ownerId = process.getuid?.();
+
+    if (undefined === ownerId) throw new Error('test requires a POSIX user id');
+    await applySetupPlan({ artifacts: [{ ...artifact(target, '{}\n'), ownerId, parentOwnerId: ownerId }] }, join(directory, 'backups'));
+
+    expect((await stat(applicationDirectory)).uid).toBe(ownerId);
+  });
 });
 
 function artifact(path: string, content: string) {

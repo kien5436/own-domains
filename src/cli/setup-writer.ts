@@ -30,6 +30,11 @@ async function applyArtifacts(artifacts: SetupPlan['artifacts'], index: number, 
   if (!artifact) return;
   const previous = await readPreviousState(artifact.path);
 
+  if (undefined !== artifact.parentOwnerId) {
+    await mkdir(dirname(artifact.path), { recursive: true });
+    await chown(dirname(artifact.path), artifact.parentOwnerId, -1);
+  }
+
   if (previous.content?.equals(Buffer.from(artifact.content)) && previous.mode === artifact.mode) {
     result.skipped.push(artifact.path);
     await applyArtifacts(artifacts, index + 1, backupDirectory, result, previousStates);
