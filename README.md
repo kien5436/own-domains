@@ -56,4 +56,4 @@ For a clean first-run test, also erase saved mappings, backups, and the local Ca
 ./scripts/uninstall.sh --purge
 ```
 
-Trusted certificates installed on phones or other computers must be removed manually on those devices.
+Uninstall is best-effort: independent cleanup steps continue after an error, every failure is reported, and the script returns a nonzero status at the end if anything failed. Trusted certificates installed on phones or other computers must be removed manually on those devices.

@@ -18,13 +18,13 @@ describe('lifecycle scripts', () => {
     await expect(execute('./scripts/install.sh', [])).rejects.toMatchObject({ code: 2 });
   });
 
-  it('previews service removal and an optional exact application-data purge', async () => {
-    const result = await execute('./scripts/uninstall.sh', ['--dry-run', '--purge'], { env: { ...process.env, HOME: '/Users/tester', USER: 'tester' } });
+  it('reports a missing manifest while previewing every independent cleanup', async () => {
+    const removal = execute('./scripts/uninstall.sh', ['--dry-run', '--purge'], { env: { ...process.env, HOME: '/Users/tester', USER: 'tester' } });
 
-    expect(result.stdout).toContain('UNLOAD dev.owndomains.backend');
-    expect(result.stdout).toContain('UNLOAD dev.owndomains.caddy');
-    expect(result.stdout).toContain('UNLOAD dev.owndomains.dnsmasq');
-    expect(result.stdout).toContain('UNINSTALL managed setup files');
-    expect(result.stdout).toContain('PURGE /Users/tester/Library/Application Support/OwnDomains');
+    await expect(removal).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringMatching(/Cleanup finished with 1 error:\n- install manifest is missing; managed setup files will be skipped/),
+      stdout: expect.stringMatching(/UNLOAD dev\.owndomains\.backend[\s\S]*UNLOAD dev\.owndomains\.caddy[\s\S]*UNLOAD dev\.owndomains\.dnsmasq[\s\S]*PURGE \/Users\/tester\/Library\/Application Support\/OwnDomains/),
+    });
   });
 });

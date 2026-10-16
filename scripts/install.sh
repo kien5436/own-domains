@@ -2,6 +2,16 @@
 
 set -eu
 
+run_or_fail() {
+  failure_message=$1
+  shift
+  "$@" || {
+    status=$?
+    printf 'ERROR: %s\n' "$failure_message" >&2
+    exit "$status"
+  }
+}
+
 dry_run=false
 lan_address=
 
@@ -41,9 +51,9 @@ repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repository_root"
 pnpm_bin=$(command -v pnpm) || { printf 'pnpm is required. Install it with: brew install pnpm\n' >&2; exit 1; }
 
-"$pnpm_bin" install --frozen-lockfile
-"$pnpm_bin" build
-"$pnpm_bin" run setup -- --dry-run --lan-address "$lan_address"
-/usr/bin/sudo "$pnpm_bin" run setup -- --apply --lan-address "$lan_address"
+run_or_fail 'dependency installation failed; no system changes were made' "$pnpm_bin" install --frozen-lockfile
+run_or_fail 'build failed; no system changes were made' "$pnpm_bin" build
+run_or_fail 'setup validation failed; no system changes were made' "$pnpm_bin" run setup -- --dry-run --lan-address "$lan_address"
+run_or_fail 'setup failed; review the error and rollback report above' /usr/bin/sudo "$pnpm_bin" run setup -- --apply --lan-address "$lan_address"
 
 printf 'Open http://registry.own\n'
