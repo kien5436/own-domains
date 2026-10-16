@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { DomainMapping, MappingInput } from '../../shared/types';
 
 const RESERVED_PORTS = new Set([53, 80, 443, 4780]);
+const RESERVED_HOSTNAMES = ['registry.own', 'setup.own'];
 const LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export class ValidationError extends Error {}
@@ -16,7 +17,9 @@ export function validateHostname(input: unknown): string {
   const hostname = normalizeHostname(input.trim());
 
   if (253 < hostname.length || !hostname.endsWith('.own') || 'own' === hostname) throw new ValidationError('Enter a valid .own domain');
-  if ('setup.own' === hostname || hostname.endsWith('.setup.own')) throw new ValidationError('setup.own is reserved');
+  const reservedHostname = RESERVED_HOSTNAMES.find((reserved) => reserved === hostname || hostname.endsWith(`.${reserved}`));
+
+  if (reservedHostname) throw new ValidationError(`${reservedHostname} is reserved`);
   if (!hostname.split('.').every((label) => LABEL_PATTERN.test(label))) throw new ValidationError('Enter a valid .own domain');
 
   return hostname;

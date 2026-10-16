@@ -29,6 +29,11 @@ describe('buildProxyConfig', () => {
         terminal: true,
       },
       {
+        match: [{ host: ['registry.own'] }],
+        handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: '127.0.0.1:4780' }] }],
+        terminal: true,
+      },
+      {
         match: [{ host: ['shop.own'] }],
         handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: '127.0.0.1:3000' }] }],
         terminal: true,
@@ -57,11 +62,12 @@ describe('buildProxyConfig', () => {
   });
 
   it('supports isolated listeners and an admin socket for integration tests', () => {
-    const config = buildProxyConfig(settings, { adminListen: 'unix//tmp/own-domains-test.sock', addresses: ['127.0.0.1'], httpPort: 18080, httpsPort: 18443, setupPort: 14781 });
+    const config = buildProxyConfig(settings, { adminListen: 'unix//tmp/own-domains-test.sock', addresses: ['127.0.0.1'], httpPort: 18080, httpsPort: 18443, managementPort: 14780, setupPort: 14781 });
 
     expect(config.admin.listen).toBe('unix//tmp/own-domains-test.sock');
     expect(config.apps.http.servers.http.listen).toEqual(['127.0.0.1:18080']);
     expect(config.apps.http.servers.https.listen).toEqual(['127.0.0.1:18443']);
     expect(config.apps.http.servers.http.routes[0]?.handle).toEqual([{ handler: 'reverse_proxy', upstreams: [{ dial: '127.0.0.1:14781' }] }]);
+    expect(config.apps.http.servers.http.routes[1]?.handle).toEqual([{ handler: 'reverse_proxy', upstreams: [{ dial: '127.0.0.1:14780' }] }]);
   });
 });

@@ -1,4 +1,5 @@
 import { mkdtemp } from 'node:fs/promises';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,7 +23,46 @@ async function start() {
   return server;
 }
 
+function requestWithHost(url: string, options: { host: string; method?: string; headers?: Record<string, string>; body?: string } = { host: 'registry.own' }) {
+  return new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: unknown }>((resolve, reject) => {
+    const target = new URL(url);
+    const clientRequest = request({ hostname: target.hostname, port: target.port, path: target.pathname, method: options.method ?? 'GET', headers: { ...options.headers, host: options.host } }, (response) => {
+      const chunks: Buffer[] = [];
+
+      response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown }));
+    });
+
+    clientRequest.on('error', reject);
+    if (options.body) clientRequest.write(options.body);
+    clientRequest.end();
+  });
+}
+
 describe('management API', () => {
+  it('accepts authenticated mutations through registry.own', async () => {
+    const server = await start();
+    const publicOrigin = 'http://registry.own';
+    const session = await requestWithHost(`${server.origin}/api/session`);
+    const csrf = (session.body as { csrfToken: string }).csrfToken;
+    const cookie = session.headers['set-cookie']?.[0] ?? '';
+    const created = await requestWithHost(`${server.origin}/api/domains`, {
+      host: 'registry.own',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrf, origin: publicOrigin },
+      body: JSON.stringify({ expectedRevision: 0, mapping: { hostname: 'shop.own', upstreamPort: 3000, tls: false, enabled: true } }),
+    });
+
+    expect(created.status).toBe(201);
+  });
+
+  it('rejects unrecognized management hostnames', async () => {
+    const server = await start();
+    const response = await requestWithHost(`${server.origin}/api/session`, { host: 'other.own' });
+
+    expect(response.status).toBe(403);
+  });
+
   it('creates and lists mappings with CSRF protection', async () => {
     const server = await start();
     const session = await fetch(`${server.origin}/api/session`);

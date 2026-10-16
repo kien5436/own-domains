@@ -47,6 +47,8 @@ describe('buildSetupPlan', () => {
     expect(contents).toContain('/opt/homebrew/sbin/dnsmasq');
     expect(contents).toContain('/opt/homebrew/bin/caddy');
     expect(plan.artifacts.find((item) => item.path.endsWith('caddy-bootstrap.json'))?.content).toContain('127.0.0.1:2020');
+    expect(plan.artifacts.find((item) => item.path.endsWith('caddy-bootstrap.json'))?.content).toContain('registry.own');
+    expect(plan.artifacts.find((item) => item.path.endsWith('caddy-bootstrap.json'))?.content).toContain('127.0.0.1:4780');
     expect(plan.artifacts.find((item) => item.path.endsWith('caddy-bootstrap.json'))?.parentOwnerId).toBe(501);
     expect(plan.artifacts.find((item) => item.path.endsWith('install-manifest.json'))?.parentOwnerId).toBe(501);
     expect(contents).toContain('/opt/homebrew/bin/pnpm');

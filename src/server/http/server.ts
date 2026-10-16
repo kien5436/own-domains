@@ -47,7 +47,7 @@ export async function createManagementServer(options: ServerOptions): Promise<{ 
 async function route(request: IncomingMessage, response: ServerResponse, options: ServerOptions, session: { csrfToken: string; sessionId: string }) {
   const origin = `http://${request.headers.host}`;
 
-  if (request.headers.host !== `127.0.0.1:${request.headers.host?.split(':').at(-1)}` && request.headers.host !== `localhost:${request.headers.host?.split(':').at(-1)}`) return sendJson(response, 403, { error: 'Invalid Host header' });
+  if (!isManagementHost(request.headers.host)) return sendJson(response, 403, { error: 'Invalid Host header' });
 
   if ('/api/session' === request.url && 'GET' === request.method) {
     response.setHeader('Set-Cookie', `own_session=${session.sessionId}; HttpOnly; SameSite=Strict; Path=/`);
@@ -116,6 +116,12 @@ async function route(request: IncomingMessage, response: ServerResponse, options
   if ('GET' === request.method && options.staticDirectory && !request.url?.startsWith('/api/')) return serveStatic(response, options.staticDirectory, request.url ?? '/');
 
   return sendJson(response, 404, { error: 'Not found' });
+}
+
+function isManagementHost(host: string | undefined): boolean {
+  if ('registry.own' === host || 'registry.own:80' === host) return true;
+
+  return /^127\.0\.0\.1:\d+$/.test(host ?? '') || /^localhost:\d+$/.test(host ?? '');
 }
 
 async function serveStatic(response: ServerResponse, directory: string, requestPath: string): Promise<void> {

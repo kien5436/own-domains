@@ -13,7 +13,7 @@ describe('normalizeHostname', () => {
 });
 
 describe('validateMapping', () => {
-  it.each(['own', 'setup.own', 'child.setup.own', '*.shop.own', 'café.own', 'bad..own', '-bad.own', 'bad-.own'])('rejects invalid hostname %s', (hostname) => {
+  it.each(['own', 'setup.own', 'child.setup.own', 'registry.own', 'child.registry.own', '*.shop.own', 'café.own', 'bad..own', '-bad.own', 'bad-.own'])('rejects invalid hostname %s', (hostname) => {
     expect(() => validateMapping({ hostname, upstreamPort: 3000, tls: false, enabled: true })).toThrow();
   });
 

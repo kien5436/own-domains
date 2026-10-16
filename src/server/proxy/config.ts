@@ -13,16 +13,19 @@ type ProxyConfigOptions = {
   addresses?: string[];
   httpPort?: number;
   httpsPort?: number;
+  managementPort?: number;
   setupPort?: number;
 };
 
 export function buildProxyConfig(settings: Settings, options: ProxyConfigOptions = {}) {
   if (4 !== isIP(settings.lanAddress)) throw new Error('A valid LAN IPv4 address is required');
-  const { adminListen = '127.0.0.1:2020', addresses = ['127.0.0.1', settings.lanAddress], httpPort = 80, httpsPort = 443, setupPort = 4781 } = options;
+  const { adminListen = '127.0.0.1:2020', addresses = ['127.0.0.1', settings.lanAddress], httpPort = 80, httpsPort = 443, managementPort = 4780, setupPort = 4781 } = options;
   const enabled = settings.mappings.filter((mapping) => mapping.enabled);
   const setupRoute = proxyRouteForHosts(['setup.own', settings.lanAddress], setupPort);
+  const managementRoute = proxyRoute('registry.own', managementPort);
   const httpRoutes: CaddyRoute[] = [
     setupRoute,
+    managementRoute,
     ...enabled.map((mapping) => mapping.tls
       ? {
         match: [{ host: [mapping.hostname] }],

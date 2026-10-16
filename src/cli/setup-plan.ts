@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import { buildDnsConfig } from '../server/network/dns-config';
+import { buildProxyConfig } from '../server/proxy/config';
 
 export type SetupArtifact = {
   path: string;
@@ -34,7 +35,7 @@ export function buildSetupPlan(options: SetupPlanOptions): SetupPlan {
   const artifacts: SetupArtifact[] = [
     artifact('/etc/resolver/own', 'nameserver 127.0.0.1\n', 0o644, 0),
     artifact(dnsmasqConfig, buildDnsConfig({ schemaVersion: 1, revision: 0, lanAddress, upstreamDns, mappings: [] }), 0o644, userId),
-    artifact(caddyConfig, `${JSON.stringify({ admin: { listen: '127.0.0.1:2020' } }, null, 2)}\n`, 0o644, userId, userId),
+    artifact(caddyConfig, `${JSON.stringify(buildProxyConfig({ schemaVersion: 1, revision: 0, lanAddress, upstreamDns, mappings: [] }), null, 2)}\n`, 0o644, userId, userId),
     artifact('/Library/LaunchDaemons/dev.owndomains.dnsmasq.plist', launchdPlist('dev.owndomains.dnsmasq', [join(brewPrefix, 'sbin/dnsmasq'), '--keep-in-foreground', `--conf-file=${dnsmasqConfig}`], undefined, true), 0o644, 0),
     artifact('/Library/LaunchDaemons/dev.owndomains.caddy.plist', launchdPlist('dev.owndomains.caddy', [join(brewPrefix, 'bin/caddy'), 'run', '--config', caddyConfig], undefined, true, { XDG_DATA_HOME: caddyDataDirectory }), 0o644, 0),
     artifact(join(homeDirectory, 'Library/LaunchAgents/dev.owndomains.backend.plist'), launchdPlist('dev.owndomains.backend', [join(brewPrefix, 'bin/pnpm'), 'exec', 'tsx', 'src/server/index.ts'], repositoryRoot, true, { PATH: `${join(brewPrefix, 'bin')}:/usr/bin:/bin:/usr/sbin:/sbin` }), 0o644, userId),
