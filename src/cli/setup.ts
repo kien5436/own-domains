@@ -28,8 +28,8 @@ try {
   const result = await executeSetup(
     { apply: setupArguments.apply, backupDirectory, plan },
     {
-      activate: () => activateLaunchdServices(homeDirectory, userId),
-      deactivate: () => deactivateLaunchdServices(userId),
+      activate: () => activateLaunchdServices(homeDirectory, userId, userName),
+      deactivate: () => deactivateLaunchdServices(userId, userName),
       inspect: (setupPlan) => inspectSetupPlan(setupPlan, { listenAddresses: ['127.0.0.1', setupArguments.lanAddress], userId }),
     },
   );
