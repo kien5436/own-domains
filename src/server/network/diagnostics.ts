@@ -47,7 +47,9 @@ function diagnoseDnsEnvironment(lanAddress: string, environment: DnsEnvironment)
     diagnostics.push({ code: 'dns-port', status: 'ok', message: 'dnsmasq owns the required port 53 listeners' });
   }
   else {
-    diagnostics.push({ code: 'dns-port', status: 'warning', message: 'dnsmasq is not listening on the required port 53 addresses', remedy: 'Run setup or restart the Own Domains DNS service.' });
+    diagnostics.push(lanAddress
+      ? { code: 'dns-port', status: 'warning', message: 'dnsmasq is not listening on the required port 53 addresses', remedy: 'Run setup or restart the Own Domains DNS service.' }
+      : { code: 'dns-port', status: 'warning', message: 'DNS listener check needs a saved LAN address', remedy: 'Enter the Mac LAN IPv4 under Network settings, save it, then refresh the dashboard.' });
   }
 
   const warpActive = /127\.0\.2\.[23]|cloudfl|warp/i.test(`${environment.dnsConfiguration}\n${environment.port53Listeners}`);

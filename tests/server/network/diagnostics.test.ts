@@ -7,6 +7,7 @@ describe('diagnoseNetwork', () => {
     const diagnostics = await diagnoseNetwork({ lanAddress: '', mappings: [] }, () => Promise.resolve(true));
 
     expect(diagnostics).toContainEqual(expect.objectContaining({ code: 'lan-address', status: 'warning', remedy: expect.stringMatching(/LAN/i) }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({ code: 'dns-port', status: 'warning', remedy: expect.stringMatching(/Network settings.*save.*refresh/i) }));
   });
 
   it('reports unreachable upstream applications', async () => {
