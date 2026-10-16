@@ -48,6 +48,7 @@ async function route(request: IncomingMessage, response: ServerResponse, options
   const origin = `http://${request.headers.host}`;
 
   if (!isManagementHost(request.headers.host)) return sendJson(response, 403, { error: 'Invalid Host header' });
+  if ('GET' === request.method && options.staticDirectory && !request.url?.startsWith('/api/')) return serveStatic(response, options.staticDirectory, request.url ?? '/');
 
   if ('/api/session' === request.url && 'GET' === request.method) {
     response.setHeader('Set-Cookie', `own_session=${session.sessionId}; HttpOnly; SameSite=Strict; Path=/`);
@@ -112,8 +113,6 @@ async function route(request: IncomingMessage, response: ServerResponse, options
 
     return sendJson(response, 'applied' === result.apply.status ? 200 : 202, result);
   }
-
-  if ('GET' === request.method && options.staticDirectory && !request.url?.startsWith('/api/')) return serveStatic(response, options.staticDirectory, request.url ?? '/');
 
   return sendJson(response, 404, { error: 'Not found' });
 }

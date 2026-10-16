@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,10 +13,10 @@ const servers: Array<{ close: () => Promise<void> }> = [];
 
 afterEach(() => Promise.all(servers.splice(0).map((server) => server.close())));
 
-async function start() {
+async function start(staticDirectory?: string) {
   const store = new SettingsStore(await mkdtemp(join(tmpdir(), 'own-domains-api-')));
   const service = new DomainService(store, (settings) => Promise.resolve({ desiredRevision: settings.revision, appliedRevision: settings.revision, status: 'applied' }));
-  const server = await createManagementServer({ service, store, host: '127.0.0.1', port: 0 });
+  const server = await createManagementServer({ service, store, host: '127.0.0.1', port: 0, staticDirectory });
 
   servers.push(server);
 
@@ -30,7 +30,11 @@ function requestWithHost(url: string, options: { host: string; method?: string; 
       const chunks: Buffer[] = [];
 
       response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-      response.on('end', () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown }));
+      response.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, body: response.headers['content-type']?.startsWith('application/json') ? JSON.parse(body) as unknown : body });
+      });
     });
 
     clientRequest.on('error', reject);
@@ -40,6 +44,17 @@ function requestWithHost(url: string, options: { host: string; method?: string; 
 }
 
 describe('management API', () => {
+  it('serves the dashboard before a local session exists', async () => {
+    const staticDirectory = await mkdtemp(join(tmpdir(), 'own-domains-static-'));
+
+    await writeFile(join(staticDirectory, 'index.html'), '<h1>Own Domains</h1>');
+    const server = await start(staticDirectory);
+    const response = await requestWithHost(`${server.origin}/`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe('<h1>Own Domains</h1>');
+  });
+
   it('accepts authenticated mutations through registry.own', async () => {
     const server = await start();
     const publicOrigin = 'http://registry.own';
