@@ -1,13 +1,12 @@
-import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 
-export async function createSetupServer(options: { host: string; port: number; caCertificatePath: string }): Promise<{ close: () => Promise<void> }> {
+export async function createSetupServer(options: { host: string; port: number; readCaCertificate: () => Promise<string> }): Promise<{ origin: string; close: () => Promise<void> }> {
   const server = createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
 
     if ('/ca.crt' === request.url) {
       try {
-        const certificate = await readFile(options.caCertificatePath);
+        const certificate = await options.readCaCertificate();
 
         response.writeHead(200, { 'content-type': 'application/x-x509-ca-cert', 'content-disposition': 'attachment; filename="own-domains-ca.crt"' });
         response.end(certificate);
@@ -28,8 +27,12 @@ export async function createSetupServer(options: { host: string; port: number; c
     server.once('error', reject);
     server.listen(options.port, options.host, resolve);
   });
+  const address = server.address();
+
+  if (!address || 'string' === typeof address) throw new Error('Unable to determine setup server address');
 
   return {
+    origin: `http://${options.host}:${address.port}`,
     close: () => new Promise((resolve, reject) => {
       server.close((error) => {
         if (error) reject(error);

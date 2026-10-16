@@ -6,8 +6,7 @@ import { DomainService } from './domains/service';
 import { SettingsStore } from './domains/store';
 import { createManagementServer } from './http/server';
 import { createSetupServer } from './http/setup-server';
-import { caddyRootCertificatePath } from './paths';
-import { applyCaddyConfig } from './proxy/client';
+import { applyCaddyConfig, readCaddyRootCertificate } from './proxy/client';
 import { createReconciler } from './proxy/reconcile';
 
 const dataDirectory = join(homedir(), 'Library', 'Application Support', 'OwnDomains');
@@ -26,7 +25,7 @@ const settings = await store.load();
 if (settings.lanAddress) await service.reconcileCurrent();
 const readApplied = async () => Number.parseInt(await readFile(appliedPath, 'utf8').catch(() => '0'), 10) || 0;
 
-await createSetupServer({ host: '127.0.0.1', port: 4781, caCertificatePath: caddyRootCertificatePath(dataDirectory) });
+await createSetupServer({ host: '127.0.0.1', port: 4781, readCaCertificate: readCaddyRootCertificate });
 const server = await createManagementServer({ service, store, host: '127.0.0.1', port: 4780, readApplied, staticDirectory: join(process.cwd(), 'dist') });
 
 process.stdout.write(`Own Domains API listening at ${server.origin}\n`);
