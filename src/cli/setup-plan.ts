@@ -28,6 +28,7 @@ type SetupPlanOptions = {
 export function buildSetupPlan(options: SetupPlanOptions): SetupPlan {
   const { backupDirectory, brewPrefix, homeDirectory, repositoryRoot, userId, userName, lanAddress, upstreamDns } = options;
   const applicationDirectory = join(homeDirectory, 'Library/Application Support/OwnDomains');
+  const caddyDataDirectory = join(applicationDirectory, 'caddy-data');
   const dnsmasqConfig = join(brewPrefix, 'etc/dnsmasq.d/own-domains.conf');
   const caddyConfig = join(applicationDirectory, 'caddy-bootstrap.json');
   const artifacts: SetupArtifact[] = [
@@ -35,7 +36,7 @@ export function buildSetupPlan(options: SetupPlanOptions): SetupPlan {
     artifact(dnsmasqConfig, buildDnsConfig({ schemaVersion: 1, revision: 0, lanAddress, upstreamDns, mappings: [] }), 0o644, userId),
     artifact(caddyConfig, `${JSON.stringify({ admin: { listen: '127.0.0.1:2020' } }, null, 2)}\n`, 0o644, userId, userId),
     artifact('/Library/LaunchDaemons/dev.owndomains.dnsmasq.plist', launchdPlist('dev.owndomains.dnsmasq', [join(brewPrefix, 'sbin/dnsmasq'), '--keep-in-foreground', `--conf-file=${dnsmasqConfig}`], undefined, true), 0o644, 0),
-    artifact('/Library/LaunchDaemons/dev.owndomains.caddy.plist', launchdPlist('dev.owndomains.caddy', [join(brewPrefix, 'bin/caddy'), 'run', '--config', caddyConfig], undefined, true), 0o644, 0),
+    artifact('/Library/LaunchDaemons/dev.owndomains.caddy.plist', launchdPlist('dev.owndomains.caddy', [join(brewPrefix, 'bin/caddy'), 'run', '--config', caddyConfig], undefined, true, { XDG_DATA_HOME: caddyDataDirectory }), 0o644, 0),
     artifact(join(homeDirectory, 'Library/LaunchAgents/dev.owndomains.backend.plist'), launchdPlist('dev.owndomains.backend', [join(brewPrefix, 'bin/pnpm'), 'exec', 'tsx', 'src/server/index.ts'], repositoryRoot, true, { PATH: `${join(brewPrefix, 'bin')}:/usr/bin:/bin:/usr/sbin:/sbin` }), 0o644, userId),
   ];
   const manifestPath = join(applicationDirectory, 'install-manifest.json');

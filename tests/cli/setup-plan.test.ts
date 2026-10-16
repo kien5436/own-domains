@@ -50,6 +50,7 @@ describe('buildSetupPlan', () => {
     expect(plan.artifacts.find((item) => item.path.endsWith('caddy-bootstrap.json'))?.parentOwnerId).toBe(501);
     expect(plan.artifacts.find((item) => item.path.endsWith('install-manifest.json'))?.parentOwnerId).toBe(501);
     expect(contents).toContain('/opt/homebrew/bin/pnpm');
+    expect(plan.artifacts.find((item) => item.path.endsWith('dev.owndomains.caddy.plist'))?.content).toContain('<key>XDG_DATA_HOME</key>\n      <string>/Users/kien/Library/Application Support/OwnDomains/caddy-data</string>');
     expect(contents).toContain('/Users/kien/workspace/domains');
     expect(contents).toContain('<key>PATH</key>\n      <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>');
   });
