@@ -9,6 +9,8 @@ pub enum DaemonError {
     AlreadyRunning { path: PathBuf },
     #[error("failed to {operation} {path}: {source}", path = path.display())]
     Io { operation: &'static str, path: PathBuf, #[source] source: io::Error },
+    #[error("invalid existing IPC path: {path}", path = path.display())]
+    InvalidSocketPath { path: PathBuf },
 }
 
 pub struct ProcessLock {
