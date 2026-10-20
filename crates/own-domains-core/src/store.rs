@@ -48,6 +48,14 @@ impl SettingsStore {
         self.save_with_before_rename(settings, expected_revision, || Ok(()))
     }
 
+    pub(crate) fn lock_key(&self) -> PathBuf {
+        if self.path.is_absolute() {
+            self.path.clone()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(&self.path)
+        }
+    }
+
     #[cfg(test)]
     fn save_with_before_rename_for_test(
         &self,
