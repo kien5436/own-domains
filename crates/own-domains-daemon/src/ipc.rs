@@ -32,12 +32,13 @@ impl IpcServer {
         while !self.shutdown.load(Ordering::Acquire) {
             match self.listener.accept() {
                 Ok((stream, _)) => {
+                    if stream.set_nonblocking(false).is_err() { continue; }
                     let state = self.state.clone();
                     let shutdown = self.shutdown.clone();
                     thread::spawn(move || handle_client(stream, state, shutdown));
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(10)),
-                Err(error) if matches!(error.kind(), io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted) => continue,
+                Err(error) if matches!(error.kind(), io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset) => continue,
                 Err(source) => return Err(io_error("accept IPC client", &self.path, source)),
             }
         }
