@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "revision": 8,
+  "lanAddress": "192.168.1.20",
+  "upstreamDns": ["1.1.1.1", "9.9.9.9"],
+  "mappings": [
+    { "id": "018f0000-0000-7000-8000-000000000001", "hostname": "shop.own", "upstreamPort": 3000, "tls": false, "enabled": true },
+    { "id": "018f0000-0000-7000-8000-000000000002", "hostname": "api.shop.own", "upstreamPort": 4000, "tls": true, "enabled": true },
+    { "id": "018f0000-0000-7000-8000-000000000003", "hostname": "disabled.own", "upstreamPort": 5000, "tls": false, "enabled": false }
+  ]
+}

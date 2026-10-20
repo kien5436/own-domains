@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "revision": 0,
+  "lanAddress": "",
+  "upstreamDns": ["1.1.1.1"],
+  "mappings": [
+    { "id": "018f0000-0000-7000-8000-000000000001", "hostname": "Shop.OWN.", "upstreamPort": 3000, "tls": false, "enabled": true },
+    { "id": "018f0000-0000-7000-8000-000000000002", "hostname": "shop.own", "upstreamPort": 4000, "tls": true, "enabled": true }
+  ]
+}

@@ -30,12 +30,16 @@ impl SettingsStore {
         self.create_directory()?;
         let contents = match fs::read_to_string(&self.path) {
             Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Settings::default()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Settings::default());
+            }
             Err(source) => return Err(io_error("read", &self.path, source)),
         };
-        let parsed = serde_json::from_str::<Settings>(&contents).map_err(|error| CoreError::CorruptSettings {
-            path: self.path.clone(),
-            message: error.to_string(),
+        let parsed = serde_json::from_str::<Settings>(&contents).map_err(|error| {
+            CoreError::CorruptSettings {
+                path: self.path.clone(),
+                message: error.to_string(),
+            }
         })?;
 
         validate_settings(parsed).map_err(|error| CoreError::CorruptSettings {
@@ -77,13 +81,17 @@ impl SettingsStore {
         if let Some(expected) = expected_revision
             && current.revision != expected
         {
-            return Err(CoreError::RevisionConflict { expected, actual: current.revision });
+            return Err(CoreError::RevisionConflict {
+                expected,
+                actual: current.revision,
+            });
         }
         validate_settings(settings.clone())?;
-        let mut contents = serde_json::to_vec_pretty(settings).map_err(|error| CoreError::CorruptSettings {
-            path: self.path.clone(),
-            message: error.to_string(),
-        })?;
+        let mut contents =
+            serde_json::to_vec_pretty(settings).map_err(|error| CoreError::CorruptSettings {
+                path: self.path.clone(),
+                message: error.to_string(),
+            })?;
         contents.push(b'\n');
 
         let mut options = OpenOptions::new();
@@ -100,7 +108,9 @@ impl SettingsStore {
             .sync_all()
             .map_err(|source| io_error("sync temporary settings", &self.temporary_path, source))?;
         drop(temporary);
-        before_rename().map_err(|source| io_error("prepare settings replacement", &self.temporary_path, source))?;
+        before_rename().map_err(|source| {
+            io_error("prepare settings replacement", &self.temporary_path, source)
+        })?;
         fs::rename(&self.temporary_path, &self.path)
             .map_err(|source| io_error("replace settings", &self.path, source))?;
         #[cfg(unix)]
@@ -121,7 +131,11 @@ impl SettingsStore {
 }
 
 fn io_error(operation: &'static str, path: &Path, source: std::io::Error) -> CoreError {
-    CoreError::Io { operation, path: path.to_path_buf(), source }
+    CoreError::Io {
+        operation,
+        path: path.to_path_buf(),
+        source,
+    }
 }
 
 #[cfg(test)]
@@ -130,17 +144,35 @@ mod tests {
 
     #[test]
     fn failure_after_sync_before_rename_preserves_previous_file_and_temporary_file() {
-        let directory = std::env::temp_dir().join(format!("own-domains-rename-test-{}", uuid::Uuid::new_v4()));
+        let directory =
+            std::env::temp_dir().join(format!("own-domains-rename-test-{}", uuid::Uuid::new_v4()));
         let store = SettingsStore::new(&directory);
-        store.save(&Settings { revision: 1, ..Settings::default() }, Some(0)).unwrap();
+        store
+            .save(
+                &Settings {
+                    revision: 1,
+                    ..Settings::default()
+                },
+                Some(0),
+            )
+            .unwrap();
 
         let result = store.save_with_before_rename_for_test(
-            &Settings { revision: 2, ..Settings::default() },
+            &Settings {
+                revision: 2,
+                ..Settings::default()
+            },
             Some(1),
             || Err(std::io::Error::other("injected before rename")),
         );
 
-        assert!(matches!(result, Err(CoreError::Io { operation: "prepare settings replacement", .. })));
+        assert!(matches!(
+            result,
+            Err(CoreError::Io {
+                operation: "prepare settings replacement",
+                ..
+            })
+        ));
         assert_eq!(store.load().unwrap().revision, 1);
         assert!(directory.join("settings.json.tmp").is_file());
         fs::remove_dir_all(directory).unwrap();

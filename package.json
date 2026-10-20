@@ -13,7 +13,8 @@
     "setup": "tsx src/cli/setup.ts",
     "test:e2e": "playwright test",
     "uninstall": "tsx src/cli/uninstall.ts",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "verify:native-core": "cargo test -p own-domains-core && pnpm test && pnpm run lint && pnpm run typecheck && pnpm run build"
   },
   "dependencies": {
     "react": "^19.3.0",

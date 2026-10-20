@@ -27,7 +27,10 @@ fn persisted_mapping(id: &str, hostname: &str) -> DomainMapping {
 fn normalizes_and_accepts_nested_hostnames() {
     assert_eq!(normalize_hostname("Shop.OWN."), "shop.own");
     assert_eq!(normalize_hostname("Shop.OWN"), "shop.own");
-    assert_eq!(validate_hostname("admin.api.shop.own").unwrap(), "admin.api.shop.own");
+    assert_eq!(
+        validate_hostname("admin.api.shop.own").unwrap(),
+        "admin.api.shop.own"
+    );
 }
 
 #[test]
@@ -57,7 +60,10 @@ fn rejects_invalid_and_reserved_hostnames() {
 #[test]
 fn rejects_reserved_and_out_of_range_ports() {
     for port in [0, 53, 80, 443, 4780, 65_536] {
-        assert!(validate_mapping(mapping("shop.own", port)).is_err(), "{port} should fail");
+        assert!(
+            validate_mapping(mapping("shop.own", port)).is_err(),
+            "{port} should fail"
+        );
     }
 }
 
@@ -76,7 +82,10 @@ fn validates_network_addresses_and_forwarding_loops() {
     ];
 
     for (lan, upstreams) in invalid {
-        assert!(validate_network(lan, &upstreams).is_err(), "{lan} {upstreams:?} should fail");
+        assert!(
+            validate_network(lan, &upstreams).is_err(),
+            "{lan} {upstreams:?} should fail"
+        );
     }
 }
 
@@ -107,7 +116,9 @@ fn rejects_unsupported_schema_and_duplicate_identity() {
 #[test]
 fn loads_legacy_registry_mapping_but_does_not_allow_new_registration() {
     let mut settings = Settings::default();
-    settings.mappings.push(persisted_mapping("legacy", "registry.own"));
+    settings
+        .mappings
+        .push(persisted_mapping("legacy", "registry.own"));
 
     assert!(validate_settings(settings).is_ok());
     assert!(validate_mapping(mapping("registry.own", 3000)).is_err());

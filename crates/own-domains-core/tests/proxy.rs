@@ -4,9 +4,27 @@ fn settings() -> Settings {
     Settings {
         lan_address: "192.168.1.20".into(),
         mappings: vec![
-            DomainMapping { id: "1".into(), hostname: "shop.own".into(), upstream_port: 3000, tls: false, enabled: true },
-            DomainMapping { id: "2".into(), hostname: "api.shop.own".into(), upstream_port: 4000, tls: true, enabled: true },
-            DomainMapping { id: "3".into(), hostname: "off.own".into(), upstream_port: 5000, tls: false, enabled: false },
+            DomainMapping {
+                id: "1".into(),
+                hostname: "shop.own".into(),
+                upstream_port: 3000,
+                tls: false,
+                enabled: true,
+            },
+            DomainMapping {
+                id: "2".into(),
+                hostname: "api.shop.own".into(),
+                upstream_port: 4000,
+                tls: true,
+                enabled: true,
+            },
+            DomainMapping {
+                id: "3".into(),
+                hostname: "off.own".into(),
+                upstream_port: 5000,
+                tls: false,
+                enabled: false,
+            },
         ],
         ..Settings::default()
     }

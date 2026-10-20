@@ -10,7 +10,10 @@ const RESERVED_HOSTNAMES: [&str; 2] = ["registry.own", "setup.own"];
 pub fn normalize_hostname(input: &str) -> String {
     let normalized = input.trim().to_ascii_lowercase();
 
-    normalized.strip_suffix('.').unwrap_or(&normalized).to_string()
+    normalized
+        .strip_suffix('.')
+        .unwrap_or(&normalized)
+        .to_string()
 }
 
 pub fn validate_hostname(input: &str) -> CoreResult<String> {
@@ -27,7 +30,10 @@ pub fn validate_mapping(input: MappingInput) -> CoreResult<DomainMapping> {
     }
 
     Ok(DomainMapping {
-        id: input.id.filter(|id| !id.is_empty()).unwrap_or_else(|| Uuid::new_v4().to_string()),
+        id: input
+            .id
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| Uuid::new_v4().to_string()),
         hostname,
         upstream_port: input.upstream_port as u16,
         tls: input.tls,
@@ -38,14 +44,18 @@ pub fn validate_mapping(input: MappingInput) -> CoreResult<DomainMapping> {
 pub fn validate_network(lan_address: &str, upstream_dns: &[String]) -> CoreResult<()> {
     let lan = lan_address
         .parse::<Ipv4Addr>()
-        .map_err(|_| CoreError::Validation { message: "LAN address must be an IPv4 address".into() })?;
+        .map_err(|_| CoreError::Validation {
+            message: "LAN address must be an IPv4 address".into(),
+        })?;
     if upstream_dns.is_empty() {
         return validation("Upstream DNS must contain IPv4 addresses");
     }
     for address in upstream_dns {
-        let upstream = address.parse::<Ipv4Addr>().map_err(|_| CoreError::Validation {
-            message: "Upstream DNS must contain IPv4 addresses".into(),
-        })?;
+        let upstream = address
+            .parse::<Ipv4Addr>()
+            .map_err(|_| CoreError::Validation {
+                message: "Upstream DNS must contain IPv4 addresses".into(),
+            })?;
         if upstream.is_loopback() || upstream == lan {
             return validation("Upstream DNS would create a forwarding loop");
         }
@@ -60,7 +70,10 @@ pub fn validate_settings(mut settings: Settings) -> CoreResult<Settings> {
     if !settings.lan_address.is_empty() {
         validate_network(&settings.lan_address, &settings.upstream_dns)?;
     } else if settings.upstream_dns.is_empty()
-        || settings.upstream_dns.iter().any(|address| address.parse::<Ipv4Addr>().is_err())
+        || settings
+            .upstream_dns
+            .iter()
+            .any(|address| address.parse::<Ipv4Addr>().is_err())
     {
         return validation("Upstream DNS must contain IPv4 addresses");
     }
@@ -76,7 +89,8 @@ pub fn validate_settings(mut settings: Settings) -> CoreResult<Settings> {
             return Err(CoreError::DuplicateHostname { hostname });
         }
         mapping.hostname = hostname;
-        if mapping.upstream_port == 0 || RESERVED_PORTS.contains(&u32::from(mapping.upstream_port)) {
+        if mapping.upstream_port == 0 || RESERVED_PORTS.contains(&u32::from(mapping.upstream_port))
+        {
             return validation("Choose an available local port");
         }
     }
@@ -105,11 +119,15 @@ fn valid_label(label: &str) -> bool {
     !label.is_empty()
         && label.len() <= 63
         && label.is_ascii()
-        && label.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         && !label.starts_with('-')
         && !label.ends_with('-')
 }
 
 fn validation<T>(message: &str) -> CoreResult<T> {
-    Err(CoreError::Validation { message: message.into() })
+    Err(CoreError::Validation {
+        message: message.into(),
+    })
 }
