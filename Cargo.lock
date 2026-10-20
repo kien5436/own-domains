@@ -95,6 +95,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "own-domains-daemon"
+version = "0.1.0"
+dependencies = [
+ "own-domains-core",
+ "own-domains-protocol",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "own-domains-protocol"
 version = "0.1.0"
 dependencies = [

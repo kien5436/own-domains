@@ -1,8 +1,8 @@
 [workspace]
-members = ["crates/own-domains-core", "crates/own-domains-protocol"]
+members = ["crates/own-domains-core", "crates/own-domains-protocol", "crates/own-domains-daemon"]
 resolver = "2"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.90"
 
