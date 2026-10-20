@@ -5,7 +5,7 @@
 The native migration is split into four implementation plans. Each phase must leave independently testable software and preserve the working TypeScript implementation until its replacement reaches parity.
 
 1. **Portable Rust core** — model, validation, compatible settings persistence, serialized mutations, Caddy configuration, and CoreDNS configuration. Plan: `docs/superpowers/plans/2026-10-20-portable-rust-core.md`.
-2. **Daemon, IPC, and CLI** — one authoritative writer, local authenticated transport, revisioned event subscriptions, runtime state machine, and the independent `own-domains` executable.
+2. **Daemon, IPC, and CLI** — one authoritative writer, local authenticated transport, revisioned event subscriptions, runtime state machine, and the independent `own-domains` executable. Plan: `docs/superpowers/plans/2026-10-20-daemon-ipc-cli.md`.
 3. **Tauri GUI migration** — reuse the React/Vite/Tailwind frontend, replace HTTP management calls with IPC, add tray/single-instance/hide-on-close behavior, retain `setup.own`, and remove `registry.own`.
 4. **Platform activation and release verification** — privileged service integration and complete shutdown on macOS, supported systemd Linux, and Windows 11, followed by physical-device acceptance tests.
 
