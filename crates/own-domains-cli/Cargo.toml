@@ -1,0 +1,20 @@
+[package]
+name = "own-domains-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "own-domains"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+own-domains-client = { path = "../own-domains-client" }
+own-domains-core = { path = "../own-domains-core" }
+own-domains-daemon = { path = "../own-domains-daemon" }
+own-domains-protocol = { path = "../own-domains-protocol" }
+serde_json = "1.0.154"
+
+[dev-dependencies]
+uuid = { version = "1.28.0", features = ["v4"] }

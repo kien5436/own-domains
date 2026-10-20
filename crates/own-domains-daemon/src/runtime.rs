@@ -19,8 +19,18 @@ pub trait RuntimeBackend: Send + Sync {
 pub struct UnavailableRuntimeBackend;
 
 impl RuntimeBackend for UnavailableRuntimeBackend {
-    fn start(&self, _settings: &Settings) -> Result<ApplyResult, RuntimeError> { Err(RuntimeError::Unavailable("platform runtime has not been installed".into())) }
-    fn stop(&self) -> Result<(), RuntimeError> { Ok(()) }
-    fn inspect(&self) -> Result<RuntimeStatus, RuntimeError> { Ok(RuntimeStatus::Stopped) }
-    fn diagnose(&self, _settings: &Settings) -> Result<Vec<Diagnostic>, RuntimeError> { Ok(vec![]) }
+    fn start(&self, _settings: &Settings) -> Result<ApplyResult, RuntimeError> {
+        Err(RuntimeError::Unavailable(
+            "platform runtime has not been installed".into(),
+        ))
+    }
+    fn stop(&self) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+    fn inspect(&self) -> Result<RuntimeStatus, RuntimeError> {
+        Ok(RuntimeStatus::Stopped)
+    }
+    fn diagnose(&self, _settings: &Settings) -> Result<Vec<Diagnostic>, RuntimeError> {
+        Ok(vec![])
+    }
 }

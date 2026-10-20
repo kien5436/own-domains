@@ -12,6 +12,7 @@
     "test": "vitest run",
     "setup": "tsx src/cli/setup.ts",
     "test:e2e": "playwright test",
+    "test:native-daemon": "cargo test --workspace",
     "uninstall": "tsx src/cli/uninstall.ts",
     "typecheck": "tsc -b --pretty false",
     "verify:native-core": "cargo test -p own-domains-core && pnpm test && pnpm run lint && pnpm run typecheck && pnpm run build"

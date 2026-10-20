@@ -1,0 +1,370 @@
+use clap::{Parser, Subcommand};
+use own_domains_client::{Client, ClientError};
+use own_domains_core::{DomainService, MappingInput, MappingPatch, SettingsStore};
+use own_domains_daemon::{DaemonState, ProcessLock, UnavailableRuntimeBackend};
+use own_domains_protocol::{Command, CommandResult, ProtocolError};
+use std::{path::PathBuf, process::Command as ProcessCommand, sync::Arc, thread, time::Duration};
+
+#[derive(Debug, Parser)]
+#[command(name = "own-domains", version, about = "Manage local .own domains")]
+pub struct Cli {
+    #[arg(long, global = true, default_value = ".own-domains")]
+    pub state_dir: PathBuf,
+    #[arg(long, global = true)]
+    pub socket: Option<PathBuf>,
+    #[arg(long, global = true)]
+    pub json: bool,
+    #[command(subcommand)]
+    pub command: CliCommand,
+}
+
+impl Cli {
+    pub fn try_parse_from<I, T>(arguments: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        <Self as Parser>::try_parse_from(arguments)
+    }
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CliCommand {
+    Start,
+    Stop,
+    Status,
+    List,
+    Add {
+        hostname: String,
+        #[arg(long)]
+        port: u32,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        https: bool,
+    },
+    Edit {
+        hostname: String,
+        #[arg(long)]
+        port: Option<u32>,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        https: Option<bool>,
+    },
+    Enable {
+        hostname: String,
+        #[arg(long)]
+        revision: u64,
+    },
+    Disable {
+        hostname: String,
+        #[arg(long)]
+        revision: u64,
+    },
+    Remove {
+        hostname: String,
+        #[arg(long)]
+        revision: u64,
+    },
+    Doctor,
+}
+
+pub struct CommandOutput {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl CommandOutput {
+    fn success(stdout: String) -> Self {
+        Self {
+            exit_code: 0,
+            stdout,
+            stderr: String::new(),
+        }
+    }
+    fn error(exit_code: i32, error: impl ToString) -> Self {
+        Self {
+            exit_code,
+            stdout: String::new(),
+            stderr: format!("{}\n", error.to_string()),
+        }
+    }
+}
+
+pub fn execute(cli: Cli) -> CommandOutput {
+    let socket = cli
+        .socket
+        .clone()
+        .unwrap_or_else(|| cli.state_dir.join("daemon.sock"));
+    match Client::connect(&socket) {
+        Ok(client) => run_live(&client, &cli.command, cli.json),
+        Err(ClientError::DaemonUnavailable { .. }) => run_offline(&cli, &socket),
+        Err(error) => client_error(error),
+    }
+}
+
+fn run_live(client: &Client, command: &CliCommand, json: bool) -> CommandOutput {
+    let protocol = match to_protocol(command, client) {
+        Ok(command) => command,
+        Err(output) => return output,
+    };
+    match client.request(protocol) {
+        Ok(result) => render(result, json, None),
+        Err(error) => client_error(error),
+    }
+}
+
+fn run_offline(cli: &Cli, socket: &std::path::Path) -> CommandOutput {
+    match &cli.command {
+        CliCommand::Start => start_daemon(cli, socket),
+        CliCommand::Stop | CliCommand::Status => CommandOutput::success(if cli.json {
+            "{\"runtimeStatus\":\"stopped\"}\n".into()
+        } else {
+            "stopped\n".into()
+        }),
+        CliCommand::List => {
+            let service = DomainService::new(SettingsStore::new(&cli.state_dir));
+            match service.list() {
+                Ok(settings) => render(
+                    CommandResult::Settings(settings),
+                    cli.json,
+                    Some("runtime stopped"),
+                ),
+                Err(error) => CommandOutput::error(4, error),
+            }
+        }
+        CliCommand::Doctor => CommandOutput::success(if cli.json {
+            "{\"runtimeStatus\":\"stopped\",\"diagnostics\":[]}\n".into()
+        } else {
+            "runtime stopped; no active services\n".into()
+        }),
+        mutation => {
+            let _lock = match ProcessLock::acquire(&cli.state_dir) {
+                Ok(lock) => lock,
+                Err(error) => return CommandOutput::error(4, error),
+            };
+            let state = DaemonState::new(
+                DomainService::new(SettingsStore::new(&cli.state_dir)),
+                Arc::new(UnavailableRuntimeBackend),
+            );
+            let command = match to_offline_protocol(mutation, &state) {
+                Ok(command) => command,
+                Err(output) => return output,
+            };
+            let response = state.handle(own_domains_protocol::RequestEnvelope {
+                protocol_version: own_domains_protocol::PROTOCOL_VERSION,
+                request_id: "offline".into(),
+                command,
+            });
+            match response.result {
+                Ok(result) => render(result, cli.json, Some("saved; runtime stopped")),
+                Err(error) => protocol_error(error),
+            }
+        }
+    }
+}
+
+fn to_protocol(command: &CliCommand, client: &Client) -> Result<Command, CommandOutput> {
+    match command {
+        CliCommand::Start => Ok(Command::Start),
+        CliCommand::Stop => Ok(Command::Stop),
+        CliCommand::Status => Ok(Command::Snapshot),
+        CliCommand::List => Ok(Command::List),
+        CliCommand::Doctor => Ok(Command::Doctor),
+        CliCommand::Add {
+            hostname,
+            port,
+            revision,
+            https,
+        } => Ok(Command::Create {
+            input: MappingInput {
+                id: None,
+                hostname: hostname.clone(),
+                upstream_port: *port,
+                tls: *https,
+                enabled: true,
+            },
+            expected_revision: *revision,
+        }),
+        other => {
+            let settings = match client.request(Command::List) {
+                Ok(CommandResult::Settings(settings)) => settings,
+                Ok(_) => {
+                    return Err(CommandOutput::error(
+                        4,
+                        "daemon returned unexpected list result",
+                    ));
+                }
+                Err(error) => return Err(client_error(error)),
+            };
+            mutation_for_existing(other, &settings)
+        }
+    }
+}
+
+fn to_offline_protocol(
+    command: &CliCommand,
+    state: &DaemonState,
+) -> Result<Command, CommandOutput> {
+    if let CliCommand::Add {
+        hostname,
+        port,
+        revision,
+        https,
+    } = command
+    {
+        return Ok(Command::Create {
+            input: MappingInput {
+                id: None,
+                hostname: hostname.clone(),
+                upstream_port: *port,
+                tls: *https,
+                enabled: true,
+            },
+            expected_revision: *revision,
+        });
+    }
+    let settings = state.snapshot().map_err(protocol_error)?.settings;
+    mutation_for_existing(command, &settings)
+}
+
+fn mutation_for_existing(
+    command: &CliCommand,
+    settings: &own_domains_core::Settings,
+) -> Result<Command, CommandOutput> {
+    let (hostname, revision) = match command {
+        CliCommand::Edit {
+            hostname, revision, ..
+        }
+        | CliCommand::Enable { hostname, revision }
+        | CliCommand::Disable { hostname, revision }
+        | CliCommand::Remove { hostname, revision } => (hostname, *revision),
+        _ => return Err(CommandOutput::error(4, "not a mutation")),
+    };
+    let mapping = settings
+        .mappings
+        .iter()
+        .find(|item| item.hostname == *hostname || item.id == *hostname)
+        .ok_or_else(|| CommandOutput::error(2, format!("domain mapping not found: {hostname}")))?;
+    match command {
+        CliCommand::Edit { port, https, .. } => Ok(Command::Update {
+            id: mapping.id.clone(),
+            patch: MappingPatch {
+                hostname: None,
+                upstream_port: *port,
+                tls: *https,
+                enabled: None,
+            },
+            expected_revision: revision,
+        }),
+        CliCommand::Enable { .. } => Ok(Command::Update {
+            id: mapping.id.clone(),
+            patch: MappingPatch {
+                enabled: Some(true),
+                ..Default::default()
+            },
+            expected_revision: revision,
+        }),
+        CliCommand::Disable { .. } => Ok(Command::Update {
+            id: mapping.id.clone(),
+            patch: MappingPatch {
+                enabled: Some(false),
+                ..Default::default()
+            },
+            expected_revision: revision,
+        }),
+        CliCommand::Remove { .. } => Ok(Command::Remove {
+            id: mapping.id.clone(),
+            expected_revision: revision,
+        }),
+        _ => unreachable!(),
+    }
+}
+
+fn start_daemon(cli: &Cli, socket: &std::path::Path) -> CommandOutput {
+    let executable = std::env::var_os("OWN_DOMAINS_DAEMON")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("own-domains-daemon"));
+    if let Err(error) = ProcessCommand::new(executable)
+        .arg("--state-dir")
+        .arg(&cli.state_dir)
+        .arg("--socket")
+        .arg(socket)
+        .spawn()
+    {
+        return CommandOutput::error(4, format!("failed to start daemon: {error}"));
+    }
+    for _ in 0..50 {
+        if let Ok(client) = Client::connect(socket) {
+            return match client.request(Command::Start) {
+                Ok(result) => render(result, cli.json, None),
+                Err(error) => client_error(error),
+            };
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    CommandOutput::error(4, "daemon did not become ready")
+}
+
+fn render(result: CommandResult, json: bool, note: Option<&str>) -> CommandOutput {
+    if json {
+        return match serde_json::to_string(&result) {
+            Ok(value) => CommandOutput::success(format!("{value}\n")),
+            Err(error) => CommandOutput::error(4, error),
+        };
+    }
+    let text = match result {
+        CommandResult::Settings(settings) => {
+            if let Some(note) = note {
+                format!("revision {}: {note}", settings.revision)
+            } else {
+                settings
+                    .mappings
+                    .iter()
+                    .map(|item| format!("{} -> {}", item.hostname, item.upstream_port))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
+        CommandResult::Snapshot(snapshot) => format!(
+            "{:?} (revision {})",
+            snapshot.runtime_status, snapshot.settings.revision
+        )
+        .to_lowercase(),
+        CommandResult::Runtime(status) => format!("{status:?}").to_lowercase(),
+        CommandResult::Diagnostics(items) => {
+            if items.is_empty() {
+                "no diagnostics".into()
+            } else {
+                items
+                    .into_iter()
+                    .map(|item| item.message)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
+        other => format!("{other:?}"),
+    };
+    CommandOutput::success(format!("{text}\n"))
+}
+
+fn client_error(error: ClientError) -> CommandOutput {
+    match error {
+        ClientError::Protocol(error) => protocol_error(error),
+        ClientError::IncompatibleVersion { .. } => CommandOutput::error(4, error),
+        _ => CommandOutput::error(4, error),
+    }
+}
+fn protocol_error(error: ProtocolError) -> CommandOutput {
+    let code = match error {
+        ProtocolError::Validation { .. }
+        | ProtocolError::NotFound { .. }
+        | ProtocolError::DuplicateHostname { .. } => 2,
+        ProtocolError::RevisionConflict { .. } => 3,
+        ProtocolError::RuntimeUnavailable { .. } | ProtocolError::RuntimeFailure { .. } => 5,
+        _ => 4,
+    };
+    CommandOutput::error(code, format!("{error:?}"))
+}

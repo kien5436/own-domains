@@ -21,11 +21,19 @@ pub struct ResponseEnvelope {
 
 impl ResponseEnvelope {
     pub fn ok(request_id: impl Into<String>, result: CommandResult) -> Self {
-        Self { protocol_version: PROTOCOL_VERSION, request_id: request_id.into(), result: Ok(result) }
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: request_id.into(),
+            result: Ok(result),
+        }
     }
 
     pub fn error(request_id: impl Into<String>, error: ProtocolError) -> Self {
-        Self { protocol_version: PROTOCOL_VERSION, request_id: request_id.into(), result: Err(error) }
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: request_id.into(),
+            result: Err(error),
+        }
     }
 }
 
@@ -42,14 +50,30 @@ pub struct EventEnvelope {
 pub enum Command {
     Handshake,
     Snapshot,
-    Subscribe { after_sequence: Option<u64> },
+    Subscribe {
+        after_sequence: Option<u64>,
+    },
     Start,
     Stop,
     List,
-    Create { input: MappingInput, expected_revision: u64 },
-    Update { id: String, patch: MappingPatch, expected_revision: u64 },
-    Remove { id: String, expected_revision: u64 },
-    UpdateNetwork { lan_address: String, upstream_dns: Vec<String>, expected_revision: u64 },
+    Create {
+        input: MappingInput,
+        expected_revision: u64,
+    },
+    Update {
+        id: String,
+        patch: MappingPatch,
+        expected_revision: u64,
+    },
+    Remove {
+        id: String,
+        expected_revision: u64,
+    },
+    UpdateNetwork {
+        lan_address: String,
+        upstream_dns: Vec<String>,
+        expected_revision: u64,
+    },
     Doctor,
 }
 
@@ -116,6 +140,9 @@ pub fn validate_version(received: u16) -> Result<(), ProtocolError> {
     if received == PROTOCOL_VERSION {
         Ok(())
     } else {
-        Err(ProtocolError::IncompatibleVersion { supported: PROTOCOL_VERSION, received })
+        Err(ProtocolError::IncompatibleVersion {
+            supported: PROTOCOL_VERSION,
+            received,
+        })
     }
 }

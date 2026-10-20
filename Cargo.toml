@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/own-domains-core", "crates/own-domains-protocol", "crates/own-domains-daemon", "crates/own-domains-client"]
+members = ["crates/own-domains-core", "crates/own-domains-protocol", "crates/own-domains-daemon", "crates/own-domains-client", "crates/own-domains-cli"]
 resolver = "2"
 
 [workspace.package]
