@@ -38,7 +38,7 @@ pub struct MappingInput {
     #[serde(default)]
     pub id: Option<String>,
     pub hostname: String,
-    pub upstream_port: u16,
+    pub upstream_port: u32,
     pub tls: bool,
     pub enabled: bool,
 }
@@ -47,7 +47,7 @@ pub struct MappingInput {
 #[serde(rename_all = "camelCase")]
 pub struct MappingPatch {
     pub hostname: Option<String>,
-    pub upstream_port: Option<u16>,
+    pub upstream_port: Option<u32>,
     pub tls: Option<bool>,
     pub enabled: Option<bool>,
 }
