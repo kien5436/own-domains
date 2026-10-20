@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -18,6 +20,8 @@ pub struct Settings {
     pub lan_address: String,
     pub upstream_dns: Vec<String>,
     pub mappings: Vec<DomainMapping>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for Settings {
@@ -28,6 +32,7 @@ impl Default for Settings {
             lan_address: String::new(),
             upstream_dns: vec!["1.1.1.1".into(), "9.9.9.9".into()],
             mappings: Vec::new(),
+            extra: BTreeMap::new(),
         }
     }
 }
