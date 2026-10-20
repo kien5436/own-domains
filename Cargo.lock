@@ -95,6 +95,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "own-domains-protocol"
+version = "0.1.0"
+dependencies = [
+ "own-domains-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"

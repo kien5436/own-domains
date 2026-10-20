@@ -1,0 +1,10 @@
+[package]
+name = "own-domains-protocol"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+own-domains-core = { path = "../own-domains-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
