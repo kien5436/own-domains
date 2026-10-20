@@ -1,3 +1,4 @@
+mod dns;
 mod error;
 mod model;
 mod proxy;
@@ -5,6 +6,7 @@ mod service;
 mod store;
 mod validation;
 
+pub use dns::{DnsConfigOptions, build_corefile};
 pub use error::{CoreError, CoreResult};
 pub use model::{
     ApplyResult, ApplyStatus, Diagnostic, DiagnosticStatus, DomainMapping, MappingInput,
