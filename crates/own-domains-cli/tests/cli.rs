@@ -37,7 +37,10 @@ fn parser_rejects_missing_values_and_unknown_flags() {
 
 #[test]
 fn offline_status_and_mutation_are_truthful() {
-    let state_dir = std::env::current_dir()
+    let state_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
         .unwrap()
         .join("target")
         .join(format!("od-cli-{}", &uuid::Uuid::new_v4().to_string()[..8]));
