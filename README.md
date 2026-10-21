@@ -2,7 +2,11 @@
 
 Own Domains registers private `.own` hostnames for web applications running on your Mac. It provides a React dashboard, dnsmasq DNS, Caddy reverse proxying, optional local HTTPS, and access from devices on the same network.
 
-The experimental native Tauri client is documented in [Desktop development](docs/desktop.md). It uses the Rust daemon and currently saves settings without activating routing.
+The native Tauri client and Rust CLI are documented in [Desktop development](docs/desktop.md) and [Native CLI](docs/cli.md). The macOS runtime can activate bundled CoreDNS and Caddy after privileged setup; Linux and Windows remain `runtimeUnavailable`. The legacy TypeScript runtime stays available until the [macOS acceptance gate](docs/macos-acceptance.md) passes.
+
+## Native macOS runtime (in progress)
+
+The native client packages pinned CoreDNS and Caddy sidecars, verifies their digests, and resolves them from the app bundle. A one-time privileged setup installs the `.own` resolver, a dedicated PF anchor, and the Caddy root certificate; normal launches do not need administrator access. See [macOS acceptance](docs/macos-acceptance.md) for the signed-package and physical-phone gate. Do not remove the legacy installation before that gate is recorded.
 
 ## Requirements
 

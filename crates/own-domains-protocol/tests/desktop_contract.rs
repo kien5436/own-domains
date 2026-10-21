@@ -50,6 +50,22 @@ fn desktop_wire_contract_matches_rust_serialization() {
     let results = vec![
         CommandResult::Snapshot(snapshot.clone()),
         CommandResult::Settings(Settings::default()),
+        CommandResult::Mutation(MutationResult {
+            settings: Settings::default(),
+            apply: None,
+        }),
+        CommandResult::Mutation(MutationResult {
+            settings: Settings {
+                revision: 1,
+                ..Settings::default()
+            },
+            apply: Some(ApplyResult {
+                desired_revision: 1,
+                applied_revision: 0,
+                status: ApplyStatus::Error,
+                message: Some("candidate rejected".into()),
+            }),
+        }),
         CommandResult::Diagnostics(vec![]),
         CommandResult::Runtime(RuntimeStatus::Stopped),
         CommandResult::Apply(ApplyResult {
@@ -61,7 +77,7 @@ fn desktop_wire_contract_matches_rust_serialization() {
         CommandResult::Acknowledged,
         CommandResult::Subscribed,
         CommandResult::Handshake {
-            protocol_version: 1,
+            protocol_version: PROTOCOL_VERSION,
         },
     ];
     let events = vec![
@@ -69,7 +85,7 @@ fn desktop_wire_contract_matches_rust_serialization() {
         Event::ResyncRequired { snapshot },
         Event::SettingsChanged { revision: 1 },
         Event::RuntimeChanged {
-            status: RuntimeStatus::Error,
+            status: RuntimeStatus::Degraded,
         },
         Event::DiagnosticsChanged {
             diagnostics: vec![],
@@ -77,8 +93,8 @@ fn desktop_wire_contract_matches_rust_serialization() {
     ];
     let errors = vec![
         ProtocolError::IncompatibleVersion {
-            supported: 1,
-            received: 2,
+            supported: PROTOCOL_VERSION,
+            received: 1,
         },
         ProtocolError::RevisionConflict {
             expected: 1,
@@ -109,7 +125,7 @@ fn desktop_wire_contract_matches_rust_serialization() {
             message: "invalid request".into(),
         },
     ];
-    let value = json!({ "commands": commands, "results": results, "events": events.into_iter().enumerate().map(|(index, event)| EventEnvelope { protocol_version: 1, sequence: index as u64, event }).collect::<Vec<_>>(), "errors": errors, "subscription": Command::Subscribe { after_sequence: Some(4) } });
+    let value = json!({ "commands": commands, "results": results, "events": events.into_iter().enumerate().map(|(index, event)| EventEnvelope { protocol_version: PROTOCOL_VERSION, sequence: index as u64, event }).collect::<Vec<_>>(), "errors": errors, "subscription": Command::Subscribe { after_sequence: Some(4) } });
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/ipc/desktop-contract.json");
     if std::env::var_os("UPDATE_IPC_FIXTURE").is_some() {

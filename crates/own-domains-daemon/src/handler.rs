@@ -1,14 +1,15 @@
 use crate::{EventBroker, RuntimeBackend, RuntimeError};
-use own_domains_core::{CoreError, DomainService, Settings};
+use own_domains_core::{ApplyResult, ApplyStatus, CoreError, DomainService, Settings};
 use own_domains_protocol::{
-    Command, CommandResult, Event, PROTOCOL_VERSION, ProtocolError, RequestEnvelope,
-    ResponseEnvelope, RuntimeStatus, StateSnapshot, validate_version,
+    Command, CommandResult, Event, MutationResult, PROTOCOL_VERSION, ProtocolError,
+    RequestEnvelope, ResponseEnvelope, RuntimeStatus, StateSnapshot, validate_version,
 };
 use std::sync::{Arc, Mutex};
 
 struct Inner {
     service: DomainService,
     runtime_status: RuntimeStatus,
+    runtime_active: bool,
     applied_revision: u64,
 }
 
@@ -24,6 +25,7 @@ impl DaemonState {
             inner: Mutex::new(Inner {
                 service,
                 runtime_status: RuntimeStatus::Stopped,
+                runtime_active: false,
                 applied_revision: 0,
             }),
             runtime,
@@ -77,40 +79,53 @@ impl DaemonState {
             Command::Create {
                 input,
                 expected_revision,
-            } => mutate(&self.events, inner.service.create(input, expected_revision)),
+            } => {
+                let result = inner.service.create(input, expected_revision);
+                mutate(&self.events, self.runtime.as_ref(), &mut inner, result)
+            }
             Command::Update {
                 id,
                 patch,
                 expected_revision,
-            } => mutate(
-                &self.events,
-                inner.service.update(&id, patch, expected_revision),
-            ),
+            } => {
+                let result = inner.service.update(&id, patch, expected_revision);
+                mutate(&self.events, self.runtime.as_ref(), &mut inner, result)
+            }
             Command::Remove {
                 id,
                 expected_revision,
-            } => mutate(&self.events, inner.service.remove(&id, expected_revision)),
+            } => {
+                let result = inner.service.remove(&id, expected_revision);
+                mutate(&self.events, self.runtime.as_ref(), &mut inner, result)
+            }
             Command::UpdateNetwork {
                 lan_address,
                 upstream_dns,
                 expected_revision,
-            } => mutate(
-                &self.events,
-                inner
-                    .service
-                    .update_network(lan_address, upstream_dns, expected_revision),
-            ),
+            } => {
+                let result =
+                    inner
+                        .service
+                        .update_network(lan_address, upstream_dns, expected_revision);
+                mutate(&self.events, self.runtime.as_ref(), &mut inner, result)
+            }
             Command::Start => {
                 set_status(&self.events, &mut inner, RuntimeStatus::Starting);
                 let settings = inner.service.list().map_err(map_core_error)?;
-                match self.runtime.start(&settings) {
+                match self.runtime.apply(&settings) {
                     Ok(applied) => {
+                        inner.runtime_active = true;
                         inner.applied_revision = applied.applied_revision;
                         set_status(&self.events, &mut inner, RuntimeStatus::Running);
                         Ok(CommandResult::Apply(applied))
                     }
                     Err(error) => {
-                        set_status(&self.events, &mut inner, RuntimeStatus::Error);
+                        let status = if inner.runtime_active {
+                            RuntimeStatus::Degraded
+                        } else {
+                            RuntimeStatus::Error
+                        };
+                        set_status(&self.events, &mut inner, status);
                         Err(map_runtime_error(error))
                     }
                 }
@@ -119,6 +134,7 @@ impl DaemonState {
                 set_status(&self.events, &mut inner, RuntimeStatus::Stopping);
                 match self.runtime.stop() {
                     Ok(()) => {
+                        inner.runtime_active = false;
                         set_status(&self.events, &mut inner, RuntimeStatus::Stopped);
                         Ok(CommandResult::Runtime(RuntimeStatus::Stopped))
                     }
@@ -143,13 +159,43 @@ impl DaemonState {
 
 fn mutate(
     events: &EventBroker,
+    runtime: &dyn RuntimeBackend,
+    inner: &mut Inner,
     result: Result<Settings, CoreError>,
 ) -> Result<CommandResult, ProtocolError> {
     let settings = result.map_err(map_core_error)?;
+    let apply = if inner.runtime_active {
+        let result = match runtime.apply(&settings) {
+            Ok(applied) => {
+                inner.applied_revision = applied.applied_revision;
+                inner.runtime_status = RuntimeStatus::Running;
+                applied
+            }
+            Err(error) => {
+                inner.runtime_status = RuntimeStatus::Degraded;
+                ApplyResult {
+                    desired_revision: settings.revision,
+                    applied_revision: inner.applied_revision,
+                    status: ApplyStatus::Error,
+                    message: Some(error.to_string()),
+                }
+            }
+        };
+        Some(result)
+    } else {
+        None
+    };
+    let diagnostics = runtime.diagnose(&settings).unwrap_or_default();
     events.publish(Event::SettingsChanged {
         revision: settings.revision,
     });
-    Ok(CommandResult::Settings(settings))
+    if apply.is_some() {
+        events.publish(Event::RuntimeChanged {
+            status: inner.runtime_status.clone(),
+        });
+        events.publish(Event::DiagnosticsChanged { diagnostics });
+    }
+    Ok(CommandResult::Mutation(MutationResult { settings, apply }))
 }
 
 fn set_status(events: &EventBroker, inner: &mut Inner, status: RuntimeStatus) {

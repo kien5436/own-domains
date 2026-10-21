@@ -62,8 +62,8 @@
   "errors": [
     {
       "code": "incompatibleVersion",
-      "received": 2,
-      "supported": 1
+      "received": 1,
+      "supported": 2
     },
     {
       "actual": 2,
@@ -125,7 +125,7 @@
         },
         "type": "snapshot"
       },
-      "protocolVersion": 1,
+      "protocolVersion": 2,
       "sequence": 0
     },
     {
@@ -151,7 +151,7 @@
         },
         "type": "resyncRequired"
       },
-      "protocolVersion": 1,
+      "protocolVersion": 2,
       "sequence": 1
     },
     {
@@ -161,17 +161,17 @@
         },
         "type": "settingsChanged"
       },
-      "protocolVersion": 1,
+      "protocolVersion": 2,
       "sequence": 2
     },
     {
       "event": {
         "payload": {
-          "status": "error"
+          "status": "degraded"
         },
         "type": "runtimeChanged"
       },
-      "protocolVersion": 1,
+      "protocolVersion": 2,
       "sequence": 3
     },
     {
@@ -181,7 +181,7 @@
         },
         "type": "diagnosticsChanged"
       },
-      "protocolVersion": 1,
+      "protocolVersion": 2,
       "sequence": 4
     }
   ],
@@ -220,6 +220,43 @@
       "type": "settings"
     },
     {
+      "payload": {
+        "apply": null,
+        "settings": {
+          "lanAddress": "",
+          "mappings": [],
+          "revision": 0,
+          "schemaVersion": 1,
+          "upstreamDns": [
+            "1.1.1.1",
+            "9.9.9.9"
+          ]
+        }
+      },
+      "type": "mutation"
+    },
+    {
+      "payload": {
+        "apply": {
+          "appliedRevision": 0,
+          "desiredRevision": 1,
+          "message": "candidate rejected",
+          "status": "error"
+        },
+        "settings": {
+          "lanAddress": "",
+          "mappings": [],
+          "revision": 1,
+          "schemaVersion": 1,
+          "upstreamDns": [
+            "1.1.1.1",
+            "9.9.9.9"
+          ]
+        }
+      },
+      "type": "mutation"
+    },
+    {
       "payload": [],
       "type": "diagnostics"
     },
@@ -243,7 +280,7 @@
     },
     {
       "payload": {
-        "protocol_version": 1
+        "protocol_version": 2
       },
       "type": "handshake"
     }

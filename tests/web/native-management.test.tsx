@@ -26,8 +26,11 @@ it('manages domains and network through IPC without HTTP and shows stopped truth
       if (command.type === 'updateNetwork') { state.settings.lanAddress = command.payload.lan_address; state.settings.upstreamDns = command.payload.upstream_dns }
 
       state.settings.revision++; state.desiredRevision++; state.latestEventSequence++;
+      const apply = command.type === 'updateNetwork' ? { desiredRevision: state.desiredRevision, appliedRevision: state.appliedRevision, status: 'error' as const, message: 'reload failed' } : null;
 
-      return { type: 'settings', payload: structuredClone(state.settings) };
+      if (apply) state.runtimeStatus = 'degraded';
+
+      return { type: 'mutation', payload: { settings: structuredClone(state.settings), apply } };
     }),
   };
   const user = userEvent.setup(); const store = new RuntimeStore(client);
@@ -54,8 +57,11 @@ it('manages domains and network through IPC without HTTP and shows stopped truth
   confirm.mockRestore();
   await user.type(screen.getByLabelText('Mac LAN IPv4'), '192.168.1.20'); await user.click(screen.getByRole('button', { name: 'Save network settings' }));
   await waitFor(() => expect(state.settings.lanAddress).toBe('192.168.1.20'));
+  await screen.findByText('Runtime: degraded');
+  expect(screen.getByText(/pending: desired 6, applied 0/)).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent('reload failed');
   state = { ...state, settings: { ...state.settings, revision: 9, mappings: [{ id: 'cli', hostname: 'cli.own', upstreamPort: 8080, enabled: true, tls: false }] }, desiredRevision: 9, latestEventSequence: 9 };
-  emit({ protocolVersion: 1, sequence: 9, event: { type: 'settingsChanged', payload: { revision: 9 } } });
+  emit({ protocolVersion: 2, sequence: 9, event: { type: 'settingsChanged', payload: { revision: 9 } } });
   await screen.findByText('cli.own'); expect(screen.getByText('Revision 9')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Start routing' }));
   await screen.findByText('Runtime unavailable');

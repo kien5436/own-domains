@@ -15,6 +15,7 @@ own-domains-core = { path = "../own-domains-core" }
 own-domains-daemon = { path = "../own-domains-daemon" }
 own-domains-protocol = { path = "../own-domains-protocol" }
 serde_json = "1.0.154"
+libc = "0.2.191"
 
 [dev-dependencies]
 uuid = { version = "1.28.0", features = ["v4"] }

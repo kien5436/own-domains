@@ -1,5 +1,5 @@
 use own_domains_client::{Client, ClientError};
-use own_domains_protocol::{CommandResult, ResponseEnvelope};
+use own_domains_protocol::{CommandResult, PROTOCOL_VERSION, ResponseEnvelope};
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixListener,
@@ -26,7 +26,7 @@ fn server(frames: Vec<(Vec<u8>, Duration)>) -> (std::path::PathBuf, thread::Join
                     CommandResult::Subscribed
                 } else {
                     CommandResult::Handshake {
-                        protocol_version: 1,
+                        protocol_version: PROTOCOL_VERSION,
                     }
                 };
                 writeln!(
@@ -54,15 +54,18 @@ fn server(frames: Vec<(Vec<u8>, Duration)>) -> (std::path::PathBuf, thread::Join
 fn subscription_preserves_partial_frames_across_idle_timeouts() {
     let (path, runner) = server(vec![
         (
-            br#"{"protocolVersion":1,"sequence":1,"event":{"type":"settings"#.to_vec(),
+            format!(
+                "{{\"protocolVersion\":{PROTOCOL_VERSION},\"sequence\":1,\"event\":{{\"type\":\"settings"
+            )
+            .into_bytes(),
             Duration::ZERO,
         ),
         (
             b"Changed\",\"payload\":{\"revision\":1}}}\n".to_vec(),
-            Duration::from_millis(100),
+            Duration::from_millis(300),
         ),
     ]);
-    let client = Client::with_timeout(&path, Duration::from_millis(20)).unwrap();
+    let client = Client::with_timeout(&path, Duration::from_millis(100)).unwrap();
     let mut stream = client.subscribe(None).unwrap();
     assert_eq!(stream.recv().unwrap().sequence, 1);
     runner.join().unwrap();
@@ -81,11 +84,11 @@ fn cancelling_idle_subscription_interrupts_reader() {
 }
 #[test]
 fn rejects_incompatible_event_versions() {
-    let (path, runner) = server(vec![(b"{\"protocolVersion\":2,\"sequence\":1,\"event\":{\"type\":\"settingsChanged\",\"payload\":{\"revision\":1}}}\n".to_vec(), Duration::ZERO)]);
+    let (path, runner) = server(vec![(b"{\"protocolVersion\":3,\"sequence\":1,\"event\":{\"type\":\"settingsChanged\",\"payload\":{\"revision\":1}}}\n".to_vec(), Duration::ZERO)]);
     let mut stream = Client::connect(&path).unwrap().subscribe(None).unwrap();
     assert!(matches!(
         stream.recv(),
-        Err(ClientError::IncompatibleVersion { received: 2, .. })
+        Err(ClientError::IncompatibleVersion { received: 3, .. })
     ));
     runner.join().unwrap();
 }

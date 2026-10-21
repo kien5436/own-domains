@@ -12,7 +12,7 @@ impl LifecycleBackend for Fake {
         self.0.lock().unwrap().push("stop");
         if self.1 {
             Err(BridgeError::Transport {
-                message: "routing may still be active".into(),
+                message: "partial cleanup: Caddy is still listening on 8080".into(),
             })
         } else {
             Ok(())
@@ -43,7 +43,14 @@ fn quit_stops_before_exit_and_failed_shutdown_restores_window() {
     for fail in [false, true] {
         let fake = Fake(Default::default(), fail);
         let lifecycle = DesktopLifecycle::new(fake.clone(), fake.clone());
-        assert_eq!(lifecycle.quit().is_err(), fail);
+        match lifecycle.quit() {
+            Ok(()) => assert!(!fail),
+            Err(BridgeError::Transport { message }) => {
+                assert!(fail);
+                assert_eq!(message, "partial cleanup: Caddy is still listening on 8080");
+            }
+            Err(other) => panic!("unexpected quit error: {other:?}"),
+        }
         assert_eq!(
             *fake.0.lock().unwrap(),
             if fail {
@@ -52,5 +59,6 @@ fn quit_stops_before_exit_and_failed_shutdown_restores_window() {
                 vec!["stop", "exit"]
             }
         );
+        assert!(!fake.0.lock().unwrap().contains(&"exit") || !fail);
     }
 }

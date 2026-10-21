@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-import type { EventEnvelope, NativeCommand, NativeCommandResult } from './native-protocol';
+import { type EventEnvelope, NATIVE_PROTOCOL_VERSION, type NativeCommand, type NativeCommandResult } from './native-protocol';
 
 export type NativeClient = {
   request: (command: NativeCommand) => Promise<NativeCommandResult>;
@@ -34,7 +34,7 @@ export function createNativeClient(transport: NativeTransport = { invoke, listen
 
         if (message.subscriptionId !== id) return;
         if (message.envelope)
-          if (1 !== message.envelope.protocolVersion) onDisconnect(new Error('Incompatible event protocol'));
+          if (NATIVE_PROTOCOL_VERSION !== message.envelope.protocolVersion) onDisconnect(new Error('Incompatible event protocol'));
           else onEvent(message.envelope);
 
         else onDisconnect(message.error);

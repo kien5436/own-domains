@@ -10,7 +10,7 @@ pub enum RuntimeError {
 }
 
 pub trait RuntimeBackend: Send + Sync {
-    fn start(&self, settings: &Settings) -> Result<ApplyResult, RuntimeError>;
+    fn apply(&self, settings: &Settings) -> Result<ApplyResult, RuntimeError>;
     fn stop(&self) -> Result<(), RuntimeError>;
     fn inspect(&self) -> Result<RuntimeStatus, RuntimeError>;
     fn diagnose(&self, settings: &Settings) -> Result<Vec<Diagnostic>, RuntimeError>;
@@ -19,7 +19,7 @@ pub trait RuntimeBackend: Send + Sync {
 pub struct UnavailableRuntimeBackend;
 
 impl RuntimeBackend for UnavailableRuntimeBackend {
-    fn start(&self, _settings: &Settings) -> Result<ApplyResult, RuntimeError> {
+    fn apply(&self, _settings: &Settings) -> Result<ApplyResult, RuntimeError> {
         Err(RuntimeError::Unavailable(
             "platform runtime has not been installed".into(),
         ))

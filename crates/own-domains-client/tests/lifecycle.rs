@@ -81,7 +81,7 @@ fn incompatible_daemon_is_not_replaced_by_a_new_process() {
         let response = own_domains_protocol::ResponseEnvelope::ok(
             request.request_id,
             own_domains_protocol::CommandResult::Handshake {
-                protocol_version: 2,
+                protocol_version: own_domains_protocol::PROTOCOL_VERSION + 1,
             },
         );
         writeln!(stream, "{}", serde_json::to_string(&response).unwrap()).unwrap();

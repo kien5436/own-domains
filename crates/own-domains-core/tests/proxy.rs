@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use own_domains_core::{DomainMapping, ProxyConfigOptions, Settings, build_proxy_config};
 
 fn settings() -> Settings {
@@ -33,7 +35,11 @@ fn settings() -> Settings {
 #[test]
 fn builds_exact_http_https_and_setup_routes_without_management_exposure() {
     let settings = settings();
-    let options = ProxyConfigOptions::for_settings(&settings).unwrap();
+    let options = ProxyConfigOptions::for_runtime(
+        &settings,
+        Path::new("/Users/kien/Library/Application Support/OwnDomains/runtime/caddy-admin.sock"),
+    )
+    .unwrap();
     let config = build_proxy_config(&settings, &options).unwrap();
     let text = serde_json::to_string(&config).unwrap();
 
@@ -49,6 +55,10 @@ fn builds_exact_http_https_and_setup_routes_without_management_exposure() {
     assert!(!text.contains("off.own"));
     assert!(!text.contains("registry.own"));
     assert!(!text.contains("4780"));
-    assert!(!text.contains(".sock"));
-    assert_eq!(config["admin"]["listen"], "127.0.0.1:2020");
+    assert_eq!(
+        config["admin"]["listen"],
+        "unix//Users/kien/Library/Application Support/OwnDomains/runtime/caddy-admin.sock"
+    );
+    assert!(text.contains("127.0.0.1:8080"));
+    assert!(text.contains("127.0.0.1:8443"));
 }

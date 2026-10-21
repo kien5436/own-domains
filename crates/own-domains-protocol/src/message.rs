@@ -1,7 +1,7 @@
 use own_domains_core::{ApplyResult, Diagnostic, MappingInput, MappingPatch, Settings};
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,11 +83,19 @@ pub enum CommandResult {
     Handshake { protocol_version: u16 },
     Snapshot(StateSnapshot),
     Settings(Settings),
+    Mutation(MutationResult),
     Diagnostics(Vec<Diagnostic>),
     Runtime(RuntimeStatus),
     Apply(ApplyResult),
     Subscribed,
     Acknowledged,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MutationResult {
+    pub settings: Settings,
+    pub apply: Option<ApplyResult>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -111,6 +119,7 @@ pub enum RuntimeStatus {
     Stopped,
     Starting,
     Running,
+    Degraded,
     Stopping,
     Error,
 }

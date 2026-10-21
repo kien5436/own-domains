@@ -19,7 +19,7 @@ impl DnsConfigOptions {
             })?;
         Ok(Self {
             listen_addresses: vec![Ipv4Addr::LOCALHOST, lan],
-            port: 53,
+            port: 5354,
             upstream_port: 53,
         })
     }

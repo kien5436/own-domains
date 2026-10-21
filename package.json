@@ -10,14 +10,20 @@
     "doctor": "tsx src/cli/doctor.ts",
     "lint": "eslint .",
     "test": "vitest run",
+    "sidecars:fetch": "tsx scripts/fetch-sidecars.ts",
     "setup": "tsx src/cli/setup.ts",
     "test:e2e": "playwright test",
     "test:native-daemon": "cargo test --workspace",
     "uninstall": "tsx src/cli/uninstall.ts",
     "typecheck": "tsc -b --pretty false",
     "verify:native-core": "cargo test -p own-domains-core && pnpm test && pnpm run lint && pnpm run typecheck && pnpm run build",
-    "desktop:dev": "cd crates/own-domains-desktop && pnpm exec tauri dev",
-    "desktop:build": "cd crates/own-domains-desktop && pnpm exec tauri build --no-bundle"
+    "desktop:dev": "pnpm run desktop:prepare && cd crates/own-domains-desktop && pnpm exec tauri dev",
+    "desktop:build": "cargo build --release -p own-domains-daemon && tsx scripts/stage-desktop.ts --release && cd crates/own-domains-desktop && pnpm exec tauri build --no-bundle",
+    "desktop:prepare": "cargo build -p own-domains-daemon && tsx scripts/stage-desktop.ts",
+    "desktop:build:arm64": "cargo build --release --target aarch64-apple-darwin -p own-domains-daemon && tsx scripts/stage-desktop.ts --release --target aarch64-apple-darwin && cd crates/own-domains-desktop && pnpm exec tauri build --no-bundle --target aarch64-apple-darwin",
+    "desktop:build:x86_64": "cargo build --release --target x86_64-apple-darwin -p own-domains-daemon && tsx scripts/stage-desktop.ts --release --target x86_64-apple-darwin && cd crates/own-domains-desktop && pnpm exec tauri build --no-bundle --target x86_64-apple-darwin",
+    "release:preflight": "tsx scripts/check-release.ts --preflight",
+    "release:check": "tsx scripts/check-release.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.4",

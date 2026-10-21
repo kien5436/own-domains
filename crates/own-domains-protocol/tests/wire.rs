@@ -1,4 +1,6 @@
-use own_domains_core::{Diagnostic, DiagnosticStatus, MappingInput, MappingPatch, Settings};
+use own_domains_core::{
+    ApplyResult, ApplyStatus, Diagnostic, DiagnosticStatus, MappingInput, MappingPatch, Settings,
+};
 use own_domains_protocol::*;
 
 #[test]
@@ -60,11 +62,11 @@ fn commands_use_tagged_camel_case_wire_format() {
 
 #[test]
 fn validates_versions_and_echoes_request_ids() {
-    for received in [0, 2] {
+    for received in [0, 1, 3] {
         assert_eq!(
             validate_version(received),
             Err(ProtocolError::IncompatibleVersion {
-                supported: 1,
+                supported: 2,
                 received
             })
         );
@@ -74,6 +76,40 @@ fn validates_versions_and_echoes_request_ids() {
     assert_eq!(
         serde_json::to_value(response).unwrap()["requestId"],
         "request-42"
+    );
+}
+
+#[test]
+fn mutation_results_distinguish_offline_and_degraded_runtime_application() {
+    let offline = CommandResult::Mutation(MutationResult {
+        settings: Settings::default(),
+        apply: None,
+    });
+    let offline_value = serde_json::to_value(&offline).unwrap();
+    assert_eq!(offline_value["type"], "mutation");
+    assert!(offline_value["payload"]["apply"].is_null());
+    assert_eq!(
+        serde_json::from_value::<CommandResult>(offline_value).unwrap(),
+        offline
+    );
+
+    let degraded = CommandResult::Mutation(MutationResult {
+        settings: Settings {
+            revision: 2,
+            ..Settings::default()
+        },
+        apply: Some(ApplyResult {
+            desired_revision: 2,
+            applied_revision: 1,
+            status: ApplyStatus::Error,
+            message: Some("candidate rejected".into()),
+        }),
+    });
+    let degraded_value = serde_json::to_value(&degraded).unwrap();
+    assert_eq!(degraded_value["payload"]["apply"]["status"], "error");
+    assert_eq!(
+        serde_json::to_value(RuntimeStatus::Degraded).unwrap(),
+        "degraded"
     );
 }
 

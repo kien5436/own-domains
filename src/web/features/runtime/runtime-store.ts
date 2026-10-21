@@ -123,7 +123,16 @@ export class RuntimeStore {
 
     this.publish({ busy: true, error: '' });
 
-    try { await this.client.request(command); if (generation === this.generation) await this.refresh(generation); }
+    try {
+      const result = await this.client.request(command);
+
+      if ('mutation' !== result.type) throw new Error('Daemon returned an invalid mutation result');
+
+      if (generation === this.generation) {
+        if ('error' === result.payload.apply?.status) this.publish({ error: result.payload.apply.message ?? 'Saved, but the runtime could not apply the configuration.' });
+        await this.refresh(generation);
+      }
+    }
     catch (error) {
       if (generation === this.generation) {
         this.publish({ error: errorMessage(error) });

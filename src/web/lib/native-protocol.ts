@@ -1,6 +1,10 @@
 import type { ApplyResult, Diagnostic, MappingInput, Settings } from '../../shared/types';
 
-export type RuntimeStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
+export const NATIVE_PROTOCOL_VERSION = 2;
+
+export type RuntimeStatus = 'stopped' | 'starting' | 'running' | 'degraded' | 'stopping' | 'error';
+
+export type MutationResult = { settings: Settings; apply: ApplyResult | null };
 
 export type StateSnapshot = { settings: Settings; runtimeStatus: RuntimeStatus; desiredRevision: number; appliedRevision: number; diagnostics: Diagnostic[]; latestEventSequence: number };
 
@@ -14,6 +18,7 @@ export type NativeCommand
 export type NativeCommandResult
   = | { type: 'snapshot'; payload: StateSnapshot }
     | { type: 'settings'; payload: Settings }
+    | { type: 'mutation'; payload: MutationResult }
     | { type: 'diagnostics'; payload: Diagnostic[] }
     | { type: 'runtime'; payload: RuntimeStatus }
     | { type: 'apply'; payload: ApplyResult }

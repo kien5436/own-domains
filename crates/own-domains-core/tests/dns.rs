@@ -44,3 +44,10 @@ fn rejects_invalid_loops_and_listener_exposure() {
     assert!(!output.contains("registry.own"));
     assert!(output.ends_with('\n'));
 }
+
+#[test]
+fn runtime_defaults_use_the_pf_redirect_target_port() {
+    let options = DnsConfigOptions::for_settings(&settings()).unwrap();
+    assert_eq!(options.port, 5354);
+    assert_eq!(options.upstream_port, 53);
+}

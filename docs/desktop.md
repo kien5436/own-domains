@@ -1,22 +1,25 @@
 # Native desktop development
 
-The Tauri 2 client reuses the React components and manages the Rust daemon through private Unix IPC. It is an experimental management client: the platform runtime still returns `runtimeUnavailable`, so it cannot activate DNS or Caddy yet. The legacy TypeScript product remains available.
+The Tauri 2 client reuses the React components and manages the Rust daemon through private Unix IPC. On macOS it activates the bundled CoreDNS and Caddy runtime after a one-time privileged setup. Linux and Windows still return `runtimeUnavailable`. The legacy TypeScript product remains available until the macOS acceptance gate passes.
 
 ## Build prerequisites
 
-Use Rust 1.90 or newer and pnpm. Install the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/) for your development host. macOS is the first acceptance target; Linux requires GTK 3, WebKitGTK 4.1, and AppIndicator development libraries. Windows IPC is not implemented.
+Use Rust 1.90 or newer and pnpm. Install the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/) for your development host. macOS 13 is the first acceptance target; Linux requires GTK 3, WebKitGTK 4.1, and AppIndicator development libraries. Windows IPC is not implemented.
 
-Approved pinned dependencies: Rust `tauri` 2.12.4, `tauri-build` 2.7.3, `tauri-plugin-single-instance` 2.5.4; JavaScript `@tauri-apps/api` 2.12.4 and development CLI 2.12.3.
+Approved pinned dependencies: Rust `tauri` 2.12.4, `tauri-build` 2.7.3, `tauri-plugin-single-instance` 2.5.4; JavaScript `@tauri-apps/api` 2.12.4 and development CLI 2.12.3; CoreDNS 1.14.7 and Caddy 2.11.7 sidecars.
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm run sidecars:fetch -- --verify-only
 cargo build -p own-domains-daemon -p own-domains-cli
 ```
+
+`sidecars:fetch` downloads the pinned macOS release assets and verifies archive checksums, Caddy's signed checksum manifest, and each extracted executable's SHA-256 digest. Build output lives under ignored `sidecars/build/<target>/`. Run the download once without `--verify-only` to populate a new checkout.
 
 Select the existing native settings directory explicitly. There is no desktop default relative to the launch directory and no automatic migration from legacy application data. GUI and CLI must receive the same directory. Do not run the legacy TypeScript settings writer against that directory concurrently: it does not participate in the Rust process lock.
 
 ```bash
-export OWN_DOMAINS_STATE_DIR=/absolute/path/to/native-state
+export OWN_DOMAINS_STATE_DIR="$HOME/Library/Application Support/OwnDomains"
 export OWN_DOMAINS_DAEMON=/absolute/path/to/own-domains/target/debug/own-domains-daemon
 pnpm run desktop:dev
 ```
@@ -30,18 +33,18 @@ cargo run -p own-domains-cli -- --state-dir "$OWN_DOMAINS_STATE_DIR" add shop.ow
 
 Use the actual revision reported by status for edits. A conflict reloads state without retrying or overwriting the competing change.
 
-## Build and verification
+## Packaging
+
+`desktop:prepare` builds the daemon and stages it for Tauri's `externalBin` entry. `desktop:build` creates a release executable with the staged daemon; use the architecture-specific scripts when cross-building on macOS:
 
 ```bash
+pnpm run desktop:prepare
 pnpm run desktop:build
-cargo test --workspace
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-pnpm test
-pnpm run lint
-pnpm run typecheck
-pnpm run build
+pnpm run desktop:build:arm64
+pnpm run desktop:build:x86_64
 ```
+
+The Tauri configuration declares both architecture sidecars and per-target runtime manifests as resources, places the daemon beside the desktop executable, and sets the macOS minimum version to 13.0. The app does not yet configure signing, notarization, or a distributable installer. Signed release verification is documented in [macOS acceptance](macos-acceptance.md).
 
 On Linux installations where Homebrew appears before `/usr/bin` in `PATH`, select the system `pkg-config` so Cargo can find the APT-installed GTK/WebKit libraries:
 
@@ -49,24 +52,57 @@ On Linux installations where Homebrew appears before `/usr/bin` in `PATH`, selec
 PKG_CONFIG=/usr/bin/pkg-config pnpm run desktop:build
 ```
 
-`desktop:build` explicitly enables the `desktop` feature and builds the native executable without a distributable installer. The default Rust workspace tests exercise the bridge, subscriptions, and lifecycle without requiring a WebView. They do not prove the shell builds; run `cargo check -p own-domains-desktop --features desktop` on a host with the system libraries installed. Release builds must place the matching release daemon next to the desktop executable (or configure its absolute path). Installer packaging, signing, and service deployment are Phase 4 work.
+`desktop:build` explicitly builds without a bundle. [macOS acceptance](macos-acceptance.md) verifies signed arm64 and x86_64 app bundles.
 
-The Vite page outside Tauri continues to use the legacy HTTP adapter. Inside Tauri there is no HTTP fallback: all domain, network, and status operations use the local bridge. Capabilities permit only the main local window's daemon commands and event listeners. Release CSP has no management HTTP origin. See [Tauri capability scoping](https://v2.tauri.app/security/capabilities/).
+## First macOS activation
+
+Setup is the only privileged operation. Preview it first, then apply it from a signed release CLI:
+
+```bash
+sudo own-domains --state-dir "$OWN_DOMAINS_STATE_DIR" setup --apply \
+  --lan-address 192.168.1.20 --interface en0
+```
+
+If no Caddy CA exists, setup starts the bundled Caddy as the target user with trust installation disabled, waits for the persistent root certificate, then installs only that public certificate. Setup writes `/etc/resolver/own`, the dedicated PF anchor, the PF composition block, and an owner-only install manifest with backups. Normal desktop and CLI launches never request administrator credentials.
+
+Start routing from the GUI or CLI. For a standalone CLI, point `OWN_DOMAINS_DAEMON` at the signed daemon shipped in the app bundle; downloads and sidecar resolution remain resource-relative:
+
+```bash
+OWN_DOMAINS_DAEMON="/Applications/Own Domains.app/Contents/MacOS/own-domains-daemon" \
+  own-domains --state-dir "$OWN_DOMAINS_STATE_DIR" start
+```
+
+The daemon validates and promotes CoreDNS/Caddy configuration, starts both sidecars and the loopback setup server, verifies readiness, and records exact process ownership. A failed mutation keeps the previous applied configuration and reports a degraded runtime. `stop` waits until every owned listener and process is gone.
+
+## Build and verification
+
+```bash
+cargo test --workspace
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+pnpm test
+pnpm run lint
+pnpm run typecheck
+pnpm run build
+pnpm run release:preflight
+```
+
+`release:preflight` verifies both architecture sidecar digests without executing macOS binaries. `release:check` is macOS-only: it requires `APPLE_SIGNING_IDENTITY`, runs both sidecar version commands, builds signed arm64 and x86_64 app bundles, and fails on missing sidecars, digest mismatches, writable nested binaries, or failed `codesign`/`spctl` assessment. The `spctl` check therefore also requires a notarized Developer ID package.
 
 ## Lifecycle and manual acceptance
 
-1. Launch against a temporary native state directory. Verify the window and tray appear, an absent daemon is launched once, and the unavailable runtime error is visible.
-2. Add/edit/enable/disable/remove a mapping, toggle TLS, and update network settings. Verify changes persist without claiming routing is active.
-3. Mutate settings through the CLI with the current revision; verify the open GUI updates both mappings and status. Try a stale revision and confirm it does not overwrite the newer settings.
+1. Launch against a temporary native state directory. Verify the window and tray appear, an absent daemon is launched once, and the unavailable runtime error is visible on non-macOS.
+2. On macOS, run the preflight and acceptance sequence in [macOS acceptance](macos-acceptance.md). Verify DNS over UDP and TCP, HTTP/HTTPS routes, the setup-page allowlist, `registry.own` management-route absence, and complete stop/restart.
+3. Add/edit/enable/disable/remove a mapping through the GUI and CLI. Verify the open GUI updates mappings and status from the CLI change, and that a stale revision does not overwrite newer settings.
 4. Close the window; verify the tray remains and the daemon still answers. Restore it from the tray and launch a second GUI instance; verify it focuses the existing window.
 5. Run CLI stop while the window is hidden. Verify the daemon exits and the GUI does not restart it while attempting reconnection. Restore the window and use Start routing explicitly to restart.
 6. Use tray Quit or window Quit. Verify successful stop removes the daemon socket before the GUI exits. With an injected failing shutdown backend, verify the window restores and displays a retryable error.
-7. On macOS, repeat the checks using a release binary. Record platform/version and actual output before claiming native acceptance.
+7. Record platform/version and actual output before claiming native acceptance. The physical-phone section remains manual.
 
 ## Current verification limits
 
-Automated Unix IPC and frontend tests are available, and the feature-enabled Linux Tauri shell compiles with the documented system `pkg-config` selection. macOS window/tray behavior, interactive Linux GUI behavior, and physical-device acceptance remain unverified. No DNS/proxy service changes were performed.
+Automated Unix IPC, sidecar downloader, setup-host, process, runtime, and frontend tests pass on Linux. The feature-enabled Linux Tauri shell compiles with the documented system `pkg-config` selection. macOS window/tray behavior, real resolver/PF/trust changes, signed app verification, interactive Linux GUI behavior, and physical-device acceptance remain unverified. No DNS/proxy service changes were performed in this repository session.
 
-## Phase 4 cutover gate
+## Release gate
 
-Before retiring browser management, implement daemon-owned `setup.own` with an explicit GET/HEAD route allowlist for phone instructions, public CA certificate, installation profile, and public fingerprint. Reject all management/private-key/local-path/arbitrary-proxy requests. Prove host-service shutdown, restart, settings/CA preservation, and physical-phone HTTP/trusted HTTPS operation. Then remove `registry.own` and legacy server/CLI entry points with explicit deletion authorization. This client does not remove the existing installer or onboarding server prematurely.
+Before retiring browser management, complete the signed arm64 and x86_64 acceptance runs and one physical-phone pass, including HTTP, trusted HTTPS, profile installation, fingerprint comparison, restart, shutdown, and uninstall restoration. Then remove `registry.own` and the legacy server/CLI entry points in a separate reviewed change with explicit deletion authorization. Do not remove the existing installer or onboarding server prematurely.

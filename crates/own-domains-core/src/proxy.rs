@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, path::Path};
 
 use serde_json::{Value, json};
 
@@ -14,6 +14,15 @@ pub struct ProxyConfigOptions {
 
 impl ProxyConfigOptions {
     pub fn for_settings(settings: &Settings) -> CoreResult<Self> {
+        Self::for_runtime(settings, Path::new("/tmp/own-domains-caddy-admin.sock"))
+    }
+
+    pub fn for_runtime(settings: &Settings, admin_socket: &Path) -> CoreResult<Self> {
+        if !admin_socket.is_absolute() {
+            return Err(CoreError::Validation {
+                message: "Caddy admin socket must be absolute".into(),
+            });
+        }
         let lan = settings
             .lan_address
             .parse()
@@ -21,10 +30,10 @@ impl ProxyConfigOptions {
                 message: "A valid LAN IPv4 address is required".into(),
             })?;
         Ok(Self {
-            admin_listen: "127.0.0.1:2020".into(),
+            admin_listen: format!("unix/{}", admin_socket.display()),
             listen_addresses: vec![Ipv4Addr::LOCALHOST, lan],
-            http_port: 80,
-            https_port: 443,
+            http_port: 8080,
+            https_port: 8443,
             setup_port: 4781,
         })
     }

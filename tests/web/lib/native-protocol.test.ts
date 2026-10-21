@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import contract from '../../fixtures/ipc/desktop-contract.json';
-import { errorMessage, type NativeCommand } from '../../../src/web/lib/native-protocol';
+import { errorMessage, type NativeCommand, type NativeCommandResult } from '../../../src/web/lib/native-protocol';
 
-it('sends exactly the Rust version-1 command payloads, including snake_case revision fields', () => {
+it('sends exactly the Rust version-2 command payloads, including snake_case revision fields', () => {
   const commands: NativeCommand[] = [
     { type: 'snapshot' },
     { type: 'start' },
@@ -17,6 +17,15 @@ it('sends exactly the Rust version-1 command payloads, including snake_case revi
 
   expect(commands).toEqual(contract.commands);
   expect(contract.subscription).toEqual({ type: 'subscribe', payload: { after_sequence: 4 } });
+});
+it('parses offline and degraded mutation results from the Rust contract', () => {
+  const offline = contract.results[2] as NativeCommandResult;
+  const degraded = contract.results[3] as NativeCommandResult;
+
+  expect(offline).toMatchObject({ type: 'mutation', payload: { apply: null } });
+  expect(degraded).toMatchObject({ type: 'mutation', payload: { apply: { status: 'error', appliedRevision: 0, desiredRevision: 1 } } });
+  expect(contract.events[3]).toMatchObject({ protocolVersion: 2, event: { type: 'runtimeChanged', payload: { status: 'degraded' } } });
+  expect(contract.errors[0]).toEqual({ code: 'incompatibleVersion', supported: 2, received: 1 });
 });
 it('shows actionable messages for Rust protocol errors without losing the conflict distinction', () => {
   const messages = contract.errors.map((error) => errorMessage({ code: 'protocol', error }));

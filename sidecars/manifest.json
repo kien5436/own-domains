@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "coredns": {
+    "version": "1.14.7",
+    "releases": {
+      "arm64": {
+        "target": "aarch64-apple-darwin",
+        "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_darwin_arm64.tgz",
+        "archiveMember": "coredns",
+        "checksum": {
+          "algorithm": "sha256",
+          "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_darwin_arm64.tgz.sha256",
+          "value": "0005d154d49c73a88b2c56f429f35106e46c4ca37ee6de4e4d482d7de5c4b8ba"
+        },
+        "executableSha256": "922e76b2e2ad480fd1c7ddb0f991e174a99157593decf71db38c3f91901a7059"
+      },
+      "amd64": {
+        "target": "x86_64-apple-darwin",
+        "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_darwin_amd64.tgz",
+        "archiveMember": "coredns",
+        "checksum": {
+          "algorithm": "sha256",
+          "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_darwin_amd64.tgz.sha256",
+          "value": "49c2155e48a53c710eedcf8c6709bf5aee395e372bdca77ae978f042bf86c580"
+        },
+        "executableSha256": "3a8af202ced2856902f9402fa462e7d385e4c71930648a4f2fe519b0d66f1e06"
+      }
+    }
+  },
+  "caddy": {
+    "version": "2.11.7",
+    "signature": {
+      "checksumUrl": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_checksums.txt",
+      "signatureUrl": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_checksums.txt.sig",
+      "certificateUrl": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_checksums.txt.pem",
+      "certificateIdentity": "https://github.com/caddyserver/caddy/.github/workflows/release.yml@refs/tags/v2.11.7"
+    },
+    "releases": {
+      "arm64": {
+        "target": "aarch64-apple-darwin",
+        "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_mac_arm64.tar.gz",
+        "archiveMember": "caddy",
+        "checksum": {
+          "algorithm": "sha512",
+          "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_checksums.txt",
+          "value": "68f592df8f0ec058fbdb9b137b64e9a0aa792d28c06e1e3b9ec12d0e7fb371683a54e73ef6d8e6d0dd70dc6b941a5b5d5b73faedd3f89de119ad2eb78bdc668e"
+        },
+        "executableSha256": "0d746e47f39d9706883b3633bf419feb25973e6caaa8eabbf5b44421d59e3973"
+      },
+      "amd64": {
+        "target": "x86_64-apple-darwin",
+        "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_mac_amd64.tar.gz",
+        "archiveMember": "caddy",
+        "checksum": {
+          "algorithm": "sha512",
+          "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_checksums.txt",
+          "value": "147886811fa2320a8881c6116dc8cc3f0562e2f686509ccc60f55cf85dfd5ea78e9f5f770c75da13bf124a2536b72e887b975fefd58706de3dafb57483610e70"
+        },
+        "executableSha256": "8b27d3dc71bddaf49f63e8b5620ea49cb432b0b3b0a9685d5c06e0aac15bd928"
+      }
+    }
+  }
+}
