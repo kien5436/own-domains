@@ -15,9 +15,12 @@
     "test:native-daemon": "cargo test --workspace",
     "uninstall": "tsx src/cli/uninstall.ts",
     "typecheck": "tsc -b --pretty false",
-    "verify:native-core": "cargo test -p own-domains-core && pnpm test && pnpm run lint && pnpm run typecheck && pnpm run build"
+    "verify:native-core": "cargo test -p own-domains-core && pnpm test && pnpm run lint && pnpm run typecheck && pnpm run build",
+    "desktop:dev": "cd crates/own-domains-desktop && pnpm exec tauri dev",
+    "desktop:build": "cd crates/own-domains-desktop && pnpm exec tauri build --no-bundle"
   },
   "dependencies": {
+    "@tauri-apps/api": "2.12.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
@@ -25,6 +28,7 @@
     "@playwright/test": "^1.64.0",
     "@stylistic/eslint-plugin": "^5.10.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "2.12.3",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.8",

@@ -3,7 +3,7 @@ use own_domains_protocol::{
     ResponseEnvelope,
 };
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufReader, Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     time::Duration,
@@ -35,6 +35,7 @@ pub struct Client {
 
 pub struct EventStream {
     reader: BufReader<UnixStream>,
+    pending: Vec<u8>,
 }
 
 impl Client {
@@ -77,6 +78,7 @@ impl Client {
         let _ = exchange(&mut stream, Command::Subscribe { after_sequence })?;
         Ok(EventStream {
             reader: BufReader::new(stream),
+            pending: Vec::new(),
         })
     }
 
@@ -92,16 +94,67 @@ impl Client {
     }
 }
 
+pub struct EventStreamCancellation {
+    stream: UnixStream,
+}
+impl EventStreamCancellation {
+    pub fn cancel(&self) -> Result<(), ClientError> {
+        self.stream
+            .shutdown(std::net::Shutdown::Both)
+            .map_err(Into::into)
+    }
+}
 impl EventStream {
+    pub fn cancellation_handle(&self) -> Result<EventStreamCancellation, ClientError> {
+        Ok(EventStreamCancellation {
+            stream: self.reader.get_ref().try_clone()?,
+        })
+    }
     pub fn recv(&mut self) -> Result<EventEnvelope, ClientError> {
-        let mut line = String::new();
-        if self.reader.read_line(&mut line)? == 0 {
-            return Err(ClientError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "daemon disconnected",
-            )));
+        let mut byte = [0];
+        loop {
+            match self.reader.read(&mut byte) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "daemon disconnected mid-stream",
+                    )
+                    .into());
+                }
+                Ok(_) if byte[0] == b'\n' => {
+                    let frame = std::mem::take(&mut self.pending);
+                    let event: EventEnvelope = serde_json::from_slice(&frame)?;
+                    if event.protocol_version != PROTOCOL_VERSION {
+                        return Err(ClientError::IncompatibleVersion {
+                            supported: PROTOCOL_VERSION,
+                            received: event.protocol_version,
+                        });
+                    }
+                    return Ok(event);
+                }
+                Ok(_) => {
+                    self.pending.push(byte[0]);
+                    if self.pending.len() > 1024 * 1024 {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "event frame exceeds 1 MiB",
+                        )
+                        .into());
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            }
         }
-        Ok(serde_json::from_str(&line)?)
     }
 }
 
@@ -115,15 +168,36 @@ fn exchange(stream: &mut UnixStream, command: Command) -> Result<CommandResult, 
     let frame = serde_json::to_vec(&request)?;
     stream.write_all(&frame)?;
     stream.write_all(b"\n")?;
-    let mut line = String::new();
-    BufReader::new(&mut *stream).read_line(&mut line)?;
-    if line.is_empty() {
-        return Err(ClientError::Io(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "daemon disconnected mid-frame",
-        )));
+    // Do not prefetch bytes belonging to the subscription's first event.
+    let mut line = Vec::new();
+    let mut byte = [0];
+    loop {
+        if stream.read(&mut byte)? == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "daemon disconnected mid-frame",
+            )
+            .into());
+        }
+        if byte[0] == b'\n' {
+            break;
+        }
+        line.push(byte[0]);
+        if line.len() > 1024 * 1024 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "response exceeds 1 MiB",
+            )
+            .into());
+        }
     }
-    let response: ResponseEnvelope = serde_json::from_str(&line)?;
+    let response: ResponseEnvelope = serde_json::from_slice(&line)?;
+    if response.protocol_version != PROTOCOL_VERSION {
+        return Err(ClientError::IncompatibleVersion {
+            supported: PROTOCOL_VERSION,
+            received: response.protocol_version,
+        });
+    }
     if response.request_id != request_id {
         return Err(ClientError::Protocol(ProtocolError::InvalidRequest {
             message: "request ID mismatch".into(),

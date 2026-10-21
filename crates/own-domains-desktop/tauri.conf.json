@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Own Domains",
+  "version": "0.1.0",
+  "identifier": "app.owndomains.desktop",
+  "build": {
+    "beforeDevCommand": { "script": "pnpm run dev --host 127.0.0.1 --port 5173 --strictPort", "cwd": "../.." },
+    "beforeBuildCommand": { "script": "pnpm run build", "cwd": "../.." },
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../../dist",
+    "features": ["desktop"]
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "Own Domains", "width": 1100, "height": 800 }],
+    "security": {
+      "capabilities": ["main"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost ws://127.0.0.1:5173; object-src 'none'; frame-src 'none'"
+    }
+  },
+  "bundle": { "active": false }
+}

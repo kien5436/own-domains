@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Local main window: daemon commands and event subscriptions only",
+  "windows": ["main"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "allow-daemon-request", "allow-daemon-subscribe", "allow-daemon-unsubscribe", "allow-daemon-start", "allow-desktop-quit", "allow-desktop-error"]
+}

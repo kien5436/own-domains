@@ -1,0 +1,257 @@
+{
+  "commands": [
+    {
+      "type": "snapshot"
+    },
+    {
+      "type": "start"
+    },
+    {
+      "type": "stop"
+    },
+    {
+      "type": "list"
+    },
+    {
+      "type": "doctor"
+    },
+    {
+      "payload": {
+        "expected_revision": 0,
+        "input": {
+          "enabled": true,
+          "hostname": "shop.own",
+          "id": "one",
+          "tls": false,
+          "upstreamPort": 3000
+        }
+      },
+      "type": "create"
+    },
+    {
+      "payload": {
+        "expected_revision": 1,
+        "id": "one",
+        "patch": {
+          "enabled": false,
+          "hostname": "shop.own",
+          "tls": true,
+          "upstreamPort": 4000
+        }
+      },
+      "type": "update"
+    },
+    {
+      "payload": {
+        "expected_revision": 2,
+        "id": "one"
+      },
+      "type": "remove"
+    },
+    {
+      "payload": {
+        "expected_revision": 3,
+        "lan_address": "192.168.1.20",
+        "upstream_dns": [
+          "1.1.1.1"
+        ]
+      },
+      "type": "updateNetwork"
+    }
+  ],
+  "errors": [
+    {
+      "code": "incompatibleVersion",
+      "received": 2,
+      "supported": 1
+    },
+    {
+      "actual": 2,
+      "code": "revisionConflict",
+      "expected": 1
+    },
+    {
+      "code": "duplicateHostname",
+      "hostname": "shop.own"
+    },
+    {
+      "code": "alreadyRunning",
+      "path": "/tmp/state"
+    },
+    {
+      "code": "validation",
+      "message": "invalid"
+    },
+    {
+      "code": "notFound",
+      "message": "missing"
+    },
+    {
+      "code": "runtimeUnavailable",
+      "message": "unavailable"
+    },
+    {
+      "code": "runtimeFailure",
+      "message": "failed"
+    },
+    {
+      "code": "storage",
+      "message": "storage"
+    },
+    {
+      "code": "invalidRequest",
+      "message": "invalid request"
+    }
+  ],
+  "events": [
+    {
+      "event": {
+        "payload": {
+          "appliedRevision": 0,
+          "desiredRevision": 0,
+          "diagnostics": [],
+          "latestEventSequence": 0,
+          "runtimeStatus": "stopped",
+          "settings": {
+            "lanAddress": "",
+            "mappings": [],
+            "revision": 0,
+            "schemaVersion": 1,
+            "upstreamDns": [
+              "1.1.1.1",
+              "9.9.9.9"
+            ]
+          }
+        },
+        "type": "snapshot"
+      },
+      "protocolVersion": 1,
+      "sequence": 0
+    },
+    {
+      "event": {
+        "payload": {
+          "snapshot": {
+            "appliedRevision": 0,
+            "desiredRevision": 0,
+            "diagnostics": [],
+            "latestEventSequence": 0,
+            "runtimeStatus": "stopped",
+            "settings": {
+              "lanAddress": "",
+              "mappings": [],
+              "revision": 0,
+              "schemaVersion": 1,
+              "upstreamDns": [
+                "1.1.1.1",
+                "9.9.9.9"
+              ]
+            }
+          }
+        },
+        "type": "resyncRequired"
+      },
+      "protocolVersion": 1,
+      "sequence": 1
+    },
+    {
+      "event": {
+        "payload": {
+          "revision": 1
+        },
+        "type": "settingsChanged"
+      },
+      "protocolVersion": 1,
+      "sequence": 2
+    },
+    {
+      "event": {
+        "payload": {
+          "status": "error"
+        },
+        "type": "runtimeChanged"
+      },
+      "protocolVersion": 1,
+      "sequence": 3
+    },
+    {
+      "event": {
+        "payload": {
+          "diagnostics": []
+        },
+        "type": "diagnosticsChanged"
+      },
+      "protocolVersion": 1,
+      "sequence": 4
+    }
+  ],
+  "results": [
+    {
+      "payload": {
+        "appliedRevision": 0,
+        "desiredRevision": 0,
+        "diagnostics": [],
+        "latestEventSequence": 0,
+        "runtimeStatus": "stopped",
+        "settings": {
+          "lanAddress": "",
+          "mappings": [],
+          "revision": 0,
+          "schemaVersion": 1,
+          "upstreamDns": [
+            "1.1.1.1",
+            "9.9.9.9"
+          ]
+        }
+      },
+      "type": "snapshot"
+    },
+    {
+      "payload": {
+        "lanAddress": "",
+        "mappings": [],
+        "revision": 0,
+        "schemaVersion": 1,
+        "upstreamDns": [
+          "1.1.1.1",
+          "9.9.9.9"
+        ]
+      },
+      "type": "settings"
+    },
+    {
+      "payload": [],
+      "type": "diagnostics"
+    },
+    {
+      "payload": "stopped",
+      "type": "runtime"
+    },
+    {
+      "payload": {
+        "appliedRevision": 0,
+        "desiredRevision": 1,
+        "status": "pending"
+      },
+      "type": "apply"
+    },
+    {
+      "type": "acknowledged"
+    },
+    {
+      "type": "subscribed"
+    },
+    {
+      "payload": {
+        "protocol_version": 1
+      },
+      "type": "handshake"
+    }
+  ],
+  "subscription": {
+    "payload": {
+      "after_sequence": 4
+    },
+    "type": "subscribe"
+  }
+}

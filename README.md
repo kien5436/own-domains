@@ -2,6 +2,8 @@
 
 Own Domains registers private `.own` hostnames for web applications running on your Mac. It provides a React dashboard, dnsmasq DNS, Caddy reverse proxying, optional local HTTPS, and access from devices on the same network.
 
+The experimental native Tauri client is documented in [Desktop development](docs/desktop.md). It uses the Rust daemon and currently saves settings without activating routing.
+
 ## Requirements
 
 - macOS with [Homebrew](https://brew.sh/)

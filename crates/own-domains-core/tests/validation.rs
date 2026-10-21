@@ -91,22 +91,28 @@ fn validates_network_addresses_and_forwarding_loops() {
 
 #[test]
 fn rejects_unsupported_schema_and_duplicate_identity() {
-    let mut unsupported = Settings::default();
-    unsupported.schema_version = 2;
+    let unsupported = Settings {
+        schema_version: 2,
+        ..Settings::default()
+    };
     assert!(validate_settings(unsupported).is_err());
 
-    let mut duplicate_ids = Settings::default();
-    duplicate_ids.mappings = vec![
-        persisted_mapping("same", "one.own"),
-        persisted_mapping("same", "two.own"),
-    ];
+    let duplicate_ids = Settings {
+        mappings: vec![
+            persisted_mapping("same", "one.own"),
+            persisted_mapping("same", "two.own"),
+        ],
+        ..Settings::default()
+    };
     assert!(validate_settings(duplicate_ids).is_err());
 
-    let mut duplicate_hosts = Settings::default();
-    duplicate_hosts.mappings = vec![
-        persisted_mapping("one", "Shop.OWN."),
-        persisted_mapping("two", "shop.own"),
-    ];
+    let duplicate_hosts = Settings {
+        mappings: vec![
+            persisted_mapping("one", "Shop.OWN."),
+            persisted_mapping("two", "shop.own"),
+        ],
+        ..Settings::default()
+    };
     assert!(matches!(
         validate_settings(duplicate_hosts),
         Err(CoreError::DuplicateHostname { hostname }) if hostname == "shop.own"

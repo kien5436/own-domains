@@ -19,3 +19,7 @@ Exit codes:
 - `3`: stale settings revision
 - `4`: daemon, IPC, storage, or protocol failure
 - `5`: runtime unavailable or runtime operation failure
+
+## Desktop interoperability
+
+The native desktop uses this same daemon and revision protocol. Pass the same absolute `--state-dir` to the CLI as `OWN_DOMAINS_STATE_DIR` in the desktop launcher. Desktop changes appear in CLI reads; live CLI changes refresh the GUI. `stop` now waits for the daemon socket to disappear before reporting success, and an open GUI reconnects without automatically restarting it. See [desktop development](desktop.md) for launch and verification instructions.

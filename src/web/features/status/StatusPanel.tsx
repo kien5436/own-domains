@@ -1,9 +1,9 @@
 import type { Diagnostic } from '../../../shared/types';
 
-export function StatusPanel({ diagnostics, desiredRevision, appliedRevision }: { diagnostics: Diagnostic[]; desiredRevision?: number; appliedRevision?: number }) {
+export function StatusPanel({ diagnostics, desiredRevision, appliedRevision, runtimeStatus }: { diagnostics: Diagnostic[]; desiredRevision?: number; appliedRevision?: number; runtimeStatus?: string }) {
   return <section aria-labelledby="status-heading" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
     <h2 className="text-lg font-semibold" id="status-heading">System status</h2>
-    {desiredRevision !== undefined && <p className="mt-1 text-sm text-slate-500">Configuration {appliedRevision === desiredRevision ? `applied at revision ${desiredRevision}` : `pending: desired ${desiredRevision}, applied ${appliedRevision ?? 0}`}</p>}
+    {desiredRevision !== undefined && <p className="mt-1 text-sm text-slate-500">Configuration {appliedRevision === desiredRevision && (runtimeStatus === undefined || runtimeStatus === 'running') ? `applied at revision ${desiredRevision}` : `pending: desired ${desiredRevision}, applied ${appliedRevision ?? 0}`}</p>}
     {diagnostics.length === 0
       ? <p className="mt-2 text-sm text-slate-500">No diagnostics available yet.</p>
       : <ul className="mt-3 grid gap-3">{diagnostics.map((item) => <li className="rounded-xl bg-slate-50 p-3" key={item.code}>

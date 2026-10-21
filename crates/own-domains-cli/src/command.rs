@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
-use own_domains_client::{Client, ClientError};
+use own_domains_client::{Client, ClientError, LifecycleError, connect_or_launch, stop_and_wait};
 use own_domains_core::{DomainService, MappingInput, MappingPatch, SettingsStore};
 use own_domains_daemon::{DaemonState, ProcessLock, UnavailableRuntimeBackend};
 use own_domains_protocol::{Command, CommandResult, ProtocolError};
-use std::{path::PathBuf, process::Command as ProcessCommand, sync::Arc, thread, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 #[derive(Debug, Parser)]
 #[command(name = "own-domains", version, about = "Manage local .own domains")]
@@ -99,6 +99,17 @@ pub fn execute(cli: Cli) -> CommandOutput {
         .clone()
         .unwrap_or_else(|| cli.state_dir.join("daemon.sock"));
     match Client::connect(&socket) {
+        Ok(client) if matches!(cli.command, CliCommand::Stop) => {
+            match stop_and_wait(&client, &socket, Duration::from_secs(5)) {
+                Ok(()) => render(
+                    CommandResult::Runtime(own_domains_protocol::RuntimeStatus::Stopped),
+                    cli.json,
+                    None,
+                ),
+                Err(LifecycleError::Client(error)) => client_error(error),
+                Err(error) => CommandOutput::error(5, error),
+            }
+        }
         Ok(client) => run_live(&client, &cli.command, cli.json),
         Err(ClientError::DaemonUnavailable { .. }) => run_offline(&cli, &socket),
         Err(error) => client_error(error),
@@ -287,25 +298,14 @@ fn start_daemon(cli: &Cli, socket: &std::path::Path) -> CommandOutput {
     let executable = std::env::var_os("OWN_DOMAINS_DAEMON")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("own-domains-daemon"));
-    if let Err(error) = ProcessCommand::new(executable)
-        .arg("--state-dir")
-        .arg(&cli.state_dir)
-        .arg("--socket")
-        .arg(socket)
-        .spawn()
-    {
-        return CommandOutput::error(4, format!("failed to start daemon: {error}"));
+    match connect_or_launch(&cli.state_dir, socket, &executable, Duration::from_secs(5)) {
+        Ok(client) => match client.request(Command::Start) {
+            Ok(result) => render(result, cli.json, None),
+            Err(error) => client_error(error),
+        },
+        Err(LifecycleError::Client(error)) => client_error(error),
+        Err(error) => CommandOutput::error(4, error),
     }
-    for _ in 0..50 {
-        if let Ok(client) = Client::connect(socket) {
-            return match client.request(Command::Start) {
-                Ok(result) => render(result, cli.json, None),
-                Err(error) => client_error(error),
-            };
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    CommandOutput::error(4, "daemon did not become ready")
 }
 
 fn render(result: CommandResult, json: bool, note: Option<&str>) -> CommandOutput {
