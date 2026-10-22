@@ -2445,7 +2445,7 @@ dependencies = [
 
 [[package]]
 name = "own-domains-cli"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "clap",
  "libc",
@@ -2459,7 +2459,7 @@ dependencies = [
 
 [[package]]
 name = "own-domains-client"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "own-domains-core",
  "own-domains-daemon",
@@ -2471,7 +2471,7 @@ dependencies = [
 
 [[package]]
 name = "own-domains-core"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2481,7 +2481,7 @@ dependencies = [
 
 [[package]]
 name = "own-domains-daemon"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "base64 0.22.1",
  "libc",
@@ -2496,7 +2496,7 @@ dependencies = [
 
 [[package]]
 name = "own-domains-desktop"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "own-domains-client",
  "own-domains-core",
@@ -2512,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "own-domains-protocol"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "own-domains-core",
  "serde",

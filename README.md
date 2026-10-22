@@ -2,22 +2,22 @@
 
 Own Domains registers private `.own` hostnames for web applications running on your Mac. It provides a React dashboard, dnsmasq DNS, Caddy reverse proxying, optional local HTTPS, and access from devices on the same network.
 
-The native Tauri client and Rust CLI are documented in [Desktop development](docs/desktop.md) and [Native CLI](docs/cli.md). The macOS runtime can activate bundled CoreDNS and Caddy after privileged setup on Apple silicon macOS 15+. Intel macOS is buildable but not acceptance-required. Ubuntu 24+ and Windows 10/11 are support targets whose runtime adapters are not implemented, so the native runtime reports `runtimeUnavailable` there. The legacy TypeScript runtime stays available until the [macOS acceptance gate](docs/macos-acceptance.md) passes.
+The native Tauri client and Rust CLI are documented in [Desktop development](docs/desktop.md) and [Native CLI](docs/cli.md). The first macOS beta can activate bundled CoreDNS and Caddy after privileged setup on Apple silicon macOS 15+. Ad-hoc-signed arm64 acceptance and physical-phone checks passed on 2026-10-22; Developer ID signing and notarization remain distribution work. Intel macOS is buildable but not acceptance-required. Ubuntu 24+ and Windows 10/11 are support targets whose runtime adapters are not implemented, so the native runtime reports `runtimeUnavailable` there. The legacy TypeScript runtime remains available for existing installations.
 
 ## Platform support
 
 | Platform | Native runtime status |
 | --- | --- |
-| Apple silicon macOS 15+ | Implemented; arm64 acceptance pending |
+| Apple silicon macOS 15+ | Native beta; implemented |
 | Intel macOS 15+ | Buildable; not acceptance-required |
 | Ubuntu 24+ | Support target; runtime not implemented |
 | Windows 10/11 | Support target; IPC and runtime not implemented |
 
-Local acceptance uses an ad-hoc-signed arm64 package and does not require an Apple Developer Program account. Developer ID signing and notarization are required only for distribution. See [Platform support](docs/platform-support.md) for the full matrix.
+`v0.1.0-beta.1` is a source release. No Developer ID-signed or notarized binary is published. Local acceptance uses an ad-hoc-signed arm64 package and does not require an Apple Developer Program account. Developer ID signing and notarization are required only for distribution. See [Platform support](docs/platform-support.md) for the full matrix.
 
-## Native macOS runtime (in progress)
+## Native macOS beta
 
-The native client packages pinned CoreDNS and Caddy sidecars, verifies their digests, and resolves them from the app bundle. A one-time privileged setup installs the `.own` resolver, a dedicated PF anchor, and the Caddy root certificate; normal launches do not need administrator access. See [macOS acceptance](docs/macos-acceptance.md) for the ad-hoc-signed arm64 package and physical-phone gate. Do not remove the legacy source or its migration/uninstall support before that gate is recorded.
+The native client packages pinned CoreDNS and Caddy sidecars, verifies their digests, and resolves them from the app bundle. A one-time privileged setup installs the `.own` resolver, a dedicated PF anchor, and the Caddy root certificate; normal launches do not need administrator access. The [macOS acceptance gate](docs/macos-acceptance.md) passed for an ad-hoc-signed arm64 package, including automated routing, GUI lifecycle, and physical-phone checks. Do not remove the legacy source or its migration/uninstall support while beta users still depend on it.
 
 ## Requirements
 

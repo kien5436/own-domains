@@ -4,7 +4,7 @@ Own Domains has one native runtime backend today: macOS. A platform is not suppo
 
 | Platform | Native runtime status | Acceptance |
 | --- | --- | --- |
-| Apple silicon macOS 15+ | Implemented; final acceptance pending | Required: ad-hoc-signed arm64 app and CLI, automated runner, GUI checks, and one physical-phone pass |
+| Apple silicon macOS 15+ | Implemented; first beta | Passed 2026-10-22: ad-hoc-signed arm64 app and CLI, automated runner, GUI checks, and one physical-phone pass |
 | Intel macOS 15+ | Buildable; runtime not acceptance-tested | Not required |
 | Ubuntu 24+ | Support target; returns `runtimeUnavailable` | Separate design, implementation plan, and acceptance required |
 | Windows 10/11 | Support target; IPC and runtime are not implemented | Separate design, implementation plan, and acceptance required |
