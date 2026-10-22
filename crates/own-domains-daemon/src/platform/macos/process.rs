@@ -540,11 +540,11 @@ impl<'a> ProcessSupervisor<'a> {
         let configuration = configuration.to_string_lossy().into_owned();
         let (program, arguments) = match component {
             ProcessComponent::CoreDns => (
-                self.paths.coredns_binary.clone(),
+                canonical_program(&self.paths.coredns_binary),
                 vec!["-conf".into(), configuration, "-quiet".into()],
             ),
             ProcessComponent::Caddy => (
-                self.paths.caddy_binary.clone(),
+                canonical_program(&self.paths.caddy_binary),
                 vec!["run".into(), "--config".into(), configuration],
             ),
         };
@@ -581,6 +581,10 @@ impl<'a> ProcessSupervisor<'a> {
             log_path: self.paths.log_directory.join(component.log_name()),
         }
     }
+}
+
+fn canonical_program(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 pub trait ReadinessProbe: Send + Sync {
@@ -1403,4 +1407,34 @@ fn system_listeners(ports: &[u16]) -> Result<Vec<ListenerBinding>, String> {
 #[cfg(not(target_os = "macos"))]
 fn system_listeners(_ports: &[u16]) -> Result<Vec<ListenerBinding>, String> {
     Err("listener inspection is only available on macOS".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_program_resolves_parent_components() {
+        let root = std::env::temp_dir().join(format!(
+            "own-domains-canonical-program-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let resources = root.join("Contents/Resources");
+        let macos = root.join("Contents/MacOS");
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::create_dir_all(&macos).unwrap();
+        let program = resources.join("coredns-aarch64-apple-darwin");
+        std::fs::write(&program, b"").unwrap();
+        let unresolved = macos.join("../Resources/coredns-aarch64-apple-darwin");
+
+        assert_eq!(
+            canonical_program(&unresolved),
+            program.canonicalize().unwrap()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

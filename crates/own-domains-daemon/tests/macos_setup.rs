@@ -11,6 +11,9 @@ use std::{
     sync::Mutex,
 };
 
+const TEST_CA_PEM: &[u8] =
+    b"-----BEGIN CERTIFICATE-----\nUFVCTElDIGNlcnQ=\n-----END CERTIFICATE-----\n";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HostState {
     files: BTreeMap<PathBuf, SetupFile>,
@@ -83,7 +86,17 @@ impl SetupHost for FakeHost {
         let program = command.program.to_string_lossy();
         if program == "/usr/bin/security" {
             let action = command.args.first().map(String::as_str);
-            if action == Some("remove-trusted-cert") {
+            if action == Some("delete-certificate") {
+                assert!(command.args.iter().any(|arg| arg == "-Z"));
+                assert!(command.args.iter().any(|arg| arg == "-t"));
+                assert!(
+                    command
+                        .args
+                        .iter()
+                        .any(|arg| arg == "/Library/Keychains/System.keychain")
+                );
+                self.state.lock().unwrap().trusted = false;
+            } else if action == Some("remove-trusted-cert") {
                 let certificate = command.args.get(2).map(PathBuf::from);
                 if certificate
                     .as_ref()
@@ -185,7 +198,7 @@ fn every_setup_failure_rolls_back_files_trust_and_pf_state() {
         before.files.insert(
             plan.paths.ca_certificate.clone(),
             SetupFile {
-                content: b"public cert".to_vec(),
+                content: TEST_CA_PEM.to_vec(),
                 mode: 0o600,
                 owner_id: 501,
                 kind: HostFileKind::Regular,
@@ -280,7 +293,7 @@ fn uninstall_restores_host_files_and_preserves_user_state_without_purge() {
     host.state.lock().unwrap().files.insert(
         ca.clone(),
         SetupFile {
-            content: b"public cert".to_vec(),
+            content: TEST_CA_PEM.to_vec(),
             mode: 0o600,
             owner_id: 501,
             kind: HostFileKind::Regular,
@@ -354,7 +367,7 @@ fn purge_removes_trust_before_removing_the_ca_state() {
     host.state.lock().unwrap().files.insert(
         plan.paths.ca_certificate.clone(),
         SetupFile {
-            content: b"public cert".to_vec(),
+            content: TEST_CA_PEM.to_vec(),
             mode: 0o600,
             owner_id: 501,
             kind: HostFileKind::Regular,

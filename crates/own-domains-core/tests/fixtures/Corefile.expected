@@ -1,4 +1,4 @@
-.own:1053 {
+own:1053 {
     bind 127.0.0.1 192.168.1.20
     template IN A {
         match ^(?:[a-z0-9-]+\.)+own\.$

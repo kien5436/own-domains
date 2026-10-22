@@ -49,7 +49,7 @@
       "../../sidecars/build/x86_64-apple-darwin/manifest.json": "sidecars/manifest-x86_64-apple-darwin.json"
     },
     "macOS": {
-      "minimumSystemVersion": "13.0"
+      "minimumSystemVersion": "15.0"
     },
     "targets": [
       "app"

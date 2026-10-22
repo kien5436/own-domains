@@ -20,8 +20,8 @@ usage() {
 Usage: scripts/verify-macos-runtime.sh [options]
 
 Options:
-  --app PATH             Signed app bundle (default: /Applications/Own Domains.app)
-  --cli PATH             Signed own-domains CLI (default: own-domains on PATH)
+  --app PATH             Code-signed app bundle; ad-hoc is accepted (default: /Applications/Own Domains.app)
+  --cli PATH             Code-signed own-domains CLI; ad-hoc is accepted (default: own-domains on PATH)
   --state-dir PATH       Absolute native state directory (default: disposable under ~/Library/Application Support)
   --hostname NAME        Test hostname under .own (default: acceptance.own)
   --lan-address IPv4     Mac LAN address (required with --accept)
@@ -35,7 +35,11 @@ EOF
 }
 
 json_escape() {
-  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g'
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  printf '%s' "$value"
 }
 
 record() {
@@ -133,21 +137,21 @@ preflight() {
   local version
   version=$(sw_vers -productVersion)
   local major="${version%%.*}"
-  [ "$major" -ge 13 ] || die "macOS 13 or newer is required; found $version"
+  [ "$major" -ge 15 ] || die "macOS 15 or newer is required; found $version"
   record "platform" "passed" "$(uname -m) macOS $version"
 
   [ -d "$APP" ] || die "signed app is missing: $APP"
   local minimum
   minimum=$(plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist" 2>/dev/null || true)
-  [ "$minimum" = "13.0" ] || die "app minimumSystemVersion is not 13.0: ${minimum:-missing}"
+  [ "$minimum" = "15.0" ] || die "app minimumSystemVersion is not 15.0: ${minimum:-missing}"
   record "minimum-version" "passed" "$minimum"
 
   FAILED_STEP="codesign"
   codesign --verify --deep --strict "$APP" >>"$COMMAND_LOG" 2>&1 || die "app code signature verification failed"
-  record "codesign" "passed" "app signature verified"
+  record "codesign" "passed" "app signature verified (ad-hoc or Developer ID)"
   FAILED_STEP="codesign-cli"
   codesign --verify --strict "$CLI" >>"$COMMAND_LOG" 2>&1 || die "CLI code signature verification failed"
-  record "codesign-cli" "passed" "CLI signature verified"
+  record "codesign-cli" "passed" "CLI signature verified (ad-hoc or Developer ID)"
 
   case "$(uname -m)" in
     arm64) TARGET="aarch64-apple-darwin" ;;
@@ -223,7 +227,7 @@ check_no_owned_sidecars() {
 
 read_revision() {
   local status_json
-  run_capture "status" "$CLI" --state-dir "$STATE_DIR" --json status
+  run_capture "status" "$CLI" --state-dir "$STATE_DIR" --json status >/dev/null
   status_json="$CAPTURED_OUTPUT"
   printf '%s' "$status_json" | sed -n 's/.*"revision": *\([0-9][0-9]*\).*/\1/p' | head -n 1
 }

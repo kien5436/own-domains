@@ -2,6 +2,7 @@ use super::{
     CommandRunner, HostArtifact, HostCommand, HostCommandOutput, HostFileKind, HostInstallManifest,
     HostSetupPlan, RuntimePaths,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
@@ -205,21 +206,24 @@ pub fn apply_uninstall(
         unchanged: vec![],
         backups: vec![],
     };
-    let remove_trust = command(
-        "/usr/bin/security",
-        [
-            "remove-trusted-cert",
-            "-d",
-            paths.ca_certificate.to_string_lossy().as_ref(),
-        ],
-    );
     if host
         .certificate_trusted(&paths.ca_certificate)
         .unwrap_or(false)
     {
-        let output = host.run(&remove_trust).map_err(failure)?;
+        let fingerprint = certificate_sha256(host, &paths.ca_certificate).map_err(failure)?;
+        let delete_trust = command(
+            "/usr/bin/security",
+            [
+                "delete-certificate",
+                "-Z",
+                fingerprint.as_str(),
+                "-t",
+                "/Library/Keychains/System.keychain",
+            ],
+        );
+        let output = host.run(&delete_trust).map_err(failure)?;
         if output.status != 0 {
-            return Err(failure(command_error(&remove_trust, &output)));
+            return Err(failure(command_error(&delete_trust, &output)));
         }
     }
     for action in &preview.actions {
@@ -359,19 +363,11 @@ fn merge_managed_block(previous: &[u8], block: &[u8]) -> Result<Vec<u8>, SetupFa
     let previous =
         std::str::from_utf8(previous).map_err(|_| failure("PF configuration is not UTF-8"))?;
     let block = std::str::from_utf8(block).map_err(|_| failure("managed PF block is not UTF-8"))?;
-    let merged = match (previous.find(BEGIN_MARKER), previous.find(END_MARKER)) {
-        (None, None) => format!(
-            "{}{separator}{block}",
-            previous,
-            separator = if previous.is_empty() || previous.ends_with('\n') {
-                ""
-            } else {
-                "\n"
-            }
-        ),
+    let without_block = match (previous.find(BEGIN_MARKER), previous.find(END_MARKER)) {
+        (None, None) => previous.to_owned(),
         (Some(start), Some(end)) if start <= end => {
             let end = end + END_MARKER.len();
-            format!("{}{}{}", &previous[..start], block, &previous[end..])
+            format!("{}{}", &previous[..start], &previous[end..])
         }
         _ => {
             return Err(failure(
@@ -379,7 +375,47 @@ fn merge_managed_block(previous: &[u8], block: &[u8]) -> Result<Vec<u8>, SetupFa
             ));
         }
     };
+    let insertion = managed_block_insertion_offset(&without_block);
+    let mut merged = String::with_capacity(without_block.len() + block.len() + 1);
+    merged.push_str(&without_block[..insertion]);
+    if !merged.is_empty() && !merged.ends_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str(block);
+    merged.push_str(&without_block[insertion..]);
     Ok(merged.into_bytes())
+}
+
+fn managed_block_insertion_offset(previous: &str) -> usize {
+    let mut offset = 0;
+    let mut after_translation = None;
+    let mut before_filter = None;
+    for line in previous.split_inclusive('\n') {
+        let keyword = line.trim_start().split_ascii_whitespace().next();
+        if keyword.is_some_and(is_translation_rule) {
+            after_translation = Some(offset + line.len());
+        } else if before_filter.is_none() && keyword.is_some_and(is_filter_or_queue_rule) {
+            before_filter = Some(offset);
+        }
+        offset += line.len();
+    }
+    after_translation
+        .or(before_filter)
+        .unwrap_or(previous.len())
+}
+
+fn is_translation_rule(keyword: &str) -> bool {
+    matches!(
+        keyword,
+        "rdr-anchor" | "nat-anchor" | "binat-anchor" | "rdr" | "nat" | "binat"
+    )
+}
+
+fn is_filter_or_queue_rule(keyword: &str) -> bool {
+    matches!(
+        keyword,
+        "dummynet-anchor" | "queue" | "anchor" | "pass" | "block" | "match"
+    )
 }
 
 fn rollback_setup(
@@ -395,16 +431,28 @@ fn rollback_setup(
             .certificate_trusted(&plan.paths.ca_certificate)
             .unwrap_or(false)
     {
-        let remove = command(
-            "/usr/bin/security",
-            [
-                "remove-trusted-cert",
-                "-d",
-                plan.paths.ca_certificate.to_string_lossy().as_ref(),
-            ],
-        );
-        if let Err(error) = host.run(&remove) {
-            unresolved.push(format!("remove trust: {error}"));
+        match certificate_sha256(host, &plan.paths.ca_certificate) {
+            Ok(fingerprint) => {
+                let delete_trust = command(
+                    "/usr/bin/security",
+                    [
+                        "delete-certificate",
+                        "-Z",
+                        fingerprint.as_str(),
+                        "-t",
+                        "/Library/Keychains/System.keychain",
+                    ],
+                );
+                match host.run(&delete_trust) {
+                    Ok(output) if output.status == 0 => {}
+                    Ok(output) => unresolved.push(format!(
+                        "remove trust: {}",
+                        command_error(&delete_trust, &output)
+                    )),
+                    Err(error) => unresolved.push(format!("remove trust: {error}")),
+                }
+            }
+            Err(error) => unresolved.push(format!("remove trust: {error}")),
         }
     }
     while let Some((path, previous)) = journal.pop() {
@@ -442,6 +490,23 @@ fn backup_path(manifest: &HostInstallManifest, path: &Path) -> PathBuf {
     manifest
         .backup_directory
         .join(path.strip_prefix("/").unwrap_or(path))
+}
+
+fn certificate_sha256(host: &dyn SetupHost, path: &Path) -> Result<String, String> {
+    let file = host
+        .inspect_file(path)?
+        .ok_or_else(|| format!("{} is missing", path.display()))?;
+    let pem = std::str::from_utf8(&file.content)
+        .map_err(|error| format!("unable to read {}: {error}", path.display()))?;
+    let body = pem
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("-----"))
+        .map(str::trim)
+        .collect::<String>();
+    let der = STANDARD
+        .decode(body.as_bytes())
+        .map_err(|error| format!("unable to decode {}: {error}", path.display()))?;
+    Ok(format!("{:x}", Sha256::digest(der)))
 }
 
 fn command<const N: usize>(program: &str, args: [&str; N]) -> HostCommand {
@@ -673,6 +738,94 @@ impl SetupHost for SystemSetupHost {
         if anchor.status != 0 || anchor.stdout.is_empty() {
             return Err("PF anchor is not active after setup".into());
         }
+        let main = Self::run_fixed("/sbin/pfctl", &["-s", "nat"])?;
+        if main.status != 0
+            || !String::from_utf8_lossy(&main.stdout).contains("rdr-anchor \"dev.owndomains\"")
+        {
+            return Err("PF main ruleset does not reference the Own Domains anchor".into());
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BLOCK: &str = concat!(
+        "# BEGIN OWN DOMAINS\n",
+        "rdr-anchor \"dev.owndomains\"\n",
+        "load anchor \"dev.owndomains\" from \"/etc/pf.anchors/dev.owndomains\"\n",
+        "# END OWN DOMAINS\n",
+    );
+
+    #[test]
+    fn inserts_managed_block_before_filter_anchor() {
+        let previous = concat!(
+            "scrub-anchor \"com.apple/*\"\n",
+            "nat-anchor \"com.apple/*\"\n",
+            "rdr-anchor \"com.apple/*\"\n",
+            "dummynet-anchor \"com.apple/*\"\n",
+            "anchor \"com.apple/*\"\n",
+            "load anchor \"com.apple\" from \"/etc/pf.anchors/com.apple\"\n",
+        );
+
+        let merged =
+            String::from_utf8(merge_managed_block(previous.as_bytes(), BLOCK.as_bytes()).unwrap())
+                .unwrap();
+
+        let block = merged.find(BLOCK).unwrap();
+        let filter_anchor = merged.find("\nanchor \"com.apple/*\"").unwrap() + 1;
+        assert!(
+            block < filter_anchor,
+            "managed block must precede filter rules:\n{merged}"
+        );
+    }
+
+    #[test]
+    fn moves_existing_block_before_filter_anchor() {
+        let previous = format!(
+            "scrub-anchor \"com.apple/*\"\nrdr-anchor \"com.apple/*\"\nanchor \"com.apple/*\"\n{BLOCK}"
+        );
+
+        let merged =
+            String::from_utf8(merge_managed_block(previous.as_bytes(), BLOCK.as_bytes()).unwrap())
+                .unwrap();
+
+        assert_eq!(merged.matches(BEGIN_MARKER).count(), 1);
+        let block = merged.find(BLOCK).unwrap();
+        let filter_anchor = merged.find("\nanchor \"com.apple/*\"").unwrap() + 1;
+        assert!(
+            block < filter_anchor,
+            "existing block must move before filter rules:\n{merged}"
+        );
+    }
+
+    #[test]
+    fn inserts_before_first_filter_when_no_translation_rule_exists() {
+        let merged = String::from_utf8(
+            merge_managed_block(b"set skip on lo0\npass all\n", BLOCK.as_bytes()).unwrap(),
+        )
+        .unwrap();
+
+        let block = merged.find(BLOCK).unwrap();
+        let pass = merged.find("\npass all").unwrap() + 1;
+        assert!(
+            block < pass,
+            "managed block must precede filter rules:\n{merged}"
+        );
+    }
+
+    #[test]
+    fn merging_the_managed_block_is_idempotent() {
+        let previous = concat!(
+            "scrub-anchor \"com.apple/*\"\n",
+            "rdr-anchor \"com.apple/*\"\n",
+            "anchor \"com.apple/*\"\n",
+        );
+        let once = merge_managed_block(previous.as_bytes(), BLOCK.as_bytes()).unwrap();
+        let twice = merge_managed_block(&once, BLOCK.as_bytes()).unwrap();
+
+        assert_eq!(once, twice);
     }
 }

@@ -17,7 +17,7 @@
 - Serve registered websites on the host computer and on phones connected to the same reachable LAN.
 - Keep existing development servers running independently; this application routes traffic but does not launch projects.
 - Provide setup guidance, service diagnostics, and understandable failure messages.
-- Support macOS 13+, Ubuntu 22.04+/compatible systemd Linux distributions, and Windows 11 as hosts. Detect unsupported operating systems before planning or changing host files.
+- Support Apple silicon macOS 15+ as the native acceptance target, Intel macOS 15+ as build-only, and Ubuntu 24+ and Windows 10/11 as implementation targets. Current native runtime support and signing policy are in [Platform support](docs/platform-support.md). Detect unsupported operating systems before planning or changing host files.
 - Provide iPhone and Android browser setup instructions; verify a physical phone against each host family before declaring that platform's LAN workflow complete.
 - Defer wildcard registrations, IPv6 serving, remote administration, public hosting, accounts, billing, Docker-only deployment, non-systemd Linux service installation, and older Windows versions.
 
@@ -248,7 +248,7 @@ Serialize mutations and write desired state through a temporary file, flush, and
 - [ ] Implement split-DNS setup for `.own`, fixed service commands, daemon reload/start/stop, manifest-safe rollback, and least-privilege service users/capabilities for ports below 1024.
 - [ ] Add Ubuntu CI fixtures for CoreDNS, Caddy, setup dry runs, uninstall previews, and service-template validation without modifying the CI host resolver.
 - [ ] Document `ufw`/firewalld guidance, NetworkManager/systemd-resolved recovery, CA installation, and automatic DNS restoration.
-- [ ] Verify on a supported Linux VM before claiming Linux host support.
+- [ ] Verify on an Ubuntu 24+ VM before claiming Linux host support.
 
 ### Task 9: Add the Windows adapter
 
@@ -260,7 +260,7 @@ Serialize mutations and write desired state through a temporary file, flush, and
 - [ ] Implement reviewed PowerShell scripts with fixed parameters, Authenticode-friendly files, Windows Service creation/removal, firewall-rule previews, and manifest-scoped recovery.
 - [ ] Bind Caddy administration to a loopback-only TCP port and confirm it is unreachable from LAN interfaces. Preserve the same-user local-process trust assumption explicitly.
 - [ ] Add Windows CI fixtures for dry-run planning, CoreDNS/Caddy configuration validation, and uninstall previews without changing CI DNS or services.
-- [ ] Verify on Windows 11 before claiming Windows host support.
+- [ ] Verify on Windows 10 or 11 before claiming Windows host support.
 
 ### Task 10: Verify the cross-platform host-to-phone workflow
 
@@ -276,4 +276,4 @@ Serialize mutations and write desired state through a temporary file, flush, and
 
 ## Definition of Done
 
-The React dashboard uses Tailwind CSS and focused feature/component/hook modules, with ESLint based on `eslint-config-pk`. It reliably manages independent `.own` domain/subdomain mappings on macOS, supported systemd Linux, and Windows 11; a real phone reaches HTTP and trusted HTTPS websites through each host family; WebSockets work; settings and certificate identity survive restart; failed updates do not silently replace working routes; administration remains local; setup and recovery are documented and reversible. Platform detection blocks unsupported hosts before side effects. All configured tests, lint, type checks, builds, platform CI jobs, and authorized physical-device checks pass with recorded evidence.
+The React dashboard uses Tailwind CSS and focused feature/component/hook modules, with ESLint based on `eslint-config-pk`. It reliably manages independent `.own` domain/subdomain mappings on Apple silicon macOS 15+, Ubuntu 24+, and Windows 10/11; Intel macOS is buildable but not acceptance-required; a real phone reaches HTTP and trusted HTTPS websites through each accepted host family; WebSockets work; settings and certificate identity survive restart; failed updates do not silently replace working routes; administration remains local; setup and recovery are documented and reversible. Platform detection blocks unsupported hosts before side effects. All configured tests, lint, type checks, builds, platform CI jobs, and authorized physical-device checks pass with recorded evidence.

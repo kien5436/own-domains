@@ -1,6 +1,9 @@
 use crate::{
     bridge::{BridgeError, DesktopBridge, DesktopPaths},
-    lifecycle::{DesktopLifecycle, LifecycleBackend, WindowActions},
+    lifecycle::{
+        DesktopLifecycle, LifecycleBackend, QUIT_MENU_ID, SHOW_MENU_ID, WindowActions,
+        handle_menu_action,
+    },
     subscription::Subscriptions,
 };
 use own_domains_client::{Client, ClientError, connect_or_launch, stop_and_wait};
@@ -13,9 +16,13 @@ use std::{
 };
 use tauri::{
     Emitter, Manager,
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
+
+// Runtime startup applies CoreDNS and Caddy configuration, which can take
+// longer than the default IPC timeout on a cold start.
+const START_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct DesktopState {
     paths: DesktopPaths,
@@ -63,7 +70,7 @@ impl LifecycleBackend for Host {
             &state.paths.state_dir,
             &state.paths.socket,
             &state.executable,
-            Duration::from_secs(5),
+            START_TIMEOUT,
         )
         .map_err(lifecycle_error)?;
         client.request(Command::Start)?;
@@ -95,6 +102,17 @@ fn lifecycle_error(error: own_domains_client::LifecycleError) -> BridgeError {
             message: other.to_string(),
         },
     }
+}
+fn dispatch_menu_action(app: &tauri::AppHandle, id: &str) {
+    let host = Host(app.clone());
+    let backend = host.clone();
+    let window = host.clone();
+    let id = id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(Err(error)) = handle_menu_action(&id, backend, window) {
+            host.report(error);
+        }
+    });
 }
 fn require_main(window: &tauri::WebviewWindow) -> Result<(), BridgeError> {
     if window.label() != "main" {
@@ -208,6 +226,14 @@ async fn daemon_start(
     blocking(move || Host(app).start()).await
 }
 #[tauri::command]
+async fn daemon_stop(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<(), BridgeError> {
+    require_main(&window)?;
+    blocking(move || Host(app).stop()).await
+}
+#[tauri::command]
 async fn desktop_quit(
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,
@@ -285,6 +311,7 @@ pub fn run() {
             daemon_subscribe,
             daemon_unsubscribe,
             daemon_start,
+            daemon_stop,
             desktop_quit,
             desktop_error
         ])
@@ -296,8 +323,43 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            let show = MenuItem::with_id(app, "show", "Show Own Domains", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            #[cfg(target_os = "macos")]
+            {
+                let quit = MenuItem::with_id(
+                    app,
+                    QUIT_MENU_ID,
+                    "Quit Own Domains",
+                    true,
+                    Some("CmdOrCtrl+Q"),
+                )?;
+                let app_menu = SubmenuBuilder::new(app, "Own Domains")
+                    .item(&PredefinedMenuItem::about(app, None, None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::hide(app, None)?)
+                    .item(&PredefinedMenuItem::hide_others(app, None)?)
+                    .item(&PredefinedMenuItem::show_all(app, None)?)
+                    .separator()
+                    .item(&quit)
+                    .build()?;
+                let edit_menu = SubmenuBuilder::new(app, "Edit")
+                    .item(&PredefinedMenuItem::undo(app, None)?)
+                    .item(&PredefinedMenuItem::redo(app, None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::cut(app, None)?)
+                    .item(&PredefinedMenuItem::copy(app, None)?)
+                    .item(&PredefinedMenuItem::paste(app, None)?)
+                    .item(&PredefinedMenuItem::select_all(app, None)?)
+                    .build()?;
+                app.set_menu(
+                    MenuBuilder::new(app)
+                        .items(&[&app_menu, &edit_menu])
+                        .build()?,
+                )?;
+                app.on_menu_event(|app, event| dispatch_menu_action(app, event.id().as_ref()));
+            }
+            let show =
+                MenuItem::with_id(app, SHOW_MENU_ID, "Show Own Domains", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, QUIT_MENU_ID, "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
             // Small built-in RGBA icon keeps tray availability independent of bundle assets.
             let icon = tauri::image::Image::new_owned([32, 90, 200, 255].repeat(16 * 16), 16, 16);
@@ -317,21 +379,7 @@ pub fn run() {
                         Host(tray.app_handle().clone()).show();
                     }
                 })
-                .on_menu_event(|app, event| {
-                    let host = Host(app.clone());
-                    if event.id.as_ref() == "show" {
-                        host.show();
-                    }
-                    if event.id.as_ref() == "quit" {
-                        tauri::async_runtime::spawn_blocking(move || {
-                            if let Err(error) =
-                                DesktopLifecycle::new(host.clone(), host.clone()).quit()
-                            {
-                                host.report(error);
-                            }
-                        });
-                    }
-                })
+                .on_menu_event(|app, event| dispatch_menu_action(app, event.id().as_ref()))
                 .build(app)?;
             let host = Host(app.handle().clone());
             tauri::async_runtime::spawn_blocking(move || {
@@ -343,11 +391,10 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("Unable to build the desktop application");
-    app.run(|handle, event| {
-        if let tauri::RunEvent::ExitRequested {
+    app.run(|handle, event| match event {
+        tauri::RunEvent::ExitRequested {
             code: None, api, ..
-        } = event
-        {
+        } => {
             api.prevent_exit();
             let host = Host(handle.clone());
             tauri::async_runtime::spawn_blocking(move || {
@@ -356,5 +403,17 @@ pub fn run() {
                 }
             });
         }
+        tauri::RunEvent::Exit => {
+            // macOS app-menu and dock Quit can bypass ExitRequested; stop the daemon
+            // before the process leaves even when the guarded path was skipped.
+            let state = handle.state::<DesktopState>();
+            if let Ok(client) = Client::connect(&state.paths.socket)
+                && let Err(error) =
+                    stop_and_wait(&client, &state.paths.socket, Duration::from_secs(5))
+            {
+                eprintln!("desktop exit cleanup failed: {error}");
+            }
+        }
+        _ => {}
     });
 }

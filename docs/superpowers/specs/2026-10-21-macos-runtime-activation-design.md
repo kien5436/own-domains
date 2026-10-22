@@ -4,7 +4,7 @@
 
 Phase 4 begins with a macOS runtime that keeps the Own Domains daemon and its CoreDNS, Caddy, and setup-page processes in the signed-in user's session. A one-time privileged setup installs narrowly scoped resolver, packet-filter, and trust-store integration. Normal GUI launches and CLI start/stop operations run without administrator credentials.
 
-This design implements the macOS portion of the delivery order in `2026-10-20-native-app-architecture-design.md`. Linux systemd and Windows 11 adapters remain separate follow-up designs.
+This design implements the macOS portion of the delivery order in `2026-10-20-native-app-architecture-design.md`. Ubuntu 24+ and Windows 10/11 adapters remain separate follow-up designs.
 
 ## Goals
 
@@ -18,7 +18,7 @@ This design implements the macOS portion of the delivery order in `2026-10-20-na
 
 ## Non-goals
 
-- Linux or Windows activation.
+- Ubuntu 24+ or Windows 10/11 activation.
 - Silent privileged installation or repeated authorization during normal start/stop.
 - A browser-accessible management endpoint.
 - Automatic modification of third-party VPN, DNS, proxy, or packet-filter configuration when a conflict is detected.
@@ -168,7 +168,9 @@ Diagnostics contain no private keys, full environment, or arbitrary file content
 
 ## Verification and acceptance
 
-Automated tests run on every host for pure rendering, transaction rollback, command arrays, state transitions, reconciliation, process ownership, setup HTTP behavior, and failure reporting. macOS integration tests use temporary state plus injected command/process adapters and include fixtures for both Apple silicon and Intel resource paths.
+Automated tests run on every host for pure rendering, transaction rollback, command arrays, state transitions, reconciliation, process ownership, setup HTTP behavior, and failure reporting. macOS integration tests use temporary state plus injected command/process adapters and include fixtures for both Apple silicon and Intel resource paths. Acceptance is Apple silicon macOS 15+ only; Intel macOS is build-only.
+
+Local acceptance may use ad-hoc signing. Developer ID signing and notarization are distribution requirements and are not part of this acceptance gate.
 
 A dedicated macOS CI or physical runner must additionally prove:
 
@@ -184,7 +186,7 @@ A dedicated macOS CI or physical runner must additionally prove:
 - a killed daemon yields actionable survivor recovery;
 - a physical phone can use the Mac as DNS, reach HTTP/HTTPS mappings, install the CA through `setup.own`, and loses all `.own` access after shutdown.
 
-Linux development verifies portable tests and retains the runtime-unavailable behavior. macOS is not declared complete from mocked tests alone.
+Ubuntu 24+ development verifies portable tests and retains the runtime-unavailable behavior. macOS is not declared complete from mocked tests alone.
 
 ## Source constraints
 

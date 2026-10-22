@@ -1,4 +1,4 @@
-use own_domains_core::Settings;
+use own_domains_core::{DiagnosticStatus, Settings};
 use own_domains_daemon::platform::macos::{
     CommandRunner, HostCommand, HostCommandOutput, HostFileKind, HostFileMetadata, HostFileSystem,
     HostIntegrationInspector, MacOsArchitecture, MacOsSetupOptions, SidecarManifest, SidecarSpec,
@@ -57,18 +57,18 @@ fn renders_exact_resolver_pf_manifest_and_fixed_commands() {
     assert_eq!(
         anchor.content,
         concat!(
-            "rdr pass on lo0 inet proto udp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354\n",
-            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354\n",
-            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080\n",
-            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443\n",
-            "rdr pass on lo0 inet proto udp from any to 192.168.1.20 port 53 -> 127.0.0.1 port 5354\n",
-            "rdr pass on lo0 inet proto tcp from any to 192.168.1.20 port 53 -> 127.0.0.1 port 5354\n",
-            "rdr pass on lo0 inet proto tcp from any to 192.168.1.20 port 80 -> 127.0.0.1 port 8080\n",
-            "rdr pass on lo0 inet proto tcp from any to 192.168.1.20 port 443 -> 127.0.0.1 port 8443\n",
-            "rdr pass on en0 inet proto udp from any to 192.168.1.20 port 53 -> 127.0.0.1 port 5354\n",
-            "rdr pass on en0 inet proto tcp from any to 192.168.1.20 port 53 -> 127.0.0.1 port 5354\n",
-            "rdr pass on en0 inet proto tcp from any to 192.168.1.20 port 80 -> 127.0.0.1 port 8080\n",
-            "rdr pass on en0 inet proto tcp from any to 192.168.1.20 port 443 -> 127.0.0.1 port 8443\n",
+            "rdr pass on lo0 inet proto udp from any to 127.0.0.1 port 53 -> 192.168.1.20 port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 53 -> 192.168.1.20 port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 192.168.1.20 port 8080\n",
+            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 192.168.1.20 port 8443\n",
+            "rdr pass on lo0 inet proto udp from any to 192.168.1.20 port 53 -> 192.168.1.20 port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to 192.168.1.20 port 53 -> 192.168.1.20 port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to 192.168.1.20 port 80 -> 192.168.1.20 port 8080\n",
+            "rdr pass on lo0 inet proto tcp from any to 192.168.1.20 port 443 -> 192.168.1.20 port 8443\n",
+            "rdr pass on en0 inet proto udp from any to 192.168.1.20 port 53 -> 192.168.1.20 port 5354\n",
+            "rdr pass on en0 inet proto tcp from any to 192.168.1.20 port 53 -> 192.168.1.20 port 5354\n",
+            "rdr pass on en0 inet proto tcp from any to 192.168.1.20 port 80 -> 192.168.1.20 port 8080\n",
+            "rdr pass on en0 inet proto tcp from any to 192.168.1.20 port 443 -> 192.168.1.20 port 8443\n",
         )
     );
     assert_eq!(
@@ -94,6 +94,7 @@ fn renders_exact_resolver_pf_manifest_and_fixed_commands() {
     assert_eq!(plan.commands.iter().map(|command| (command.program.to_string_lossy().into_owned(), command.args.clone())).collect::<Vec<_>>(), vec![
         ("/usr/bin/security".into(), vec!["add-trusted-cert", "-d", "-r", "trustRoot", "-k", "/Library/Keychains/System.keychain", "/Users/kien/Library/Application Support/OwnDomains/caddy-data/pki/authorities/local/root.crt"].into_iter().map(String::from).collect()),
         ("/sbin/pfctl".into(), vec!["-nf", "/etc/pf.conf"].into_iter().map(String::from).collect()),
+        ("/sbin/pfctl".into(), vec!["-f", "/etc/pf.conf"].into_iter().map(String::from).collect()),
         ("/sbin/pfctl".into(), vec!["-a", "dev.owndomains", "-f", "/etc/pf.anchors/dev.owndomains"].into_iter().map(String::from).collect()),
         ("/sbin/pfctl".into(), vec!["-E"].into_iter().map(String::from).collect()),
     ]);
@@ -211,6 +212,7 @@ impl HostFileSystem for FakeFiles {
 struct FakeCommands {
     healthy: bool,
     oversized: bool,
+    pf_permission_denied: bool,
     calls: Mutex<Vec<HostCommand>>,
 }
 
@@ -223,6 +225,13 @@ impl CommandRunner for FakeCommands {
                 status: 0,
                 stdout: vec![b'x'; 65_537],
                 stderr: vec![],
+            });
+        }
+        if self.pf_permission_denied && program == "/sbin/pfctl" {
+            return Ok(HostCommandOutput {
+                status: 1,
+                stdout: vec![],
+                stderr: b"pfctl: /dev/pf: Permission denied".to_vec(),
             });
         }
         let (status, stdout) = if program.ends_with("coredns-aarch64-apple-darwin") {
@@ -326,6 +335,7 @@ fn inspector_uses_only_fixed_bounded_commands_for_a_valid_installation() {
     let commands = FakeCommands {
         healthy: true,
         oversized: false,
+        pf_permission_denied: false,
         calls: Mutex::new(vec![]),
     };
     let settings = Settings {
@@ -360,6 +370,38 @@ fn inspector_uses_only_fixed_bounded_commands_for_a_valid_installation() {
 }
 
 #[test]
+fn inspector_treats_unprivileged_pf_inspection_as_a_warning() {
+    let (plan, files) = installed_host();
+    let commands = FakeCommands {
+        healthy: true,
+        oversized: false,
+        pf_permission_denied: true,
+        calls: Mutex::new(vec![]),
+    };
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.status != DiagnosticStatus::Error),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "pfAnchorUnverifiable"
+                && diagnostic.status == DiagnosticStatus::Warning
+        }),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn inspector_reports_stable_codes_for_host_drift_and_conflicts() {
     let (plan, mut files) = installed_host();
     files
@@ -378,6 +420,7 @@ fn inspector_reports_stable_codes_for_host_drift_and_conflicts() {
     let commands = FakeCommands {
         healthy: false,
         oversized: false,
+        pf_permission_denied: false,
         calls: Mutex::new(vec![]),
     };
     let settings = Settings {
@@ -411,6 +454,7 @@ fn inspector_rejects_oversized_command_output() {
     let commands = FakeCommands {
         healthy: true,
         oversized: true,
+        pf_permission_denied: false,
         calls: Mutex::new(vec![]),
     };
     let settings = Settings {

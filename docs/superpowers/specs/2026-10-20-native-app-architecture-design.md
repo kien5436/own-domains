@@ -4,7 +4,7 @@
 
 Own Domains will become a native desktop product built with Tauri 2, the existing React/TypeScript/Vite/Tailwind frontend, and a new Rust core. A Rust daemon will be the single runtime authority for the native GUI and an independent Rust CLI. The browser-based management dashboard and `registry.own` will be removed. The read-only `setup.own` phone onboarding page will remain available while the runtime is active.
 
-The application will target macOS first, followed by supported systemd Linux distributions and Windows 11. Portable core behavior and IPC contracts will remain platform-neutral from the beginning.
+The application will target Apple silicon macOS 15+ first, with Intel macOS buildable but not acceptance-required. Ubuntu 24+ and Windows 10/11 are subsequent support targets. Portable core behavior and IPC contracts will remain platform-neutral from the beginning.
 
 ## Goals
 
@@ -177,15 +177,15 @@ Automated verification will cover:
 - Proof that all `.own` names stop resolving after Quit.
 - Proof that `registry.own` never resolves or routes.
 - Proof that `setup.own` exposes only approved read-only resources.
-- Platform adapter behavior on macOS, supported systemd Linux, and Windows 11.
+- Platform adapter behavior on Apple silicon macOS 15+, Intel macOS (build-only), Ubuntu 24+, and Windows 10/11.
 
-Before a platform is declared complete, physical-device verification must confirm HTTP and trusted HTTPS routing, CA installation through `setup.own`, runtime restart, complete shutdown, and the absence of LAN-accessible management interfaces.
+Before a platform is declared complete, physical-device verification must confirm HTTP and trusted HTTPS routing, CA installation through `setup.own`, runtime restart, complete shutdown, and the absence of LAN-accessible management interfaces. macOS acceptance may use ad-hoc signing; Developer ID signing and notarization are distribution requirements only.
 
 ## Delivery order
 
 1. Portable Rust core and daemon contracts.
-2. macOS daemon, CLI, Tauri GUI, CoreDNS/Caddy lifecycle, and physical-phone verification.
-3. Supported systemd Linux integration and verification.
-4. Windows 11 integration and verification.
+2. Apple silicon macOS 15+ daemon, CLI, Tauri GUI, CoreDNS/Caddy lifecycle, and physical-phone verification. Intel macOS remains buildable and build-only.
+3. Ubuntu 24+ integration and verification.
+4. Windows 10/11 integration and verification.
 
 The product is not cross-platform complete until all three host families pass their automated and physical-device acceptance criteria.

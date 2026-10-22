@@ -3,7 +3,7 @@ use own_domains_protocol::{
     ResponseEnvelope,
 };
 use std::{
-    io::{BufReader, Read, Write},
+    io::{BufReader, ErrorKind, Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     time::Duration,
@@ -99,9 +99,12 @@ pub struct EventStreamCancellation {
 }
 impl EventStreamCancellation {
     pub fn cancel(&self) -> Result<(), ClientError> {
-        self.stream
-            .shutdown(std::net::Shutdown::Both)
-            .map_err(Into::into)
+        match self.stream.shutdown(std::net::Shutdown::Both) {
+            // Stopping the daemon closes the peer before the frontend cleans up
+            // its subscription. That cleanup is already complete in that case.
+            Err(error) if error.kind() == ErrorKind::NotConnected => Ok(()),
+            result => result.map_err(Into::into),
+        }
     }
 }
 impl EventStream {
@@ -213,5 +216,21 @@ fn exchange(stream: &mut UnixStream, command: Command) -> Result<CommandResult, 
             received,
         }),
         Err(error) => Err(ClientError::Protocol(error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EventStreamCancellation;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn cancellation_tolerates_an_already_closed_connection() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        let cancel = EventStreamCancellation { stream };
+
+        drop(peer);
+        cancel.cancel().unwrap();
+        assert!(cancel.cancel().is_ok());
     }
 }

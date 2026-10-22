@@ -6,6 +6,7 @@ fn main() {
             "daemon_subscribe",
             "daemon_unsubscribe",
             "daemon_start",
+            "daemon_stop",
             "desktop_quit",
             "desktop_error",
         ]),

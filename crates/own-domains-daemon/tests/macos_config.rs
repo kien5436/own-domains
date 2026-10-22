@@ -217,12 +217,13 @@ fn stages_owner_only_candidates_and_validates_with_fixed_commands() {
     );
 
     let corefile = files.text(&candidate.corefile_path);
-    assert!(corefile.contains(".own:5354"));
+    assert!(corefile.starts_with("own:5354 {"));
+    assert!(!corefile.contains(".own:"));
     assert!(corefile.contains("bind 127.0.0.1 192.168.1.20"));
     assert!(corefile.contains("forward . 1.1.1.1:53 9.9.9.9:53"));
 
     let validation = files.text(&candidate.validation_corefile_path);
-    assert!(validation.contains(".own:15354"));
+    assert!(validation.starts_with("own:15354 {"));
     assert!(validation.contains(".:15354"));
     assert!(validation.contains("bind 127.0.0.1\n"));
     assert!(!validation.contains("bind 127.0.0.1 192.168.1.20"));

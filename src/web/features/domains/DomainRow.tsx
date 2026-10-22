@@ -15,6 +15,7 @@ type Props = {
 
 export function DomainRow({ mapping, busy, onToggle, onSetTls, onUpdatePort, onRemove }: Props) {
   const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [port, setPort] = useState(String(mapping.upstreamPort));
   const numericPort = Number(port);
   const validPort = Number.isInteger(numericPort) && 1 <= numericPort && 65535 >= numericPort && !RESERVED_PORTS.has(numericPort);
@@ -39,6 +40,11 @@ export function DomainRow({ mapping, busy, onToggle, onSetTls, onUpdatePort, onR
     {!editing && <button aria-label={`Edit ${mapping.hostname}`} className="rounded-lg border px-3 py-1.5 text-sm" disabled={busy} onClick={() => setEditing(true)} type="button">Edit</button>}
     <button className="rounded-lg border px-3 py-1.5 text-sm" disabled={busy} onClick={() => void onToggle(mapping).catch(() => undefined)} type="button">{mapping.enabled ? 'Disable' : 'Enable'}</button>
     <button className="rounded-lg border px-3 py-1.5 text-sm" disabled={busy} onClick={() => void onSetTls(mapping).catch(() => undefined)} type="button">Turn TLS {mapping.tls ? 'off' : 'on'}</button>
-    <button className="rounded-lg px-3 py-1.5 text-sm text-red-700" disabled={busy} onClick={() => { if (window.confirm(`Delete ${mapping.hostname}?`)) void onRemove(mapping).catch(() => undefined); }} type="button">Delete</button>
+    {confirmingDelete
+      ? <>
+        <button className="rounded-lg bg-red-700 px-3 py-1.5 text-sm text-white disabled:opacity-50" disabled={busy} onClick={() => { setConfirmingDelete(false); void onRemove(mapping).catch(() => undefined) }} type="button">Confirm delete</button>
+        <button className="rounded-lg border px-3 py-1.5 text-sm" disabled={busy} onClick={() => setConfirmingDelete(false)} type="button">Cancel</button>
+      </>
+      : <button className="rounded-lg px-3 py-1.5 text-sm text-red-700" disabled={busy} onClick={() => setConfirmingDelete(true)} type="button">Delete</button>}
   </li>;
 }

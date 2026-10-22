@@ -136,7 +136,12 @@ pub fn execute(cli: Cli) -> CommandOutput {
         .socket
         .clone()
         .unwrap_or_else(|| cli.state_dir.join("daemon.sock"));
-    match Client::connect(&socket) {
+    let client_timeout = if matches!(cli.command, CliCommand::Start) {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(5)
+    };
+    match Client::with_timeout(&socket, client_timeout) {
         Ok(client) if matches!(cli.command, CliCommand::Stop) => {
             match stop_and_wait(&client, &socket, Duration::from_secs(5)) {
                 Ok(()) => render(
@@ -519,9 +524,42 @@ fn create_owned_directory(path: &Path, user: &UserRecord) -> Result<(), String> 
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CaddyCaState {
+    Missing,
+    Incomplete,
+    Ready,
+}
+
+fn nonempty_file(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false)
+}
+
+fn caddy_ca_state(certificate: &Path, key: &Path) -> CaddyCaState {
+    match (nonempty_file(certificate), nonempty_file(key)) {
+        (true, true) => CaddyCaState::Ready,
+        (false, false) => CaddyCaState::Missing,
+        _ => CaddyCaState::Incomplete,
+    }
+}
+
 fn ensure_caddy_ca(paths: &RuntimePaths, user: &UserRecord) -> Result<(), String> {
-    if paths.ca_certificate.is_file() {
-        return Ok(());
+    let ca_key = paths.ca_certificate.with_file_name("root.key");
+    match caddy_ca_state(&paths.ca_certificate, &ca_key) {
+        CaddyCaState::Ready => return Ok(()),
+        CaddyCaState::Incomplete => {
+            let ca_directory = paths.ca_certificate.parent().ok_or_else(|| {
+                format!(
+                    "cannot determine Caddy CA directory from {}",
+                    paths.ca_certificate.display()
+                )
+            })?;
+            std::fs::remove_dir_all(ca_directory)
+                .map_err(|error| format!("unable to remove {}: {error}", ca_directory.display()))?;
+        }
+        CaddyCaState::Missing => {}
     }
     create_owned_directory(&paths.runtime_directory, user)?;
     let admin_socket = paths.runtime_directory.join("ca-admin.sock");
@@ -572,10 +610,7 @@ fn ensure_caddy_ca(paths: &RuntimePaths, user: &UserRecord) -> Result<(), String
         .map_err(|error| format!("unable to start Caddy for CA generation: {error}"))?;
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
     loop {
-        let ready = std::fs::metadata(&paths.ca_certificate)
-            .map(|metadata| metadata.len() > 0)
-            .unwrap_or(false);
-        if ready {
+        if caddy_ca_state(&paths.ca_certificate, &ca_key) == CaddyCaState::Ready {
             let _ = child.kill();
             let _ = child.wait();
             let _ = std::fs::remove_file(&admin_socket);
@@ -586,7 +621,7 @@ fn ensure_caddy_ca(paths: &RuntimePaths, user: &UserRecord) -> Result<(), String
             let _ = std::fs::remove_file(&admin_socket);
             let _ = std::fs::remove_file(&config_path);
             return Err(format!(
-                "Caddy exited with {status} before generating the root certificate"
+                "Caddy exited with {status} before generating the root certificate and key"
             ));
         }
         if std::time::Instant::now() >= deadline {
@@ -594,7 +629,7 @@ fn ensure_caddy_ca(paths: &RuntimePaths, user: &UserRecord) -> Result<(), String
             let _ = child.wait();
             let _ = std::fs::remove_file(&admin_socket);
             let _ = std::fs::remove_file(&config_path);
-            return Err("timed out while generating the Caddy root certificate".into());
+            return Err("timed out while generating the Caddy root certificate and key".into());
         }
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -617,6 +652,16 @@ fn setup_failure(error: own_domains_daemon::platform::macos::SetupFailure) -> Co
             ),
         )
     }
+}
+
+fn persist_network_address(state_directory: &Path, lan_address: &str) -> Result<(), String> {
+    let store = SettingsStore::new(state_directory);
+    let mut settings = store.load().map_err(|error| error.to_string())?;
+    settings.lan_address = lan_address.to_string();
+    let revision = settings.revision;
+    store
+        .save(&settings, Some(revision))
+        .map_err(|error| error.to_string())
 }
 
 fn execute_setup(
@@ -669,21 +714,39 @@ fn execute_setup(
         return CommandOutput::error(4, error);
     }
     match apply_setup(&plan, &host) {
-        Ok(result) => CommandOutput::success(
-            result
-                .written
-                .iter()
-                .map(|path| format!("written {}", path.display()))
-                .chain(
-                    result
-                        .unchanged
-                        .iter()
-                        .map(|path| format!("unchanged {}", path.display())),
-                )
-                .collect::<Vec<_>>()
-                .join("\n")
-                + "\n",
-        ),
+        Ok(result) => {
+            let settings_path = paths.state_directory.join("settings.json");
+            let persisted =
+                persist_network_address(&paths.state_directory, &options.lan_address.to_string())
+                    .and_then(|()| chown_path(&settings_path, user.user_id, user.group_id));
+            if let Err(error) = persisted {
+                let rollback = match apply_uninstall(&paths, false, &host) {
+                    Ok(_) => "host setup rolled back".to_string(),
+                    Err(rollback) => {
+                        format!("host setup rollback failed: {}", rollback.message)
+                    }
+                };
+                return CommandOutput::error(
+                    4,
+                    format!("unable to persist LAN address: {error}; {rollback}"),
+                );
+            }
+            CommandOutput::success(
+                result
+                    .written
+                    .iter()
+                    .map(|path| format!("written {}", path.display()))
+                    .chain(
+                        result
+                            .unchanged
+                            .iter()
+                            .map(|path| format!("unchanged {}", path.display())),
+                    )
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n",
+            )
+        }
         Err(error) => setup_failure(error),
     }
 }
@@ -941,7 +1004,7 @@ fn start_daemon(cli: &Cli, socket: &std::path::Path) -> CommandOutput {
     let executable = std::env::var_os("OWN_DOMAINS_DAEMON")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("own-domains-daemon"));
-    match connect_or_launch(&cli.state_dir, socket, &executable, Duration::from_secs(5)) {
+    match connect_or_launch(&cli.state_dir, socket, &executable, Duration::from_secs(30)) {
         Ok(client) => match client.request(Command::Start) {
             Ok(result) => render(result, cli.json, None),
             Err(error) => client_error(error),
@@ -1062,6 +1125,7 @@ fn protocol_error(error: ProtocolError) -> CommandOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use own_domains_core::{DomainMapping, Settings};
 
     fn temporary_directory(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -1084,6 +1148,36 @@ mod tests {
         );
         assert!(normalize_absolute(Path::new("/..")).is_err());
         assert!(normalize_absolute(Path::new("relative")).is_err());
+    }
+
+    #[test]
+    fn setup_network_update_persists_lan_address_without_resetting_settings() {
+        let state = temporary_directory("setup-network");
+        let store = SettingsStore::new(&state);
+        let mapping = DomainMapping {
+            id: "mapping-1".into(),
+            hostname: "app.own".into(),
+            upstream_port: 3000,
+            tls: false,
+            enabled: true,
+        };
+        let original = Settings {
+            revision: 7,
+            lan_address: String::new(),
+            upstream_dns: vec!["8.8.8.8".into()],
+            mappings: vec![mapping.clone()],
+            ..Default::default()
+        };
+        store.save(&original, Some(0)).unwrap();
+
+        persist_network_address(&state, "192.168.1.219").unwrap();
+
+        let updated = store.load().unwrap();
+        assert_eq!(updated.lan_address, "192.168.1.219");
+        assert_eq!(updated.revision, 7);
+        assert_eq!(updated.upstream_dns, original.upstream_dns);
+        assert_eq!(updated.mappings, vec![mapping]);
+        std::fs::remove_dir_all(state).unwrap();
     }
 
     #[test]
@@ -1135,6 +1229,29 @@ mod tests {
         let manifest = manifest_for_architecture(&root, MacOsArchitecture::Arm64).unwrap();
         assert_eq!(manifest.coredns.version, "1.14.7");
         assert_eq!(manifest.caddy.version, "2.11.7");
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn caddy_ca_requires_both_certificate_and_nonempty_key() {
+        let root = temporary_directory("caddy-ca");
+        let certificate = root.join("root.crt");
+        let key = root.join("root.key");
+
+        assert_eq!(caddy_ca_state(&certificate, &key), CaddyCaState::Missing);
+
+        std::fs::write(&certificate, b"certificate").unwrap();
+        assert_eq!(caddy_ca_state(&certificate, &key), CaddyCaState::Incomplete);
+
+        std::fs::write(&key, b"key").unwrap();
+        assert_eq!(caddy_ca_state(&certificate, &key), CaddyCaState::Ready);
+
+        std::fs::write(&key, b"").unwrap();
+        assert_eq!(caddy_ca_state(&certificate, &key), CaddyCaState::Incomplete);
+
+        std::fs::write(&certificate, b"").unwrap();
+        assert_eq!(caddy_ca_state(&certificate, &key), CaddyCaState::Missing);
 
         std::fs::remove_dir_all(root).unwrap();
     }

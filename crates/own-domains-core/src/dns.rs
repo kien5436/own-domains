@@ -56,7 +56,7 @@ pub fn build_corefile(settings: &Settings, options: &DnsConfigOptions) -> CoreRe
         .collect::<Vec<_>>()
         .join(" ");
     Ok(format!(
-        ".own:{port} {{\n    bind {listeners}\n    template IN A {{\n        match ^(?:[a-z0-9-]+\\.)+own\\.$\n        answer \"{{{{ .Name }}}} 60 IN A {lan}\"\n    }}\n    template IN AAAA {{\n        rcode NOERROR\n    }}\n}}\n.:{port} {{\n    bind {listeners}\n    forward . {upstreams}\n}}\n",
+        "own:{port} {{\n    bind {listeners}\n    template IN A {{\n        match ^(?:[a-z0-9-]+\\.)+own\\.$\n        answer \"{{{{ .Name }}}} 60 IN A {lan}\"\n    }}\n    template IN AAAA {{\n        rcode NOERROR\n    }}\n}}\n.:{port} {{\n    bind {listeners}\n    forward . {upstreams}\n}}\n",
         port = options.port
     ))
 }

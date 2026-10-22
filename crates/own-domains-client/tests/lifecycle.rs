@@ -46,18 +46,23 @@ fn missing_executable_returns_actionable_error_without_settings() {
 fn launched_process_that_never_binds_has_a_bounded_startup_timeout() {
     let directory = std::env::temp_dir().join(format!("od-{}", uuid::Uuid::new_v4()));
     let started = std::time::Instant::now();
+    let no_op = if cfg!(target_os = "macos") {
+        "/usr/bin/true"
+    } else {
+        "/bin/true"
+    };
     let error = connect_or_launch(
         &directory,
         &directory.join("d.sock"),
-        std::path::Path::new("/bin/true"),
+        std::path::Path::new(no_op),
         Duration::from_millis(40),
     )
     .err()
     .unwrap();
-    assert!(matches!(
-        error,
-        own_domains_client::LifecycleError::StartupTimeout
-    ));
+    assert!(
+        matches!(error, own_domains_client::LifecycleError::StartupTimeout),
+        "unexpected lifecycle error: {error:?}"
+    );
     assert!(started.elapsed() < Duration::from_secs(1));
 }
 

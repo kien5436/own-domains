@@ -11,4 +11,4 @@ import './styles/app.css';
 
 const nativeStore = isTauri() ? new RuntimeStore(createNativeClient()) : null;
 
-createRoot(document.getElementById('root')!).render(<StrictMode>{nativeStore ? <NativeApp onError={listenDesktopErrors} store={nativeStore} onStart={() => invoke('daemon_start')} onQuit={() => invoke('desktop_quit')} /> : <App />}</StrictMode>);
+createRoot(document.getElementById('root')!).render(<StrictMode>{nativeStore ? <NativeApp onError={listenDesktopErrors} store={nativeStore} onStart={() => invoke('daemon_start')} onStop={() => invoke('daemon_stop')} onQuit={() => invoke('desktop_quit')} /> : <App />}</StrictMode>);

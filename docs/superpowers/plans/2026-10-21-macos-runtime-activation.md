@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Obtain explicit approval before adding the three direct Rust production dependencies or the bundled CoreDNS and Caddy executables.
-- Target macOS 13 and newer first; Linux and Windows retain `runtimeUnavailable` until separate platform plans are approved.
+- Target Apple silicon macOS 15+ for acceptance; Intel macOS is buildable but not acceptance-required. Ubuntu 24+ and Windows 10/11 retain `runtimeUnavailable` until separate platform plans are approved.
 - Use IPC protocol version 2 for every daemon, CLI, desktop, fixture, and native frontend message in this release.
 - Keep ports fixed at CoreDNS `5354`, Caddy HTTP `8080`, Caddy HTTPS `8443`, setup HTTP `4781`, and a state-directory Caddy admin Unix socket.
 - Never run a shell or interpolate settings/UI input into a command. Production commands use fixed absolute executables and argument arrays.
@@ -203,7 +203,7 @@
 
 ### Task 8: Pin, fetch, verify, and package sidecars
 
-**Status:** Implemented except signed macOS package/version execution; blocked on macOS hardware.
+**Status:** Implemented; sidecar packaging and preflight pass on macOS 15.2 arm64. Developer ID packaging remains a distribution gate.
 
 **Files:**
 - Create: `sidecars/manifest.json`
@@ -222,14 +222,14 @@
 - [x] Write failing downloader tests with a local fake fetcher for wrong digest, wrong archive member, wrong reported version, partial download, unsupported architecture, executable mode, and atomic cache replacement.
 - [x] Record the four archive digests directly from upstream checksum assets, verify checksum signatures where the upstream publishes them, and separately record each extracted executable digest; reject redirects outside GitHub's release asset hosts. Caddy 2.11.7 publishes SHA-512 archive checksums, so the manifest records that upstream algorithm and a separate executable SHA-256.
 - [x] Implement download/extract/verify using Node standard libraries and existing `tsx`; do not add a JavaScript production package.
-- [x] Configure Tauri packaging and standalone CLI release layout to resolve only verified resource-relative binaries. Set `minimumSystemVersion` to `13.0` under `bundle.macOS`. Added verified resource resolution for setup/uninstall and Tauri `externalBin`/resource mappings.
-- [x] Add a release check that runs both sidecars' version commands, verifies hashes, builds arm64/x86_64 packages, and fails if either binary is absent or mutable after signing (`pnpm run release:check`). It requires macOS and `APPLE_SIGNING_IDENTITY`; preflight verifies both architectures without executing them.
+- [x] Configure Tauri packaging and standalone CLI release layout to resolve only verified resource-relative binaries. Set `minimumSystemVersion` to `15.0` under `bundle.macOS`. Added verified resource resolution for setup/uninstall and Tauri `externalBin`/resource mappings.
+- [x] Add an all-architecture Developer ID release check that runs both sidecars' version commands, verifies hashes, builds arm64/x86_64 packages, and fails if either binary is absent or mutable after signing (`pnpm run release:check`). It requires macOS, `APPLE_SIGNING_IDENTITY`, and notarization for `spctl`; preflight verifies both architectures without executing them. This is a distribution check; local acceptance uses ad-hoc signing and does not run it.
 - [x] Run `pnpm test -- tests/scripts/fetch-sidecars.test.ts && pnpm run sidecars:fetch -- --verify-only && PKG_CONFIG=/usr/bin/pkg-config pnpm run desktop:build`; tests and the local Linux build pass when matching sidecars are present. `release:check` packaging and native version execution remain macOS-only.
 - [ ] Commit only when authorized with `build: package macos runtime sidecars`.
 
 ### Task 9: Verify macOS behavior and gate legacy retirement
 
-**Status:** In progress; scripts and documentation are implemented, but Apple silicon/Intel activation and the physical-phone pass are blocked on unavailable macOS hardware.
+**Status:** In progress; scripts and documentation are implemented. Automated gates, an unsigned Apple-silicon smoke test, and an ad-hoc-signed arm64 build with non-destructive preflight passed on macOS 15.2. Acceptance is arm64 macOS 15+ with ad-hoc signing; Intel is build-only. The legacy runtime was removed from this host on 2026-10-21 after explicit cleanup approval. Full `--accept` activation and the physical-phone pass remain blocked.
 
 **Files:**
 - Create: `scripts/verify-macos-runtime.sh`
@@ -240,17 +240,18 @@
 - Conditionally modify after acceptance: legacy TypeScript backend/CLI files and their tests.
 
 **Interfaces:**
-- Consumes: signed macOS package, CLI, test upstream servers, explicit disposable test hostname/state, and a physical phone for the final manual section.
+- Consumes: code-signed macOS arm64 package (ad-hoc accepted), CLI, test upstream servers, explicit disposable test hostname/state, and a physical phone for the final manual section.
 - Produces: machine-readable acceptance log; recovery instructions; and a documented pass/fail gate for removing the TypeScript runtime.
 
 - [x] Write a non-destructive preflight mode that records OS/architecture, verifies signatures/hashes, checks conflicting listeners/PF/resolver state, and refuses to apply changes without an explicit acceptance flag (`scripts/verify-macos-runtime.sh`, default preflight, `--accept` required).
 - [x] Implement the reversible acceptance sequence: setup dry-run, setup apply, CLI-only start, UDP/TCP DNS, HTTP/HTTPS routes, setup-page route allowlist, `registry.own` negative checks, stop/restart, listener negatives, and final uninstall restoration. GUI/CLI parity and rejected-candidate rollback remain manual steps because they require the interactive app or an injected failing backend.
 - [x] Document physical-phone DNS, HTTP, HTTPS, profile installation, fingerprint comparison, restart, and shutdown checks; record results separately from automated output (`docs/macos-acceptance.md`).
 - [x] Run the full repository gates: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `pnpm test`, `pnpm run lint`, `pnpm run typecheck`, `pnpm run build`, feature-enabled desktop Clippy/check, release build, and `git diff --check`.
-- [ ] Run the acceptance script on both Apple silicon and Intel macOS 13+ and complete one physical-phone pass. Do not claim macOS completion if any item is missing. Blocked: no macOS hardware or physical phone is available in this session.
+- [x] Build and ad-hoc sign the arm64 app/CLI and run the non-destructive acceptance preflight on macOS 15.2; preflight passed (`docs/macos-acceptance.md`).
+- [ ] Run the acceptance script with `--accept` on Apple silicon macOS 15+ with the ad-hoc-signed arm64 package and complete one physical-phone pass. Intel macOS is build-only and is not part of this gate. Do not claim macOS completion if any item is missing. Blocked on privileged activation and the physical-phone pass.
 - [ ] Only after recorded acceptance, write a separate reviewed removal change for the TypeScript management server, backend launch agent, legacy CLI, and `registry.own` compatibility paths. Preserve migration/uninstall support for existing installations. Blocked on the acceptance gate.
 - [ ] Commit verification documentation only when authorized with `test: verify macos runtime activation`.
 
 ## Phase completion gate
 
-The macOS runtime is complete only when protocol v2 clients interoperate, host setup is reversible, runtime mutations reconcile truthfully, all owned services stop completely, `setup.own` exposes only public setup material, `registry.own` is absent, signed arm64/x86_64 packages pass, and physical LAN/phone checks are recorded. Until then, the legacy TypeScript runtime remains available and the roadmap must describe macOS activation as in progress.
+The macOS runtime is complete only when protocol v2 clients interoperate, host setup is reversible, runtime mutations reconcile truthfully, all owned services stop completely, `setup.own` exposes only public setup material, `registry.own` is absent, the ad-hoc-signed arm64 package passes, and physical LAN/phone checks are recorded. Intel is build-only and is not part of this gate. Until then, the legacy TypeScript runtime remains available and the roadmap must describe macOS activation as in progress.

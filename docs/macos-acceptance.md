@@ -1,55 +1,67 @@
 # macOS runtime acceptance
 
-This checklist is the release gate for the Rust runtime. It has not been executed on macOS hardware in this repository session; treat every item as unverified until the recorded log and manual results exist.
+This checklist is the release gate for the native macOS arm64 runtime. Automated arm64 activation and the physical-phone checks, including profile removal and DNS restoration, have passed. GUI parity checks passed on 2026-10-22: lifecycle, Delete, live routing restoration, forced candidate-failure route retention, and privileged uninstall restoration below. The release gate is complete for this run; Caddy-specific rejection remains covered by the automated runtime tests. The 2026-10-21 record covers the automated gates, the ad-hoc Apple-silicon package, and the physical-phone pass; it does not cover distribution signing.
 
 ## Required hardware and inputs
 
-- Apple silicon macOS 13 or newer and Intel macOS 13 or newer, each with a signed matching-architecture package.
+- Apple silicon Mac running macOS 15 or newer with a code-signed arm64 app and CLI.
 - A physical phone on the same LAN.
 - A reserved Mac LAN IPv4 address and its interface, for example `192.168.1.20` and `en0`.
 - Test HTTP and HTTPS upstream servers on IPv4 loopback ports. The acceptance runner only records the HTTP port; use an HTTPS mapping only after the test server serves the expected host.
 - A disposable absolute state directory under the logged-in user's home. The default runner path is under `~/Library/Application Support`.
 - The legacy TypeScript runtime and installer unloaded before the run. Preflight rejects an existing owned resolver, PF block, or fixed-port listener.
-- `APPLE_SIGNING_IDENTITY` for the release-signature check.
 
-## 1. Release preflight
+Ad-hoc signing is sufficient for local acceptance and does not require an Apple Developer Program account. `codesign --verify` must pass for the app, CLI, and sidecars. Gatekeeper `spctl`, Developer ID signing, and notarization are distribution requirements, not acceptance gates. Intel macOS is buildable but is not part of this gate.
 
-Run on each architecture from the repository checkout:
+## 1. Build and code-sign the arm64 package
+
+Run on the Apple silicon host from the repository checkout:
 
 ```bash
 pnpm test -- tests/scripts/fetch-sidecars.test.ts
-pnpm run sidecars:fetch -- --verify-only
+pnpm run sidecars:fetch -- --arch all
 pnpm run release:preflight
-PKG_CONFIG=/usr/bin/pkg-config pnpm run desktop:build
-pnpm run release:check
+pnpm run desktop:build:arm64
+(
+  cd crates/own-domains-desktop
+  pnpm exec tauri build --target aarch64-apple-darwin --bundles app
+)
+export APP="$PWD/target/aarch64-apple-darwin/release/bundle/macos/Own Domains.app"
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP"
 ```
 
-`release:check` runs CoreDNS and Caddy version commands, builds signed arm64 and x86_64 app bundles, compares sidecar digests with the packaged manifests, verifies nested executables are not writable, and runs `codesign` and `spctl`; the latter requires a notarized Developer ID package. Do not continue if either architecture is absent or any signature check fails.
+Do not modify the bundle after signing. Either pass this path with `--app` or copy the signed bundle to `/Applications` before preflight; copying preserves the signature.
+
+`release:preflight` verifies both sidecar digest sets without executing either architecture; downloading and checking the Intel sidecars is not an Intel acceptance run. `release:check` is the separate all-architecture Developer ID distribution check: it requires `APPLE_SIGNING_IDENTITY`, and its `spctl` step requires notarization and a paid Apple Developer Program account. It is not required for local acceptance.
 
 Record the commands, package paths, architecture, macOS version, and output. The runner also records machine-readable JSON lines.
 
 ### Standalone CLI package
 
-The release check verifies sidecars and app bundles; assemble the signed CLI used by the runner from the same target:
+Assemble the code-signed CLI used by the runner from the same target:
 
 ```bash
-export TARGET="aarch64-apple-darwin"   # or x86_64-apple-darwin
+export TARGET="aarch64-apple-darwin"
 export CLI_DIR="$PWD/target/$TARGET/release/own-domains-cli"
 cargo build --release --target "$TARGET" -p own-domains-cli
 mkdir -p "$CLI_DIR/sidecars"
 cp "target/$TARGET/release/own-domains" "$CLI_DIR/own-domains"
 cp "sidecars/build/$TARGET/coredns-$TARGET" "sidecars/build/$TARGET/caddy-$TARGET" "$CLI_DIR/"
 cp "sidecars/build/$TARGET/manifest.json" "$CLI_DIR/sidecars/manifest-$TARGET.json"
-codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" \
-  "$CLI_DIR/own-domains" "$CLI_DIR/coredns-$TARGET" "$CLI_DIR/caddy-$TARGET"
+codesign --force --sign - "$CLI_DIR/own-domains"
 codesign --verify --strict "$CLI_DIR/own-domains"
+codesign --verify --strict "$CLI_DIR/coredns-$TARGET"
+codesign --verify --strict "$CLI_DIR/caddy-$TARGET"
 ```
 
-The CLI resolves sidecars relative to its own directory, and the runner points `OWN_DOMAINS_DAEMON` at the signed daemon in the app bundle. Do not copy an unsigned development daemon into the acceptance path.
+The upstream CoreDNS and Caddy binaries are already ad-hoc signed. Do not re-sign them: changing their signature bytes also changes the SHA-256 digest pinned in the manifest, and setup will reject the sidecars. Sign only the CLI executable and verify the sidecar signatures.
+
+The CLI resolves sidecars relative to its own directory, and the runner points `OWN_DOMAINS_DAEMON` at the code-signed daemon in the app bundle. Do not copy an unsigned development daemon into the acceptance path.
 
 ## 2. Automated activation sequence
 
-Use a signed CLI from the matching package. Run preflight first; it does not change the host:
+Use a code-signed CLI from the matching package. Run preflight first; it does not change the host:
 
 ```bash
 scripts/verify-macos-runtime.sh \
@@ -60,7 +72,7 @@ scripts/verify-macos-runtime.sh \
   --interface en0
 ```
 
-The preflight records OS/architecture, checks the app and CLI signatures, verifies CoreDNS/Caddy hashes and executable modes, checks the macOS 13 minimum, confirms no conflicting resolver/PF block or fixed-port listeners, and runs the setup dry-run when the LAN inputs are present. It exits nonzero on a conflict.
+The preflight records OS/architecture, checks the app and CLI signatures (ad-hoc or Developer ID), verifies CoreDNS/Caddy hashes and executable modes, checks the macOS 15.0 minimum, confirms no conflicting resolver/PF block or fixed-port listeners, and runs the setup dry-run when the LAN inputs are present. It exits nonzero on a conflict.
 
 After reviewing the log, apply the reversible sequence:
 
@@ -96,7 +108,7 @@ The GUI parity check is intentionally manual because it needs the interactive ap
 2. Compare mapping and status displays with `own-domains --state-dir ... --json status`.
 3. Add, edit, disable, enable, and remove a mapping in the GUI; repeat through the CLI and confirm the open GUI updates without manual refresh.
 4. Try a stale revision through the CLI; confirm the GUI keeps the newer settings.
-5. Force a candidate failure with an injected test backend or a deliberately invalid test configuration in a disposable state; confirm the previous route remains, the runtime reports degraded, and Stop remains available.
+5. Force a candidate failure with an injected test backend or a deliberately invalid test configuration in a disposable state; confirm the previous route remains, the runtime reports degraded, and **Stop routing** remains available in the GUI.
 6. Close the window; confirm the tray stays and the daemon answers. Restore from the tray and verify a second launch focuses the existing window.
 7. Run CLI stop while hidden; confirm the GUI does not restart the daemon automatically. Use Start routing explicitly.
 8. Quit from the tray and confirm the daemon socket and owned listeners disappear before the app exits, or an actionable retry error appears.
@@ -115,18 +127,93 @@ Record these results separately from the automated log:
 8. Stop routing; confirm phone requests fail and no owned process or listener remains.
 9. Uninstall; confirm the resolver, PF block, and trust entry are gone. Remove the phone profile manually.
 
+## 5. Development-host verification record
+
+Recorded 2026-10-21 on macOS 15.2 (24C101), Apple M3 Pro (arm64), Rust 1.99.0, Node 26.10.0, and pnpm 12.8.1.
+
+The signing scope changed after the unsigned smoke test: acceptance is now arm64-only, macOS 15+, and ad-hoc signed. The earlier unsigned result remains historical evidence.
+
+Passed:
+
+- Full automated arm64 activation acceptance on 2026-10-21T15:25:02Z: setup/start, loopback and LAN DNS, setup page, HTTP/HTTPS mappings, stale-revision rejection, restart, stop, uninstall, resolver/PF restoration, and CA trust removal. Evidence: `artifacts/macos-acceptance/20261021T152502Z.jsonl` and `.commands.log`.
+- `cargo test --workspace --locked`: 127 tests across 39 targets.
+- `cargo test -p own-domains-desktop --features desktop --test lifecycle`: 6 tests.
+- `cargo fmt --all -- --check`, workspace and desktop-feature `cargo clippy ... -D warnings`, `pnpm test` (128 tests, 31 files), `pnpm run lint`, `pnpm run typecheck`, `pnpm run build`, and `git diff --check`.
+- `pnpm run sidecars:fetch -- --arch all`, `pnpm run release:preflight` (arm64 and x86_64 digests), and an unsigned `tauri build --bundles app`.
+- Development setup preview with staged sidecars and a disposable state directory rejected the existing unowned `/etc/resolver/own` without writing state.
+- Unsigned GUI smoke test: the daemon socket appeared; closing the window left the process and daemon running; a second launch exited and focused the existing window; a left click on the tray status item restored the window; tray-menu Quit, app-menu Quit, and `Cmd+Q` removed the socket before exit; AppleScript Quit also left no daemon after the `RunEvent::Exit` fallback.
+- Live IPC status/add/list/start/stop: `start` reported `setupMissing`, and `stop` removed the socket.
+- Ad-hoc packaging and non-destructive preflight on 2026-10-21: `sidecars:fetch -- --arch all`, `release:preflight` (both architectures), `desktop:build:arm64`, the Tauri app bundle, ad-hoc `codesign` of the app and CLI, and preflight with LAN `192.168.1.219`/`en0` passed. The pinned CoreDNS/Caddy sidecars were left as shipped because re-signing changes their SHA-256.
+
+### GUI lifecycle verification record
+
+Recorded 2026-10-22 against a disposable state directory shared by the GUI and CLI (revision 7, `gui.own` and `cli.own`, runtime `error` with `setupMissing`):
+
+- GUI and CLI agreed on revision, mappings, `runtimeStatus`, and diagnostics.
+- **Stop routing** removed the daemon socket, kept the app running, changed the GUI to `Runtime: disconnected`, and disabled Stop. CLI status reported `stopped`.
+- **Start routing** after Stop now always reconnects, including when `daemon_start` reports the runtime failure. The daemon restarted, the GUI reconnected and showed `Runtime: error`/`setupMissing`, and Stop became available again. Actual route restoration could not be tested because host setup is missing.
+- **Delete** uses an in-app two-step confirmation instead of `window.confirm`, which is unsupported in the Tauri WebView. Confirming removal of `gui.own` updated the CLI to revision 8 with only `cli.own` remaining.
+- Closing the window left the desktop process running; tray **Show Own Domains** restored the window. A second launch exited and focused the existing window.
+- CLI `stop` while the window was hidden stopped the daemon but left the app running. Tray **Show Own Domains** displayed `Runtime: disconnected`; **Start routing** restarted the daemon.
+- Tray **Quit** exited the app and removed the daemon process and socket before exit; CLI status reported `stopped`.
+- Injected degraded daemon: the GUI showed `Runtime: degraded`, revision 3, Stop enabled, and the candidate diagnostic. Clicking **Stop routing** sent Stop, removed the daemon socket, kept the app running, changed the UI to `Runtime: disconnected`, and disabled Stop. The injected daemon did not own a real route, so previous-route retention was not exercised.
+
+### Live GUI routing verification record
+
+Recorded 2026-10-22 against `~/Library/Application Support/OwnDomains-gui-live` with LAN `192.168.1.219`/`en0`, `live.own` mapped to `127.0.0.1:9090`, and the privileged setup applied:
+
+- The GUI auto-start showed `Runtime: running`, applied revision 1, with no error banner.
+- The initial `curl -H 'Host: live.own' http://127.0.0.1:8080/` returned HTTP 200.
+- **Stop routing** stopped the daemon, closed ports 5354, 8080, 8443, and 4781, and made the same request fail. The app stayed open, showed `Runtime: disconnected`, disabled Stop, and displayed no error banner.
+- **Start routing** restarted the daemon and listeners, restored the request to HTTP 200, and returned the GUI to `Runtime: running` with Stop enabled and no error banner.
+- The first live attempt exposed a desktop-only false `EAGAIN` from a 5-second Start timeout. The desktop now uses the same 30-second Start timeout as the CLI, and intentional frontend disconnect clears transport errors; the repeat passed.
+
+### Forced candidate-failure record
+
+With `live.own` running at applied revision 3, the disposable state's `runtime/candidate` directory was replaced by a regular file to force candidate staging to fail. Adding `fail3.own` saved desired revision 4, but the runtime reported `degraded` with desired 4 and applied 3. The existing `live.own` route continued to return HTTP 200, and the GUI kept **Stop routing** enabled while showing the pending revision.
+
+Clicking **Stop routing** in that degraded state stopped the daemon and listeners, made the route fail, kept the app open, changed the UI to `Runtime: disconnected`, disabled Stop, and displayed no error banner. The candidate path was restored after the check. This exercises previous-route retention with a real route; it is a staging failure rather than a Caddy-rejected configuration, which remains covered by automated runtime tests.
+
+### Uninstall restoration record
+
+The matching privileged `uninstall --apply` run removed `/etc/resolver/own`, `/etc/pf.anchors/dev.owndomains`, the managed `/etc/pf.conf` block, and the state directory's `install-manifest.json`; it preserved the disposable state directory and its settings. No daemon, socket, or owned listener remained on ports 5354, 8080, 8443, or 4781. The state CA is not trusted (`security verify-cert -c ... -p ssl` returned `CSSMERR_TP_NOT_TRUSTED`); pre-existing Caddy Local Authority roots in the System keychain were not installed by this run and were left untouched.
+
+Not exercised interactively:
+
+- Direct Caddy rejection; the automated runtime test `caddy_rejection_keeps_previous_applied_revision_and_running_children` covers the rollback.
+
+### Physical-phone record
+
+Recorded 2026-10-21 with the preserved phone state and the arm64 package above:
+
+- The phone was on the Mac's Wi-Fi with manual DNS set to `192.168.1.219`. The first attempt failed because PF showed HTTP traffic from the phone but zero DNS packets to `192.168.1.219`; after the phone DNS setting was corrected, `http://setup.own` loaded.
+- Installed the configuration profile, enabled the root certificate in **Certificate Trust Settings**, and matched the displayed SHA-256 fingerprint to the Mac CA.
+- `http://phone-http.own` and `https://phone.own` loaded with trusted TLS.
+- `http://registry.own` returned `Unknown .own domain` (HTTP 404); `http://setup.own/settings` also returned 404. This is the expected retired-management/no-management result, not a failure.
+- Restarting routing through the CLI restored both mappings without reinstalling the profile or trust.
+- After stop, both mappings and `setup.own` failed; no owned process or listener remained.
+- Uninstall removed `/etc/resolver/own`, the PF block/anchor, and the CA trust entry; ports `5354/8080/8443/4781` are closed and no owned process remains. `security verify-cert` reports `CSSMERR_TP_NOT_TRUSTED` for the preserved phone CA.
+- Removed the configuration profile from the phone and restored automatic Wi-Fi DNS after uninstall.
+
+Not verified or blocked:
+
+- The legacy runtime was removed from this host on 2026-10-21 with its managed uninstaller after explicit approval: `/etc/resolver/own`, the launchd jobs, dnsmasq/Caddy, and the listener on `127.0.0.1:4781` are gone. Its settings and CA state under `~/Library/Application Support/OwnDomains` were preserved. The preflight passed; automated activation and the physical-phone pass are recorded above.
+- GUI parity was unverified at the time of this physical-phone record; the 2026-10-22 GUI records above now cover the lifecycle, Delete, live routing, and forced candidate-failure checks.
+- Developer ID signing, notarization, `spctl`, and `release:check` were not run.
+- Intel macOS is build-only and is not part of this gate.
+
 ## Pass/fail gate
 
 The runtime is accepted only when all of the following are recorded:
 
-- Sidecar and package hashes match on both architectures.
-- `codesign` and `spctl` pass for both app bundles.
-- Automated preflight and activation logs show every step passed on Apple silicon and Intel macOS 13+.
-- GUI and physical-phone sections pass on both architectures.
+- Sidecar and package hashes match for the arm64 package.
+- `codesign --verify` passes for the app, CLI, and sidecars. Ad-hoc signatures are acceptable; `spctl` is not required for local acceptance.
+- Automated preflight and activation logs show every step passed on Apple silicon macOS 15+.
+- GUI and physical-phone sections pass on the Apple silicon host.
 - Stop leaves no owned process or listener; restart and uninstall restore the previous host state.
 - The setup-page allowlist exposes only `/`, `/ca.crt`, `/ca.mobileconfig`, and `/fingerprint`; `registry.own` has no management route (HTTP 404).
 
-Any missing item means Phase 4 remains in progress. Keep the TypeScript runtime, installer, and `registry.own` compatibility paths in place.
+Any missing item means Phase 4 remains in progress. Keep the TypeScript source, installer, and `registry.own` compatibility paths in place until the gate is recorded.
 
 ## Recovery
 

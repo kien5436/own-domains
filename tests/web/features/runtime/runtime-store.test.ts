@@ -155,4 +155,15 @@ describe('RuntimeStore', () => {
     expect(vi.mocked(h.client.request).mock.calls.some(([command]) => 'start' === command.type)).toBe(false);
     await store.disconnect();
   });
+  it('clears transport errors when intentionally disconnecting', async () => {
+    const h = harness(); const store = new RuntimeStore(h.client);
+
+    await store.connect(); h.fail();
+    expect(store.getSnapshot()).toMatchObject({ connection: 'disconnected', error: 'disconnected' });
+
+    await store.disconnect();
+
+    expect(store.getSnapshot()).toMatchObject({ connection: 'disconnected', error: '' });
+    expect(h.unsubscribe).toHaveBeenCalledOnce();
+  });
 });

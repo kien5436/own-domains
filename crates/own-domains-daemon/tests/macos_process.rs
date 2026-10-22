@@ -710,11 +710,7 @@ fn waits_for_readiness_within_a_bounded_number_of_attempts() {
 fn loads_caddy_configuration_over_a_restricted_unix_socket() {
     use std::os::unix::net::UnixListener;
 
-    let directory = std::env::temp_dir().join(format!(
-        "own-domains-caddy-admin-{}-{}",
-        std::process::id(),
-        std::thread::current().name().unwrap_or("test")
-    ));
+    let directory = std::env::temp_dir().join(format!("odc-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).unwrap();
     let socket = directory.join("admin.sock");
@@ -850,9 +846,19 @@ fn http_probe_checks_status_and_host_header() {
     let port = listener.local_addr().unwrap().port();
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut request = [0_u8; 2048];
-        let read = stream.read(&mut request).unwrap();
-        let request = String::from_utf8_lossy(&request[..read]).into_owned();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 2048];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..read]);
+        }
+        let request = String::from_utf8_lossy(&request).into_owned();
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
             .unwrap();

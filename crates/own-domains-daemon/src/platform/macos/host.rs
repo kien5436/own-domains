@@ -374,6 +374,18 @@ impl<'a> HostIntegrationInspector<'a> {
         let request = inspect_command("/sbin/pfctl", ["-a", "dev.owndomains", "-s", "nat"]);
         match self.run_bounded(&request) {
             Ok(output) if output.status == 0 && !output.stdout.is_empty() => {}
+            Ok(output)
+                if output.status != 0
+                    && String::from_utf8_lossy(&output.stderr)
+                        .to_ascii_lowercase()
+                        .contains("permission denied") =>
+            {
+                diagnostics.push(warning(
+                    "pfAnchorUnverifiable",
+                    "The Own Domains PF anchor cannot be inspected without administrator privileges.",
+                    "The privileged setup verified the anchor; check PF manually if routing fails.",
+                ));
+            }
             _ => diagnostics.push(error(
                 "pfAnchorInactive",
                 "The Own Domains PF anchor is not active.",
@@ -556,6 +568,7 @@ pub fn build_host_setup_plan(options: &MacOsSetupOptions) -> Result<HostSetupPla
             ],
         ),
         command("/sbin/pfctl", ["-nf", "/etc/pf.conf"]),
+        command("/sbin/pfctl", ["-f", "/etc/pf.conf"]),
         command("/sbin/pfctl", ["-a", "dev.owndomains", "-f", ANCHOR_PATH]),
         command("/sbin/pfctl", ["-E"]),
     ];
@@ -674,7 +687,10 @@ fn render_anchor_for(interface_name: &str, lan_address: Ipv4Addr) -> String {
             ("tcp", 80, 8080),
             ("tcp", 443, 8443),
         ] {
-            output.push_str(&format!("rdr pass on {interface} inet proto {protocol} from any to {address} port {source} -> 127.0.0.1 port {target}\n"));
+            // Translate to the LAN address instead of loopback. Redirecting
+            // to 127.0.0.1:<service port> makes PF reverse-translate direct
+            // readiness and resolver connections to that same local port.
+            output.push_str(&format!("rdr pass on {interface} inet proto {protocol} from any to {address} port {source} -> {lan_address} port {target}\n"));
         }
     }
     output
@@ -715,6 +731,15 @@ fn error(code: &'static str, message: &str, remedy: &str) -> Diagnostic {
     Diagnostic {
         code: code.into(),
         status: DiagnosticStatus::Error,
+        message: message.into(),
+        remedy: Some(remedy.into()),
+    }
+}
+
+fn warning(code: &'static str, message: &str, remedy: &str) -> Diagnostic {
+    Diagnostic {
+        code: code.into(),
+        status: DiagnosticStatus::Warning,
         message: message.into(),
         remedy: Some(remedy.into()),
     }

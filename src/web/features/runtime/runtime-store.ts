@@ -34,7 +34,7 @@ export class RuntimeStore {
     clearTimeout(this.reconnect);
     this.reading = undefined;
     this.dirty = false;
-    this.publish({ connection: 'disconnected', busy: false });
+    this.publish({ connection: 'disconnected', busy: false, error: '' });
     await this.stopSubscription();
   }
 

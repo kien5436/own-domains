@@ -56,7 +56,7 @@ pub fn connect_or_launch(
         if remaining.is_zero() {
             return Err(LifecycleError::StartupTimeout);
         }
-        match Client::with_timeout(socket, remaining.min(Duration::from_secs(1))) {
+        match Client::with_timeout(socket, remaining) {
             Ok(client) => return Ok(client),
             Err(error) if absent(&error) => {}
             Err(error) => return Err(error.into()),
