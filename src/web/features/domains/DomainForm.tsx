@@ -13,9 +13,12 @@ export function DomainForm({ busy, onSubmit }: DomainFormProps) {
   const [port, setPort] = useState('3000');
   const [tls, setTls] = useState(false);
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+
+    if (submitting) return;
 
     if (!isValidDomainInput(hostname)) {
       setError('Enter a valid .own domain');
@@ -32,6 +35,7 @@ export function DomainForm({ busy, onSubmit }: DomainFormProps) {
     }
 
     setError('');
+    setSubmitting(true);
 
     try {
       await onSubmit({ hostname: normalizeDomainInput(hostname), upstreamPort, tls, enabled: true });
@@ -39,6 +43,9 @@ export function DomainForm({ busy, onSubmit }: DomainFormProps) {
     }
     catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to register domain');
+    }
+    finally {
+      setSubmitting(false);
     }
   }
 
@@ -56,6 +63,6 @@ export function DomainForm({ busy, onSubmit }: DomainFormProps) {
     </div>
     <label className="flex items-center gap-2 text-sm text-slate-700"><input checked={tls} onChange={(event) => setTls(event.target.checked)} type="checkbox" />Use HTTPS</label>
     {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
-    <button className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-50" disabled={busy} type="submit">{busy ? 'Registering…' : 'Register domain'}</button>
+    <button className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-50" disabled={busy || submitting} type="submit">{submitting ? 'Registering…' : 'Register domain'}</button>
   </form>;
 }

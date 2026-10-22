@@ -138,7 +138,7 @@ Passed:
 - Full automated arm64 activation acceptance on 2026-10-21T15:25:02Z: setup/start, loopback and LAN DNS, setup page, HTTP/HTTPS mappings, stale-revision rejection, restart, stop, uninstall, resolver/PF restoration, and CA trust removal. Evidence: `artifacts/macos-acceptance/20261021T152502Z.jsonl` and `.commands.log`.
 - `cargo test --workspace --locked`: 127 tests across 39 targets.
 - `cargo test -p own-domains-desktop --features desktop --test lifecycle`: 6 tests.
-- `cargo fmt --all -- --check`, workspace and desktop-feature `cargo clippy ... -D warnings`, `pnpm test` (128 tests, 31 files), `pnpm run lint`, `pnpm run typecheck`, `pnpm run build`, and `git diff --check`.
+- `cargo fmt --all -- --check`, workspace and desktop-feature `cargo clippy ... -D warnings`, `pnpm test` (129 tests, 31 files), `pnpm run lint`, `pnpm run typecheck`, `pnpm run build`, and `git diff --check`.
 - `pnpm run sidecars:fetch -- --arch all`, `pnpm run release:preflight` (arm64 and x86_64 digests), and an unsigned `tauri build --bundles app`.
 - Development setup preview with staged sidecars and a disposable state directory rejected the existing unowned `/etc/resolver/own` without writing state.
 - Unsigned GUI smoke test: the daemon socket appeared; closing the window left the process and daemon running; a second launch exited and focused the existing window; a left click on the tray status item restored the window; tray-menu Quit, app-menu Quit, and `Cmd+Q` removed the socket before exit; AppleScript Quit also left no daemon after the `RunEvent::Exit` fallback.

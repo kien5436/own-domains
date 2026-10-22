@@ -187,3 +187,30 @@ it('reconnects after a failed Start following Stop', async () => {
   expect(screen.getByRole('alert')).toHaveTextContent('setupMissing');
   view.unmount();
 });
+
+it('does not relabel Register while an unrelated action is running', async () => {
+  const state: StateSnapshot = { settings: { schemaVersion: 1, revision: 0, lanAddress: '', upstreamDns: ['1.1.1.1'], mappings: [] }, runtimeStatus: 'stopped', desiredRevision: 0, appliedRevision: 0, diagnostics: [], latestEventSequence: 0 };
+  let releaseStart!: () => void;
+  const onStart = vi.fn(() => new Promise<void>((resolve) => { releaseStart = resolve }));
+  const client: NativeClient = {
+    subscribe: async () => async () => {},
+    request: vi.fn<NativeClient['request']>(async (command) => {
+      if (command.type !== 'snapshot') throw new Error(`Unexpected command: ${command.type}`);
+
+      return { type: 'snapshot', payload: structuredClone(state) };
+    }),
+  };
+  const user = userEvent.setup();
+  const store = new RuntimeStore(client);
+  const view = render(<NativeApp store={store} onStart={onStart} onStop={async () => {}} onQuit={async () => {}} />);
+
+  await screen.findByText('Runtime: stopped');
+  await user.click(screen.getByRole('button', { name: 'Start routing' }));
+
+  expect(screen.getByRole('button', { name: 'Register domain' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Registering…' })).not.toBeInTheDocument();
+
+  releaseStart();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Register domain' })).toBeEnabled());
+  view.unmount();
+});
