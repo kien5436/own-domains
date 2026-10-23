@@ -41,7 +41,7 @@ pub struct SetupApplyResult {
 pub struct SetupFailure {
     pub message: String,
     pub unresolved: Vec<String>,
-    pub exit_code: u8,
+    pub exit_code: i32,
 }
 
 impl SetupFailure {
@@ -53,7 +53,7 @@ impl SetupFailure {
         }
     }
 
-    pub fn with_exit_code(mut self, exit_code: u8) -> Self {
+    pub fn with_exit_code(mut self, exit_code: i32) -> Self {
         self.exit_code = exit_code;
         self
     }

@@ -1,4 +1,5 @@
 mod command;
+mod platform;
 mod privilege;
 
 pub use command::{Cli, CliCommand, CommandOutput, execute};
