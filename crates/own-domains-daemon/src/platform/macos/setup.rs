@@ -2,6 +2,7 @@ use super::{
     CommandRunner, HostArtifact, HostCommand, HostCommandOutput, HostFileKind, HostInstallManifest,
     HostSetupPlan, RuntimePaths,
 };
+use crate::platform::{SetupAction, SetupApplyResult, SetupFailure, SetupPreview};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256};
 use std::{
@@ -36,39 +37,6 @@ pub trait SetupHost: Send + Sync {
     fn pf_enabled(&self) -> Result<bool, String>;
     fn final_probe(&self) -> Result<(), String>;
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SetupAction {
-    pub kind: String,
-    pub path: PathBuf,
-    pub backup_path: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SetupPreview {
-    pub actions: Vec<SetupAction>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SetupApplyResult {
-    pub written: Vec<PathBuf>,
-    pub unchanged: Vec<PathBuf>,
-    pub backups: Vec<PathBuf>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SetupFailure {
-    pub message: String,
-    pub unresolved: Vec<String>,
-}
-
-impl std::fmt::Display for SetupFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.message)
-    }
-}
-
-impl std::error::Error for SetupFailure {}
 
 struct PlannedArtifact<'a> {
     artifact: &'a HostArtifact,
@@ -156,6 +124,7 @@ pub fn apply_setup(
         return Err(SetupFailure {
             message,
             unresolved,
+            exit_code: 4,
         });
     }
     Ok(result)
@@ -537,6 +506,7 @@ fn failure(message: impl ToString) -> SetupFailure {
     SetupFailure {
         message: message.to_string(),
         unresolved: vec![],
+        exit_code: 4,
     }
 }
 

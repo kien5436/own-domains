@@ -9,6 +9,7 @@ use std::{
 };
 
 use crate::{RuntimeBackend, RuntimeError, SetupServer};
+use crate::platform::HostInspector;
 
 use super::{
     CaddyAdmin, CaddyAdminClient, ConfigurationError, ConfigurationFiles, ConfigurationStager,
@@ -18,10 +19,6 @@ use super::{
     SystemConfigurationFiles, SystemConfigurationValidator, SystemHostFileSystem,
     SystemProcessHost, SystemWaiter, Waiter,
 };
-
-pub trait HostInspector: Send + Sync {
-    fn inspect(&self, settings: &Settings) -> Vec<Diagnostic>;
-}
 
 pub struct SystemHostInspector {
     paths: RuntimePaths,

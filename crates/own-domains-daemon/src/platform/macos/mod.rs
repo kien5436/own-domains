@@ -5,6 +5,11 @@ mod process;
 mod runtime;
 mod setup;
 
+pub use crate::platform::{
+    HostInspector, HostInstaller, SetupAction, SetupApplyResult, SetupFailure, SetupPreview,
+    SetupRequest, UninstallRequest,
+};
+
 pub use config::{
     CandidateConfiguration, ConfigurationError, ConfigurationFiles, ConfigurationStager,
     ConfigurationValidator, DEFAULT_DNS_VALIDATION_PORT, SystemConfigurationFiles,
@@ -24,10 +29,10 @@ pub use process::{
     RetryPolicy, SIGKILL, SIGTERM, SpawnSpec, SystemProcessHost, SystemWaiter, Waiter,
 };
 pub use runtime::{
-    HostInspector, MacOsRuntimeBackend, ReadinessKind, RuntimeAdapters, RuntimeReadiness,
-    SetupServerControl, SystemHostInspector, SystemRuntimeReadiness, SystemSetupServer,
+    MacOsRuntimeBackend, ReadinessKind, RuntimeAdapters, RuntimeReadiness, SetupServerControl,
+    SystemHostInspector, SystemRuntimeReadiness, SystemSetupServer,
 };
 pub use setup::{
-    SetupAction, SetupApplyResult, SetupFailure, SetupFile, SetupHost, SetupPreview,
-    SystemSetupHost, apply_setup, apply_uninstall, preview_setup, preview_uninstall,
+    SetupFile, SetupHost, SystemSetupHost, apply_setup, apply_uninstall, preview_setup,
+    preview_uninstall,
 };
