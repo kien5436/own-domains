@@ -9,6 +9,10 @@ Own Domains has one native runtime backend today: macOS. A platform is not suppo
 | Ubuntu 24+ | Support target; returns `runtimeUnavailable` | Separate design, implementation plan, and acceptance required |
 | Windows 10/11 | Support target; IPC and runtime are not implemented | Separate design, implementation plan, and acceptance required |
 
+## Host integration boundary
+
+The daemon exposes platform-neutral `RuntimeBackend`, `HostInspector`, and `HostInstaller` contracts. The CLI selects an installer through its platform module at compile time. macOS PF, resolver, trust-store, and install-manifest details remain under the macOS implementation. Future platform adapters must implement these contracts and provide their own privileged artifacts and acceptance evidence; they must not add platform branches to shared command or core code.
+
 ## macOS signing
 
 Local acceptance uses ad-hoc signing:
