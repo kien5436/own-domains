@@ -2,7 +2,6 @@ use own_domains_daemon::platform::{
     HostInstaller, SetupApplyResult, SetupFailure, SetupPreview, SetupRequest, UninstallRequest,
 };
 
-#[allow(dead_code)]
 pub(crate) struct UnsupportedHostInstaller;
 
 impl HostInstaller for UnsupportedHostInstaller {

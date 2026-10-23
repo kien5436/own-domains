@@ -16,7 +16,6 @@ use std::{
     time::Duration,
 };
 
-#[allow(dead_code)]
 pub(crate) struct MacOsHostInstaller;
 
 impl HostInstaller for MacOsHostInstaller {

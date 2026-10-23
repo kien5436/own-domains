@@ -1,3 +1,4 @@
+#[cfg(any(not(target_os = "macos"), test))]
 mod unsupported;
 
 #[cfg(target_os = "macos")]
