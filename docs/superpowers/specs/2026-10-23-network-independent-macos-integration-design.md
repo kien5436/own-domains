@@ -20,6 +20,40 @@ That design is secure and simple, but it forces a root prompt on ordinary DHCP c
 
 The one-time setup remains privileged because macOS requires root to write `/etc/resolver`, install PF rules, and modify the trust store. Normal launches, address changes, interface changes, mapping mutations, and shutdown remain unprivileged.
 
+## Platform boundaries
+
+This feature is macOS-specific because PF, `/etc/resolver`, and the trust store are macOS-specific. The shared application must not learn PF, interface-list, or manifest-schema concepts.
+
+Portable contracts stay platform-neutral:
+
+- `RuntimeBackend` remains the daemon's runtime contract: apply, stop, inspect, and diagnose.
+- `HostInspector` becomes a shared daemon contract returning `Diagnostic` values. The macOS implementation continues to own resolver, PF, trust, sidecar, and listener checks.
+- `HostInstaller` becomes a shared daemon contract for setup preview/apply and uninstall preview/apply. Its request contains only a state directory, selected LAN address, interface name, and purge flag. Each platform adapter validates those values and owns its own privileged artifacts.
+- `SetupPreview`, `SetupApplyResult`, `SetupFailure`, and shared command/file abstractions move out of the macOS namespace when they have no macOS-specific fields.
+- Platform selection is compile-time through a facade in `platform`. The daemon binary and CLI ask the facade for a runtime backend or host installer instead of importing `platform::macos` directly.
+- Non-macOS platforms continue to report unsupported setup and `runtimeUnavailable` until an adapter exists.
+
+The following remain inside `platform/macos` and are not abstracted into shared code:
+
+- PF anchor rendering and rule syntax.
+- `/etc/resolver/own` and `/etc/pf.conf` composition.
+- The macOS install manifest schema, artifact paths, trust-store commands, sidecar target triples, and interface discovery rules.
+- Mutable macOS network-selection details beyond the portable request fields.
+
+A future Linux or Windows adapter can implement the installer, inspector, and runtime contracts without changing the GUI, protocol, core settings model, or daemon request handling. It must supply its own privileged host artifacts and acceptance evidence.
+
+## Preparatory refactor
+
+The platform boundary is a separate, behavior-preserving refactor before the network-independent behavior:
+
+1. Move the shared `HostInspector` contract and generic installer result/failure/action types out of `platform::macos`.
+2. Define `HostInstaller` and platform-neutral setup/uninstall request types.
+3. Move macOS setup orchestration behind a macOS `HostInstaller` implementation; the CLI retains argument parsing, privilege entry checks, and output rendering.
+4. Add the compile-time platform facade for runtime and installer selection. Keep the existing macOS re-exports while callers migrate.
+5. Add contract tests using fake installer and inspector implementations. Existing macOS artifact, PF, manifest, setup, runtime, and frontend tests must pass unchanged.
+
+This refactor changes no host artifacts, paths, manifest fields, diagnostics, or runtime behavior. The network-independent feature work starts only after the refactor and the PF feasibility gate pass.
+
 ## Goals
 
 - Remove recurring administrator prompts for LAN IPv4 address changes.
@@ -40,6 +74,7 @@ The one-time setup remains privileged because macOS requires root to write `/etc
 - Changing the CoreDNS, Caddy, or PF ports.
 - Changing settings schema version 1 or mapping semantics.
 - Supporting Ubuntu or Windows in this design.
+- Abstracting PF syntax, resolver files, or install-manifest fields into shared code.
 - Automatically modifying third-party VPN, DNS, proxy, firewall, or trust configuration.
 
 ## Selected architecture
@@ -196,6 +231,7 @@ Automated coverage must include:
 - runtime reconciliation after an address change, including a failed candidate retaining the previous applied state;
 - no duplicate diagnostics;
 - frontend save behavior proving no `setupRequired` message after an address change;
+- platform-facade contract tests with a fake installer and fake inspector, proving callers do not depend on macOS types;
 - existing Rust, frontend, lint, typecheck, build, fmt, Clippy, and release checks.
 
 A macOS feasibility gate must run before implementation proceeds beyond host rendering:
@@ -236,7 +272,19 @@ Update `README.md`, `docs/desktop.md`, `docs/cli.md`, `docs/macos-acceptance.md`
 - address and covered-interface changes no longer require setup;
 - new hardware interfaces may require one setup;
 - the no-helper and no-root-after-setup boundary;
+- the shared runtime, inspector, and installer contracts available to future platform adapters;
 - the new diagnostics and acceptance evidence.
+
+## Implementation order
+
+1. Land the behavior-preserving platform boundary refactor.
+2. Run the PF feasibility gate. Stop if dynamic rules fail.
+3. Update the macOS setup plan, dynamic anchor, schema 2 manifest, and migration.
+4. Update the macOS inspector, runtime reconciliation, and diagnostics.
+5. Update the frontend behavior and tests.
+6. Update documentation and collect manual acceptance evidence.
+
+No network-independent behavior changes may be mixed into the platform refactor commit series.
 
 ## Out of scope
 
