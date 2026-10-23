@@ -72,5 +72,5 @@ pub trait HostInstaller: Send + Sync {
     fn apply_setup(&self, request: &SetupRequest) -> Result<SetupApplyResult, SetupFailure>;
     fn preview_uninstall(&self, request: &UninstallRequest) -> Result<SetupPreview, SetupFailure>;
     fn apply_uninstall(&self, request: &UninstallRequest)
-        -> Result<SetupApplyResult, SetupFailure>;
+    -> Result<SetupApplyResult, SetupFailure>;
 }

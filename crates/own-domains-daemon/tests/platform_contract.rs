@@ -67,3 +67,15 @@ fn setup_failures_preserve_their_cli_exit_code() {
         2
     );
 }
+
+#[test]
+fn settings_only_runtime_uses_the_unavailable_backend_on_every_platform() {
+    let state = std::env::temp_dir().join(format!(
+        "own-domains-platform-facade-{}",
+        std::process::id()
+    ));
+    let runtime = own_domains_daemon::platform::runtime_backend(&state, None, None, true)
+        .expect("settings-only runtime selection is infallible");
+    assert!(runtime.inspect().is_ok());
+    assert!(runtime.apply(&Settings::default()).is_err());
+}

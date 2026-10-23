@@ -8,8 +8,8 @@ use std::{
     time::Duration,
 };
 
-use crate::{RuntimeBackend, RuntimeError, SetupServer};
 use crate::platform::HostInspector;
+use crate::{RuntimeBackend, RuntimeError, SetupServer};
 
 use super::{
     CaddyAdmin, CaddyAdminClient, ConfigurationError, ConfigurationFiles, ConfigurationStager,

@@ -1,9 +1,12 @@
 mod config;
+mod factory;
 mod host;
 mod paths;
 mod process;
 mod runtime;
 mod setup;
+
+pub(crate) use factory::runtime_backend;
 
 pub use crate::platform::{
     HostInspector, HostInstaller, SetupAction, SetupApplyResult, SetupFailure, SetupPreview,
