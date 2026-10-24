@@ -164,13 +164,6 @@ impl InstalledHostManifest {
             Self::V2(manifest) => &manifest.artifacts,
         }
     }
-
-    pub(crate) fn sidecars(&self) -> &SidecarManifest {
-        match self {
-            Self::V1(manifest) => &manifest.sidecars,
-            Self::V2(manifest) => &manifest.sidecars,
-        }
-    }
 }
 
 pub(crate) fn parse_host_install_manifest(bytes: &[u8]) -> Result<InstalledHostManifest, String> {
@@ -493,7 +486,7 @@ impl<'a> HostIntegrationInspector<'a> {
                 diagnostics.push(error(
                     "setupManifestInvalid",
                     "The setup manifest is not a regular file.",
-                    "Run privileged setup again.",
+                    MANUAL_REPAIR_REMEDY,
                 ));
                 return None;
             }
@@ -523,7 +516,7 @@ impl<'a> HostIntegrationInspector<'a> {
                 diagnostics.push(error(
                     "setupManifestInvalid",
                     &format!("Unable to read the setup manifest: {message}"),
-                    "Run privileged setup again.",
+                    MANUAL_REPAIR_REMEDY,
                 ));
                 return None;
             }
@@ -547,6 +540,14 @@ impl<'a> HostIntegrationInspector<'a> {
             ));
             return None;
         }
+        if let Err(detail) = validate_installed_manifest(self.paths, &installed) {
+            diagnostics.push(error(
+                "setupRequired",
+                &format!("The setup manifest structure is invalid: {detail}"),
+                MANUAL_REPAIR_REMEDY,
+            ));
+            return None;
+        }
         match installed {
             InstalledHostManifest::V1(_) => {
                 diagnostics.push(error(
@@ -557,15 +558,7 @@ impl<'a> HostIntegrationInspector<'a> {
                 None
             }
             InstalledHostManifest::V2(manifest) => {
-                let installed = InstalledHostManifest::V2(manifest.clone());
-                if let Err(detail) = validate_installed_manifest(self.paths, &installed) {
-                    diagnostics.push(error(
-                        "setupRequired",
-                        &format!("The setup manifest structure is invalid: {detail}"),
-                        MANUAL_REPAIR_REMEDY,
-                    ));
-                    None
-                } else if installed.sidecars() != self.sidecars {
+                if &manifest.sidecars != self.sidecars {
                     diagnostics.push(error(
                         "setupRequired",
                         "The setup manifest is incompatible with this app build.",

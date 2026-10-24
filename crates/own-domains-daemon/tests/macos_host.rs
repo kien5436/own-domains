@@ -944,6 +944,98 @@ fn inspector_reports_schema_one_as_setup_required() {
 }
 
 #[test]
+fn inspector_reports_a_tampered_schema_one_manifest_as_manual_repair() {
+    let (plan, mut files) = installed_host();
+    let bytes = legacy_manifest_bytes(&plan);
+    let mut manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    manifest["artifacts"][0]["path"] = serde_json::Value::String("/etc/shadow".into());
+    files.content.insert(
+        plan.paths.install_manifest.clone(),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    );
+    let commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "setupRequired");
+    assert!(
+        diagnostics[0].message.contains("structure is invalid"),
+        "{diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics[0].remedy.as_deref(),
+        Some(
+            "Repair or remove the install manifest and the Own Domains resolver/PF files, then run privileged setup again."
+        )
+    );
+}
+
+#[test]
+fn inspector_reports_a_non_regular_manifest_as_manual_repair() {
+    let (plan, mut files) = installed_host();
+    files
+        .metadata
+        .get_mut(&plan.paths.install_manifest)
+        .unwrap()
+        .kind = HostFileKind::Other;
+    let commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "setupManifestInvalid");
+    assert_eq!(
+        diagnostics[0].remedy.as_deref(),
+        Some(
+            "Repair or remove the install manifest and the Own Domains resolver/PF files, then run privileged setup again."
+        )
+    );
+}
+
+#[test]
+fn inspector_reports_an_unreadable_manifest_as_manual_repair() {
+    let (plan, mut files) = installed_host();
+    files
+        .content
+        .insert(plan.paths.install_manifest.clone(), vec![b'x'; 1_048_577]);
+    let commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "setupManifestInvalid");
+    assert!(
+        diagnostics[0].message.contains("Unable to read"),
+        "{diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics[0].remedy.as_deref(),
+        Some(
+            "Repair or remove the install manifest and the Own Domains resolver/PF files, then run privileged setup again."
+        )
+    );
+}
+
+#[test]
 fn inspector_rejects_a_manifest_artifact_digest_mismatch() {
     let (plan, mut files) = installed_host();
     let bytes = files
@@ -972,6 +1064,10 @@ fn inspector_rejects_a_manifest_artifact_digest_mismatch() {
     assert_eq!(
         diagnostics[0].message,
         "The setup manifest does not match the owned host artifacts."
+    );
+    assert_eq!(
+        diagnostics[0].remedy.as_deref(),
+        Some("Run setup once to enable network-independent routing.")
     );
 }
 
