@@ -1,5 +1,7 @@
 # macOS Runtime Activation Design
 
+> **Superseded for network selection:** The dynamic PF and schema 2 design in [Network-Independent macOS Host Integration](2026-10-23-network-independent-macos-integration-design.md) replaces the pinned address/interface and `setupRequired` behavior described here. The remaining runtime, setup, trust, and acceptance decisions still apply.
+
 ## Summary
 
 Phase 4 begins with a macOS runtime that keeps the Own Domains daemon and its CoreDNS, Caddy, and setup-page processes in the signed-in user's session. A one-time privileged setup installs narrowly scoped resolver, packet-filter, and trust-store integration. Normal GUI launches and CLI start/stop operations run without administrator credentials.

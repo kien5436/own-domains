@@ -102,7 +102,18 @@ It never removes the acceptance state unless `--purge` is supplied. Supply `--pu
 
 The GUI parity check is intentionally manual because it needs the interactive app. The runner records `manual` for that step.
 
-## 3. Manual GUI checks
+## 3. Network-independent routing checks
+
+After setup, record these checks without repeating privileged setup:
+
+1. If upgrading from schema 1, run setup once and confirm it succeeds without the old address being active. Inspect `install-manifest.json`; it must report `schemaVersion: 2`, list covered `interfaces`, and contain no `lanAddress` field or singular `interface` field. Record `sudo shasum -a 256 /etc/pf.anchors/dev.owndomains`.
+2. Change the Mac's LAN address on a covered interface (new DHCP reservation or lease), save it in **Network settings**, and confirm DNS, HTTP, HTTPS, `setup.own`, and phone access without an administrator prompt. The anchor hash must remain unchanged.
+3. Switch to another interface that was present during setup and confirm the same routes without an administrator prompt.
+4. Connect a hardware interface that was absent during setup and select its address in **Network settings**. Confirm the app reports `interfaceCoverageMissing`, run setup once, and confirm the diagnostic clears.
+5. Run `sudo pfctl -a dev.owndomains -s nat` and confirm the rules show symbolic dynamic targets such as `(en0:0)` / `(en8:0)`, not a literal selected address.
+6. Stop routing and confirm phone `.own` access fails; start routing again and confirm it returns without setup. Uninstall must restore the prior resolver and PF files.
+
+## 4. Manual GUI checks
 
 1. Launch the app against the same state directory and confirm the daemon starts once.
 2. Compare mapping and status displays with `own-domains --state-dir ... --json status`.
@@ -113,7 +124,7 @@ The GUI parity check is intentionally manual because it needs the interactive ap
 7. Run CLI stop while hidden; confirm the GUI does not restart the daemon automatically. Use Start routing explicitly.
 8. Quit from the tray and confirm the daemon socket and owned listeners disappear before the app exits, or an actionable retry error appears.
 
-## 4. Physical-phone checks
+## 5. Physical-phone checks
 
 Record these results separately from the automated log:
 
@@ -127,7 +138,7 @@ Record these results separately from the automated log:
 8. Stop routing; confirm phone requests fail and no owned process or listener remains.
 9. Uninstall; confirm the resolver, PF block, and trust entry are gone. Remove the phone profile manually.
 
-## 5. Development-host verification record
+## 6. Development-host verification record
 
 Recorded 2026-10-21 on macOS 15.2 (24C101), Apple M3 Pro (arm64), Rust 1.99.0, Node 26.10.0, and pnpm 12.8.1.
 

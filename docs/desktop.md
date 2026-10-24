@@ -65,6 +65,8 @@ sudo own-domains --state-dir "$OWN_DOMAINS_STATE_DIR" setup --apply \
 
 If no Caddy CA exists, setup starts the bundled Caddy as the target user with trust installation disabled, waits for the persistent root certificate, then installs only that public certificate. Setup writes `/etc/resolver/own`, the dedicated PF anchor, the PF composition block, and an owner-only install manifest with backups. Normal desktop and CLI launches never request administrator credentials.
 
+Setup records every eligible `en*` or `bridge*` interface present at apply time, including interfaces with no current IPv4 address, and writes dynamic `(if:0)` PF rules. The schema 2 install manifest stores the covered interface names and artifact hashes but no LAN address. Changing the selected address or switching between covered interfaces is handled by the unprivileged runtime. A hardware interface that did not exist during setup requires one additional setup. A schema 1 installation is migrated by the next setup run; the old address does not need to be active.
+
 Start routing from the GUI or CLI. For a standalone CLI, point `OWN_DOMAINS_DAEMON` at the code-signed daemon shipped in the app bundle; downloads and sidecar resolution remain resource-relative:
 
 ```bash

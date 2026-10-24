@@ -51,6 +51,8 @@ sudo own-domains --state-dir "$HOME/Library/Application Support/OwnDomains" \
 
 Setup validates the selected interface address, writes only the owned resolver and PF anchor, backs up replaced host files, installs the Caddy root certificate, and reloads PF. If no Caddy CA exists, it generates the persistent CA as the target user before installing trust; it never installs trust itself during CA generation.
 
+Setup covers every eligible interface present at apply time. The privileged anchor references `(if:0)` and contains no selected LAN address; the manifest records covered interface names without storing a LAN address. Re-running setup with the same interface set is a no-op. Re-run setup only when a new hardware interface must be added. Normal LAN address changes are saved by the app and do not require `setup`. A schema 1 installation is migrated by the next `setup --apply`; it does not require the old address to be active.
+
 Uninstall is reversible and preserves settings unless `--purge` is explicit:
 
 ```sh

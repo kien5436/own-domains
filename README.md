@@ -17,7 +17,7 @@ The native Tauri client and Rust CLI are documented in [Desktop development](doc
 
 ## Native macOS beta
 
-The native client packages pinned CoreDNS and Caddy sidecars, verifies their digests, and resolves them from the app bundle. A one-time privileged setup installs the `.own` resolver, a dedicated PF anchor, and the Caddy root certificate; normal launches do not need administrator access. The [macOS acceptance gate](docs/macos-acceptance.md) passed for an ad-hoc-signed arm64 package, including automated routing, GUI lifecycle, and physical-phone checks. Do not remove the legacy source or its migration/uninstall support while beta users still depend on it.
+The native client packages pinned CoreDNS and Caddy sidecars, verifies their digests, and resolves them from the app bundle. A one-time privileged setup installs the `.own` resolver, a dedicated PF anchor, and the Caddy root certificate. Setup covers every eligible LAN interface present at that time, including interfaces without a current IPv4 address, and writes dynamic `(if:0)` PF rules. Changing the selected LAN address or switching between covered interfaces needs no administrator access; adding a previously absent hardware interface may require one more setup. The install manifest stores covered interface names but no LAN address. An existing schema 1 setup is migrated by running setup once. The [macOS acceptance gate](docs/macos-acceptance.md) passed for an ad-hoc-signed arm64 package, including automated routing, GUI lifecycle, and physical-phone checks. Do not remove the legacy source or its migration/uninstall support while beta users still depend on it.
 
 ## Requirements
 

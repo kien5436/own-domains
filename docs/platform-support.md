@@ -11,7 +11,7 @@ Own Domains has one native runtime backend today: macOS. A platform is not suppo
 
 ## Host integration boundary
 
-The daemon exposes platform-neutral `RuntimeBackend`, `HostInspector`, and `HostInstaller` contracts. The CLI selects an installer through its platform module at compile time. macOS PF, resolver, trust-store, and install-manifest details remain under the macOS implementation. Future platform adapters must implement these contracts and provide their own privileged artifacts and acceptance evidence; they must not add platform branches to shared command or core code.
+The daemon exposes platform-neutral `RuntimeBackend`, `HostInspector`, and `HostInstaller` contracts. The CLI selects an installer through its platform module at compile time. macOS PF, resolver, trust-store, and install-manifest details remain under the macOS implementation. Future platform adapters must implement these contracts and provide their own privileged artifacts and acceptance evidence; they must not add platform branches to shared command or core code. On macOS, the privileged anchor and schema 2 install manifest contain no selected LAN address. Address changes and switching between covered interfaces stay unprivileged; only initial setup and covering a newly appeared interface require root.
 
 ## macOS signing
 
