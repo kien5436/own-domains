@@ -2,7 +2,7 @@
 
 ## Summary
 
-The current macOS runtime pins the selected LAN IPv4 address in the privileged PF anchor and install manifest. Changing the address, or switching between Wi-Fi and Ethernet, therefore requires rerunning `setup --apply` with administrator credentials. The GUI can save the new value, but the daemon correctly refuses to widen host integration from an unprivileged process and reports `setupRequired`/`lanIntegrationDrift`.
+The current macOS runtime pins the selected LAN IPv4 address in the privileged PF anchor and install manifest. Changing the address, or switching between Wi-Fi and Ethernet, therefore requires rerunning `setup --apply` with administrator credentials. The GUI can save the new value, but the daemon correctly refuses to widen host integration from an unprivileged process and reports host-integration drift with `lanIntegrationDrift`.
 
 This design removes the LAN address from all persistent privileged artifacts. Setup writes PF rules that reference each covered interface dynamically. The selected address remains unprivileged settings, and the daemon reconfigures CoreDNS and Caddy when it changes. After the one-time setup, changing the address or switching between covered interfaces requires no administrator credentials and no privileged helper.
 
@@ -16,7 +16,7 @@ The existing macOS runtime activation design deliberately made LAN address/inter
 - `HostIntegrationInspector` compares settings to the manifest and reports drift.
 - CoreDNS and Caddy bind to loopback and the selected LAN address on unprivileged high ports.
 
-That design is secure and simple, but it forces a root prompt on ordinary DHCP changes. The selected address is not a persistent security principal; it is mutable runtime state. Keeping it in root-owned files creates recurring friction without adding a security property that cannot be preserved dynamically.
+That design is secure and simple, but it forces a root prompt on ordinary DHCP changes. The selected address is not a persistent security principal; it is mutable runtime state. Storing it in the root-owned PF anchor creates recurring friction without adding a security property that cannot be preserved dynamically.
 
 The one-time setup remains privileged because macOS requires root to write `/etc/resolver`, install PF rules, and modify the trust store. Normal launches, address changes, interface changes, mapping mutations, and shutdown remain unprivileged.
 
@@ -146,11 +146,11 @@ artifacts: ManifestArtifact[]
 sidecars: SidecarManifest
 ```
 
-The schema removes `interface` and `lanAddress`. The manifest remains root-owned and records only immutable installation facts.
+The schema removes `interface` and `lanAddress`. The manifest is owned by the target user with mode `0600` and records only immutable installation facts. Setup and uninstall validate the manifest structure, artifact paths and metadata, backup location, and manifest ownership/mode before acting.
 
 Migration behavior:
 
-- A schema 1 manifest is readable for setup and uninstall.
+- A schema 1 manifest is readable for setup and uninstall after structural validation of its artifact paths, backup location, manifest ownership/mode, and artifact metadata.
 - Runtime activation with schema 1 reports `setupRequired` with the remedy “Run setup once to enable network-independent routing.”
 - Running `setup --apply` against schema 1 validates the existing owned artifacts, backs them up, writes schema 2 and the new anchor, and succeeds without requiring the old address to still be active.
 - Uninstall supports both schema versions through the existing artifact list and backups.
@@ -160,8 +160,8 @@ Migration behavior:
 
 The `setup` command keeps its `--lan-address` and `--interface` arguments for initial validation and settings persistence, but the generated host plan covers all eligible interfaces:
 
-1. Validate the requested address and interface as today.
-2. Discover covered interfaces and reject an empty list.
+1. Discover eligible present interfaces and validate that the requested interface is present and its primary IPv4 address equals the requested address; reject aliases and absent interfaces.
+2. Reject an empty eligible interface list.
 3. Generate the dynamic anchor; do not interpolate the selected address.
 4. Persist schema 2 with the covered interface list and artifact hashes.
 5. Persist the selected address in settings as today.
@@ -180,20 +180,20 @@ Uninstall continues to remove only exact owned artifacts, restore backups, and p
 - anchor content and active PF state;
 - sidecar presence, versions, and digests;
 - CA trust;
-- at least one covered interface with an IPv4 address;
 - the selected settings address is the primary IPv4 address of a covered interface.
 
-It no longer compares settings to a manifest address. The two-command network probe is replaced with one bounded `ifconfig` inspection per covered interface. A failure produces one diagnostic per failed condition, never duplicate diagnostics for the same condition.
+It no longer compares settings to a manifest address. The two-command network probe is replaced with one bounded `ifconfig` inspection per eligible interface present at inspection time. This discovers interfaces that appeared after setup as well as currently covered ones. A failure produces one diagnostic per failed condition, never duplicate diagnostics for the same condition.
 
 New diagnostic behaviors:
 
 - `setupRequired`: missing manifest, incompatible manifest, artifact mismatch, or schema 1 migration.
-- `lanAddressInactive`: the selected address is not the primary IPv4 address of any covered interface. Remedy: select an active LAN address in Network Settings and save.
-- `interfaceCoverageMissing`: the selected address belongs to an eligible interface that is not in the manifest. Remedy: run setup once to add the interface.
+- `lanAddressInactive`: no present eligible interface owns the selected address as its primary IPv4 address. Remedy: select an active LAN address in Network Settings and save.
+- `interfaceCoverageMissing`: the selected address is the primary IPv4 address of an eligible interface that is not in the manifest. Remedy: run setup once to add the interface.
+- Coverage precedence: `interfaceCoverageMissing` wins when the selected address belongs to an uncovered eligible interface, even if every covered interface is temporarily addressless. Otherwise the inspector reports `lanAddressInactive`. An unused interface that appeared after setup does not produce a diagnostic.
 - Existing resolver, PF, CA, sidecar, and port diagnostics remain unchanged.
 - `lanIntegrationDrift` is removed because address drift is no longer a host-integration failure. Tests that assert its presence are updated.
 
-Runtime start validates the selected address before starting sidecars. A stopped runtime may save a valid-looking address; start fails with `lanAddressInactive` until the address is active. No host setup is required.
+Runtime start validates the selected address before starting sidecars. A stopped runtime may save an address that is not currently active; start fails with `lanAddressInactive` or `interfaceCoverageMissing` until the selected address is active on a covered interface. No host setup is required for an address change.
 
 ## GUI and daemon behavior
 
@@ -217,7 +217,8 @@ A future address picker may list the active primary addresses, but it is not req
 - Redirect targets are the same interface address, not loopback, so external connections cannot reach services that listen only on loopback.
 - Caddy and CoreDNS do not bind wildcard addresses.
 - No root helper, root socket, or unauthenticated privileged command is introduced.
-- The privileged anchor and manifest remain root-owned and are written only by `setup --apply`.
+- The privileged anchor remains root-owned with mode `0644`; the install manifest is owned by the target user with mode `0600`. Both are replaced only by `setup --apply`.
+- Setup and uninstall reject a manifest with unexpected ownership, mode, artifact paths, backup location, or artifact metadata.
 - The selected address remains user-controlled data and never becomes interpolated into a root-owned template.
 - PF rule generation uses fixed paths, fixed ports, validated interface names, and fixed argument arrays.
 - VPN, utun, and other non-LAN interfaces remain unredirected.
@@ -227,10 +228,11 @@ A future address picker may list the active primary addresses, but it is not req
 Automated coverage must include:
 
 - exact anchor rendering for multiple interfaces, including dynamic `(if:0)` rules and no selected-address interpolation;
+- coverage of present interfaces without a primary IPv4 address;
 - rejection of invalid, loopback, oversized, or duplicate interface names;
 - schema 2 manifest serialization, schema 1 migration, setup preview/apply, and uninstall;
-- inspector behavior for changed addresses without setup, inactive addresses, uncovered interfaces, missing anchors, and sidecar drift;
-- runtime reconciliation after an address change, including a failed candidate retaining the previous applied state;
+- inspector behavior for changed addresses without setup, switching to another covered interface, inactive addresses, uncovered interfaces, missing anchors, and sidecar drift;
+- runtime reconciliation after an address change, including a failed candidate that retains the previous applied state and an inactive address that fails before replacing it;
 - no duplicate diagnostics;
 - frontend save behavior proving no `setupRequired` message after an address change;
 - platform-facade contract tests with a fake installer and fake inspector, proving callers do not depend on macOS types;
