@@ -1,10 +1,10 @@
 use crate::privilege::{UserRecord, setup_user, user_by_uid};
 use own_domains_core::SettingsStore;
 use own_domains_daemon::platform::macos::{
-    CommandRunner, HostCommand, HostFileKind, HostFileSystem, MacOsArchitecture, MacOsSetupOptions,
+    HostFileKind, HostFileSystem, MacOsArchitecture, MacOsSetupOptions, NetworkInterface,
     RuntimePaths, SidecarManifest, SystemCommandRunner, SystemHostFileSystem, SystemSetupHost,
     apply_setup as apply_macos_setup, apply_uninstall as apply_macos_uninstall,
-    build_host_setup_plan, preview_setup as preview_macos_setup,
+    build_host_setup_plan, discover_network_interfaces, preview_setup as preview_macos_setup,
     preview_uninstall as preview_macos_uninstall,
 };
 use own_domains_daemon::platform::{
@@ -243,35 +243,21 @@ fn resolve_state_directory(state_directory: &Path, home: &Path) -> Result<PathBu
     Ok(path)
 }
 
-fn interface_addresses(interface: &str) -> Result<Vec<Ipv4Addr>, String> {
-    let output = SystemCommandRunner.run(&HostCommand {
-        program: "/sbin/ifconfig".into(),
-        args: vec![interface.to_string()],
-        timeout: Duration::from_secs(2),
-    })?;
-    if output.status != 0 {
+fn validate_selected_interface(
+    interfaces: &[NetworkInterface],
+    interface: &str,
+    lan_address: Ipv4Addr,
+) -> Result<(), String> {
+    let selected = interfaces
+        .iter()
+        .find(|candidate| candidate.name == interface)
+        .ok_or_else(|| format!("interface {interface} is not an eligible present LAN interface"))?;
+    if selected.primary_ipv4 != Some(lan_address) {
         return Err(format!(
-            "ifconfig failed for {interface}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "LAN address {lan_address} is not the primary IPv4 address of interface {interface}"
         ));
     }
-    let output = String::from_utf8_lossy(&output.stdout);
-    let mut addresses = Vec::new();
-    for line in output.lines() {
-        let mut fields = line.split_whitespace();
-        while let Some(field) = fields.next() {
-            if field == "inet"
-                && let Some(address) = fields.next()
-                && let Ok(address) = address.parse::<Ipv4Addr>()
-            {
-                addresses.push(address);
-            }
-        }
-    }
-    if addresses.is_empty() {
-        return Err(format!("interface {interface} has no IPv4 address"));
-    }
-    Ok(addresses)
+    Ok(())
 }
 
 fn setup_options(
@@ -288,7 +274,9 @@ fn setup_options(
     let lan_address = lan_address
         .parse::<Ipv4Addr>()
         .map_err(|_| format!("invalid LAN IPv4 address: {lan_address}"))?;
-    let addresses = interface_addresses(interface)?;
+    let covered_interfaces = discover_network_interfaces(&SystemCommandRunner)
+        .map_err(|error| format!("unable to discover LAN interfaces: {error}"))?;
+    validate_selected_interface(&covered_interfaces, interface, lan_address)?;
     let sidecars = manifest_for_architecture(&resource_directory, architecture)?;
     let paths = RuntimePaths::new(
         state_directory.clone(),
@@ -307,7 +295,7 @@ fn setup_options(
         backup_directory,
         lan_address,
         interface: interface.to_string(),
-        interface_addresses: addresses,
+        covered_interfaces,
         architecture,
         sidecars,
     };
@@ -495,6 +483,30 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    fn address(value: &str) -> Ipv4Addr {
+        value.parse().unwrap()
+    }
+
+    #[test]
+    fn requires_the_selected_interface_to_be_present_and_primary() {
+        let interfaces = vec![NetworkInterface {
+            name: "en0".into(),
+            primary_ipv4: Some(address("192.168.1.20")),
+        }];
+
+        assert!(validate_selected_interface(&interfaces, "en0", address("192.168.1.20")).is_ok());
+        assert!(
+            validate_selected_interface(&interfaces, "en1", address("192.168.1.20"))
+                .unwrap_err()
+                .contains("present")
+        );
+        assert!(
+            validate_selected_interface(&interfaces, "en0", address("192.168.1.21"))
+                .unwrap_err()
+                .contains("primary")
+        );
     }
 
     #[test]
