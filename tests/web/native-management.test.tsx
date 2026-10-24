@@ -214,3 +214,54 @@ it('does not relabel Register while an unrelated action is running', async () =>
   await waitFor(() => expect(screen.getByRole('button', { name: 'Register domain' })).toBeEnabled());
   view.unmount();
 });
+
+it('saves a LAN address change without asking for privileged setup', async () => {
+  const state: StateSnapshot = {
+    settings: { schemaVersion: 1, revision: 3, lanAddress: '192.168.1.20', upstreamDns: ['1.1.1.1'], mappings: [] },
+    runtimeStatus: 'running',
+    desiredRevision: 3,
+    appliedRevision: 3,
+    diagnostics: [],
+    latestEventSequence: 0,
+  };
+  const request = vi.fn<NativeClient['request']>(async (command) => {
+    if (command.type === 'snapshot') return { type: 'snapshot', payload: structuredClone(state) };
+
+    if (command.type === 'updateNetwork') {
+      state.settings = { ...state.settings, lanAddress: command.payload.lan_address, revision: 4 };
+      state.desiredRevision = 4;
+      state.appliedRevision = 4;
+      state.latestEventSequence = 1;
+
+      return {
+        type: 'mutation',
+        payload: {
+          settings: structuredClone(state.settings),
+          apply: { desiredRevision: 4, appliedRevision: 4, status: 'applied' as const },
+        },
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command.type}`);
+  });
+  const client: NativeClient = { subscribe: async () => async () => {}, request };
+  const user = userEvent.setup();
+  const store = new RuntimeStore(client);
+  const view = render(<NativeApp store={store} onStart={async () => {}} onStop={async () => {}} onQuit={async () => {}} />);
+
+  await screen.findByText('Runtime: running');
+  const input = screen.getByLabelText('Mac LAN IPv4');
+
+  await user.clear(input);
+  await user.type(input, '192.168.1.21');
+  await user.click(screen.getByRole('button', { name: 'Save network settings' }));
+
+  await waitFor(() => expect(screen.getByLabelText('Mac LAN IPv4')).toHaveValue('192.168.1.21'));
+  expect(request).toHaveBeenCalledWith(expect.objectContaining({
+    type: 'updateNetwork',
+    payload: { lan_address: '192.168.1.21', upstream_dns: ['1.1.1.1'], expected_revision: 3 },
+  }));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.queryByText(/setupRequired|privileged setup/i)).not.toBeInTheDocument();
+  view.unmount();
+});
