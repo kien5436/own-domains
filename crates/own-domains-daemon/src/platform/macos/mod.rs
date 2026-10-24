@@ -21,8 +21,9 @@ pub use config::{
 pub use host::{
     CommandRunner, HostArtifact, HostCommand, HostCommandOutput, HostFileKind, HostFileMetadata,
     HostFileSystem, HostInstallManifest, HostIntegrationInspector, HostSetupError, HostSetupPlan,
-    MacOsSetupOptions, ManifestArtifact, SidecarManifest, SidecarSpec, SystemCommandRunner,
-    SystemHostFileSystem, build_host_setup_plan, validate_host_setup_plan,
+    MacOsSetupOptions, ManifestArtifact, NetworkInterface, SidecarManifest, SidecarSpec,
+    SystemCommandRunner, SystemHostFileSystem, build_host_setup_plan, discover_network_interfaces,
+    validate_host_setup_plan,
 };
 pub use paths::{MacOsArchitecture, RuntimePaths};
 pub use process::{

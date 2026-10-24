@@ -12,6 +12,13 @@ use std::{
 const ANCHOR_PATH: &str = "/etc/pf.anchors/dev.owndomains";
 const MAX_FILE_BYTES: usize = 1024 * 1024;
 const MAX_COMMAND_BYTES: usize = 64 * 1024;
+const RESOLVER_CONTENT: &str = "nameserver 127.0.0.1\nport 5354\n";
+const PF_CONF_BLOCK: &str = concat!(
+    "# BEGIN OWN DOMAINS\n",
+    "rdr-anchor \"dev.owndomains\"\n",
+    "load anchor \"dev.owndomains\" from \"/etc/pf.anchors/dev.owndomains\"\n",
+    "# END OWN DOMAINS\n",
+);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,9 +45,15 @@ pub struct MacOsSetupOptions {
     pub backup_directory: PathBuf,
     pub lan_address: Ipv4Addr,
     pub interface: String,
-    pub interface_addresses: Vec<Ipv4Addr>,
+    pub covered_interfaces: Vec<NetworkInterface>,
     pub architecture: MacOsArchitecture,
     pub sidecars: SidecarManifest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NetworkInterface {
+    pub name: String,
+    pub primary_ipv4: Option<Ipv4Addr>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,8 +121,7 @@ pub struct HostInstallManifest {
     pub user_name: String,
     pub user_id: u32,
     pub backup_directory: PathBuf,
-    pub interface: String,
-    pub lan_address: Ipv4Addr,
+    pub interfaces: Vec<String>,
     pub artifacts: Vec<ManifestArtifact>,
     pub sidecars: SidecarManifest,
 }
@@ -135,7 +147,13 @@ pub enum HostSetupError {
     RelativePath { label: &'static str, path: PathBuf },
     #[error("invalid network interface: {0}")]
     InvalidInterface(String),
-    #[error("LAN address {address} is not assigned to interface {interface}")]
+    #[error("no eligible network interfaces were found")]
+    EmptyInterfaceCoverage,
+    #[error("duplicate network interface: {0}")]
+    DuplicateInterface(String),
+    #[error("selected interface is not covered: {0}")]
+    InterfaceNotCovered(String),
+    #[error("LAN address {address} is not the primary IPv4 address of interface {interface}")]
     AddressMismatch {
         interface: String,
         address: Ipv4Addr,
@@ -160,6 +178,67 @@ pub enum HostSetupError {
     Serialize(#[from] serde_json::Error),
 }
 
+pub fn discover_network_interfaces(
+    commands: &dyn CommandRunner,
+) -> Result<Vec<NetworkInterface>, String> {
+    let list = commands.run(&inspect_command("/sbin/ifconfig", ["-l"]))?;
+    if list.status != 0 {
+        return Err(format!(
+            "ifconfig -l failed: {}",
+            command_detail(&list.stderr)
+        ));
+    }
+    let mut interfaces = Vec::new();
+    for name in String::from_utf8_lossy(&list.stdout).split_ascii_whitespace() {
+        if !is_eligible_interface(name) {
+            continue;
+        }
+        let output = commands.run(&inspect_command("/sbin/ifconfig", [name]))?;
+        if output.status != 0 {
+            return Err(format!(
+                "ifconfig {name} failed: {}",
+                command_detail(&output.stderr)
+            ));
+        }
+        interfaces.push(NetworkInterface {
+            name: name.into(),
+            primary_ipv4: parse_primary_ipv4(&String::from_utf8_lossy(&output.stdout)),
+        });
+    }
+    interfaces.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(interfaces)
+}
+
+fn is_eligible_interface(name: &str) -> bool {
+    (name.starts_with("en") || name.starts_with("bridge"))
+        && name.len() <= 15
+        && name.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn parse_primary_ipv4(output: &str) -> Option<Ipv4Addr> {
+    for line in output.lines() {
+        let fields = line.split_ascii_whitespace().collect::<Vec<_>>();
+        // macOS prints the primary IPv4 address first and lists aliases as
+        // subsequent `inet` lines. PF's `(<interface>:0)` selects that first
+        // address, so return the first `inet` address without alias filtering.
+        if let Some(index) = fields.iter().position(|field| *field == "inet") {
+            return fields.get(index + 1).and_then(|value| value.parse().ok());
+        }
+    }
+    None
+}
+
+fn command_detail(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(240)
+        .collect()
+}
+
 pub struct HostIntegrationInspector<'a> {
     paths: &'a RuntimePaths,
     sidecars: &'a SidecarManifest,
@@ -182,7 +261,7 @@ impl<'a> HostIntegrationInspector<'a> {
         }
     }
 
-    pub fn inspect(&self, settings: &Settings) -> Vec<Diagnostic> {
+    pub fn inspect(&self, _settings: &Settings) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         let manifest = match self.read_manifest(&mut diagnostics) {
             Some(manifest) => manifest,
@@ -191,22 +270,19 @@ impl<'a> HostIntegrationInspector<'a> {
         self.inspect_managed_file(
             Path::new("/etc/resolver/own"),
             0,
-            Some("nameserver 127.0.0.1\nport 5354\n"),
+            Some(RESOLVER_CONTENT),
             "resolverMismatch",
             &mut diagnostics,
         );
+        let expected_anchor = render_anchor_for(&manifest.interfaces);
         self.inspect_managed_file(
             Path::new(ANCHOR_PATH),
             0,
-            Some(&render_anchor_for(
-                &manifest.interface,
-                manifest.lan_address,
-            )),
+            Some(&expected_anchor),
             "pfAnchorInvalid",
             &mut diagnostics,
         );
         self.inspect_pf_conf(&mut diagnostics);
-        self.inspect_network(settings, &manifest, &mut diagnostics);
         self.inspect_pf(&mut diagnostics);
         self.inspect_trust(&mut diagnostics);
         self.inspect_sidecar(
@@ -271,7 +347,7 @@ impl<'a> HostIntegrationInspector<'a> {
         };
         match serde_json::from_slice::<HostInstallManifest>(&bytes) {
             Ok(manifest)
-                if manifest.schema_version == 1
+                if manifest.schema_version == 2
                     && &manifest.sidecars == self.sidecars
                     && metadata.owner_id == manifest.user_id
                     && metadata.mode == 0o600 =>
@@ -318,7 +394,6 @@ impl<'a> HostIntegrationInspector<'a> {
     }
 
     fn inspect_pf_conf(&self, diagnostics: &mut Vec<Diagnostic>) {
-        const BLOCK: &[u8] = b"# BEGIN OWN DOMAINS\nrdr-anchor \"dev.owndomains\"\nload anchor \"dev.owndomains\" from \"/etc/pf.anchors/dev.owndomains\"\n# END OWN DOMAINS\n";
         let valid = matches!(
             self.files.metadata(Path::new("/etc/pf.conf")),
             Ok(Some(HostFileMetadata {
@@ -329,44 +404,17 @@ impl<'a> HostIntegrationInspector<'a> {
         ) && self
             .files
             .read(Path::new("/etc/pf.conf"), MAX_FILE_BYTES)
-            .is_ok_and(|bytes| bytes.windows(BLOCK.len()).any(|window| window == BLOCK));
+            .is_ok_and(|bytes| {
+                bytes
+                    .windows(PF_CONF_BLOCK.len())
+                    .any(|window| window == PF_CONF_BLOCK.as_bytes())
+            });
         if !valid {
             diagnostics.push(error(
                 "pfConfigurationInvalid",
                 "The PF configuration does not contain the owned anchor block.",
                 "Run privileged setup again.",
             ));
-        }
-    }
-
-    fn inspect_network(
-        &self,
-        settings: &Settings,
-        manifest: &HostInstallManifest,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        if settings.lan_address.parse::<Ipv4Addr>().ok() != Some(manifest.lan_address) {
-            diagnostics.push(error(
-                "setupRequired",
-                "The configured LAN address differs from privileged setup.",
-                "Rerun privileged setup for the selected LAN address.",
-            ));
-        }
-        for command in [
-            inspect_command("/usr/sbin/scutil", ["--nwi"]),
-            inspect_command("/sbin/ifconfig", [manifest.interface.as_str()]),
-        ] {
-            match self.run_bounded(&command) {
-                Ok(output)
-                    if output.status == 0
-                        && String::from_utf8_lossy(&output.stdout)
-                            .contains(&manifest.lan_address.to_string()) => {}
-                _ => diagnostics.push(error(
-                    "lanIntegrationDrift",
-                    "The selected LAN address is no longer active on its configured interface.",
-                    "Reconnect the interface or rerun privileged setup.",
-                )),
-            }
         }
     }
 
@@ -501,31 +549,24 @@ pub fn build_host_setup_plan(options: &MacOsSetupOptions) -> Result<HostSetupPla
         options.backup_directory.clone(),
         options.architecture,
     )?;
+    let mut interfaces = options
+        .covered_interfaces
+        .iter()
+        .map(|interface| interface.name.clone())
+        .collect::<Vec<_>>();
+    interfaces.sort();
+    let anchor = render_anchor_for(&interfaces);
     let mut artifacts = vec![
-        system_artifact(
-            "/etc/resolver/own",
-            "nameserver 127.0.0.1\nport 5354\n",
-            false,
-        ),
-        system_artifact(ANCHOR_PATH, &render_anchor(options), false),
-        system_artifact(
-            "/etc/pf.conf",
-            concat!(
-                "# BEGIN OWN DOMAINS\n",
-                "rdr-anchor \"dev.owndomains\"\n",
-                "load anchor \"dev.owndomains\" from \"/etc/pf.anchors/dev.owndomains\"\n",
-                "# END OWN DOMAINS\n",
-            ),
-            true,
-        ),
+        system_artifact("/etc/resolver/own", RESOLVER_CONTENT, false),
+        system_artifact(ANCHOR_PATH, &anchor, false),
+        system_artifact("/etc/pf.conf", PF_CONF_BLOCK, true),
     ];
     let manifest = HostInstallManifest {
-        schema_version: 1,
+        schema_version: 2,
         user_name: options.user_name.clone(),
         user_id: options.user_id,
         backup_directory: options.backup_directory.clone(),
-        interface: options.interface.clone(),
-        lan_address: options.lan_address,
+        interfaces,
         artifacts: artifacts
             .iter()
             .map(|artifact| ManifestArtifact {
@@ -610,19 +651,30 @@ fn validate_options(options: &MacOsSetupOptions) -> Result<(), HostSetupError> {
             options.sidecars.schema_version,
         ));
     }
-    if options.interface.is_empty()
-        || options.interface.len() > 15
-        || !options
-            .interface
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric())
-    {
+    if !is_eligible_interface(&options.interface) {
         return Err(HostSetupError::InvalidInterface(options.interface.clone()));
     }
+    if options.covered_interfaces.is_empty() {
+        return Err(HostSetupError::EmptyInterfaceCoverage);
+    }
+    let mut interface_names = HashSet::new();
+    for interface in &options.covered_interfaces {
+        if !is_eligible_interface(&interface.name) {
+            return Err(HostSetupError::InvalidInterface(interface.name.clone()));
+        }
+        if !interface_names.insert(interface.name.as_str()) {
+            return Err(HostSetupError::DuplicateInterface(interface.name.clone()));
+        }
+    }
+    let selected = options
+        .covered_interfaces
+        .iter()
+        .find(|interface| interface.name.as_str() == options.interface.as_str())
+        .ok_or_else(|| HostSetupError::InterfaceNotCovered(options.interface.clone()))?;
     if options.lan_address.is_unspecified()
         || options.lan_address.is_loopback()
         || options.lan_address.is_multicast()
-        || !options.interface_addresses.contains(&options.lan_address)
+        || selected.primary_ipv4 != Some(options.lan_address)
     {
         return Err(HostSetupError::AddressMismatch {
             interface: options.interface.clone(),
@@ -670,27 +722,30 @@ fn validate_options(options: &MacOsSetupOptions) -> Result<(), HostSetupError> {
     Ok(())
 }
 
-fn render_anchor(options: &MacOsSetupOptions) -> String {
-    render_anchor_for(&options.interface, options.lan_address)
-}
-
-fn render_anchor_for(interface_name: &str, lan_address: Ipv4Addr) -> String {
+fn render_anchor_for(interfaces: &[String]) -> String {
+    const SERVICES: [(&str, u16, u16); 4] = [
+        ("udp", 53, 5354),
+        ("tcp", 53, 5354),
+        ("tcp", 80, 8080),
+        ("tcp", 443, 8443),
+    ];
     let mut output = String::new();
-    for (interface, address) in [
-        ("lo0", Ipv4Addr::LOCALHOST.to_string()),
-        ("lo0", lan_address.to_string()),
-        (interface_name, lan_address.to_string()),
-    ] {
-        for (protocol, source, target) in [
-            ("udp", 53, 5354),
-            ("tcp", 53, 5354),
-            ("tcp", 80, 8080),
-            ("tcp", 443, 8443),
-        ] {
-            // Translate to the LAN address instead of loopback. Redirecting
-            // to 127.0.0.1:<service port> makes PF reverse-translate direct
-            // readiness and resolver connections to that same local port.
-            output.push_str(&format!("rdr pass on {interface} inet proto {protocol} from any to {address} port {source} -> {lan_address} port {target}\n"));
+    for (protocol, source, target) in SERVICES {
+        output.push_str(&format!(
+            "rdr pass on lo0 inet proto {protocol} from any to 127.0.0.1 port {source} -> 127.0.0.1 port {target}\n"
+        ));
+    }
+    for interface in interfaces {
+        for (protocol, source, target) in SERVICES {
+            // Redirect to the interface's current address instead of loopback.
+            output.push_str(&format!(
+                "rdr pass on lo0 inet proto {protocol} from any to ({interface}:0) port {source} -> ({interface}:0) port {target}\n"
+            ));
+        }
+        for (protocol, source, target) in SERVICES {
+            output.push_str(&format!(
+                "rdr pass on {interface} inet proto {protocol} from any to ({interface}:0) port {source} -> ({interface}:0) port {target}\n"
+            ));
         }
     }
     output

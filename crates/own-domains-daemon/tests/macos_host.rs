@@ -1,8 +1,9 @@
 use own_domains_core::{DiagnosticStatus, Settings};
 use own_domains_daemon::platform::macos::{
     CommandRunner, HostCommand, HostCommandOutput, HostFileKind, HostFileMetadata, HostFileSystem,
-    HostIntegrationInspector, MacOsArchitecture, MacOsSetupOptions, SidecarManifest, SidecarSpec,
-    SystemCommandRunner, SystemHostFileSystem, build_host_setup_plan, validate_host_setup_plan,
+    HostIntegrationInspector, MacOsArchitecture, MacOsSetupOptions, NetworkInterface,
+    SidecarManifest, SidecarSpec, SystemCommandRunner, SystemHostFileSystem, build_host_setup_plan,
+    discover_network_interfaces, validate_host_setup_plan,
 };
 use std::{
     collections::HashMap,
@@ -38,15 +39,23 @@ fn options(architecture: MacOsArchitecture) -> MacOsSetupOptions {
         ),
         lan_address: Ipv4Addr::new(192, 168, 1, 20),
         interface: "en0".into(),
-        interface_addresses: vec![Ipv4Addr::new(192, 168, 1, 20)],
+        covered_interfaces: vec![NetworkInterface {
+            name: "en0".into(),
+            primary_ipv4: Some(Ipv4Addr::new(192, 168, 1, 20)),
+        }],
         architecture,
         sidecars: sidecars(),
     }
 }
 
 #[test]
-fn renders_exact_resolver_pf_manifest_and_fixed_commands() {
-    let plan = build_host_setup_plan(&options(MacOsArchitecture::Arm64)).unwrap();
+fn renders_exact_resolver_dynamic_anchor_and_schema_two_manifest() {
+    let mut options = options(MacOsArchitecture::Arm64);
+    options.covered_interfaces.push(NetworkInterface {
+        name: "en1".into(),
+        primary_ipv4: Some(Ipv4Addr::new(192, 168, 1, 21)),
+    });
+    let plan = build_host_setup_plan(&options).unwrap();
     let resolver = plan.artifact("/etc/resolver/own").unwrap();
     let anchor = plan.artifact("/etc/pf.anchors/dev.owndomains").unwrap();
     let pf_block = plan.artifact("/etc/pf.conf").unwrap();
@@ -57,20 +66,30 @@ fn renders_exact_resolver_pf_manifest_and_fixed_commands() {
     assert_eq!(
         anchor.content,
         concat!(
-            "rdr pass on lo0 inet proto udp from any to 127.0.0.1 port 53 -> 192.168.1.20 port 5354\n",
-            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 53 -> 192.168.1.20 port 5354\n",
-            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 192.168.1.20 port 8080\n",
-            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 192.168.1.20 port 8443\n",
-            "rdr pass on lo0 inet proto udp from any to 192.168.1.20 port 53 -> 192.168.1.20 port 5354\n",
-            "rdr pass on lo0 inet proto tcp from any to 192.168.1.20 port 53 -> 192.168.1.20 port 5354\n",
-            "rdr pass on lo0 inet proto tcp from any to 192.168.1.20 port 80 -> 192.168.1.20 port 8080\n",
-            "rdr pass on lo0 inet proto tcp from any to 192.168.1.20 port 443 -> 192.168.1.20 port 8443\n",
-            "rdr pass on en0 inet proto udp from any to 192.168.1.20 port 53 -> 192.168.1.20 port 5354\n",
-            "rdr pass on en0 inet proto tcp from any to 192.168.1.20 port 53 -> 192.168.1.20 port 5354\n",
-            "rdr pass on en0 inet proto tcp from any to 192.168.1.20 port 80 -> 192.168.1.20 port 8080\n",
-            "rdr pass on en0 inet proto tcp from any to 192.168.1.20 port 443 -> 192.168.1.20 port 8443\n",
+            "rdr pass on lo0 inet proto udp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080\n",
+            "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443\n",
+            "rdr pass on lo0 inet proto udp from any to (en0:0) port 53 -> (en0:0) port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to (en0:0) port 53 -> (en0:0) port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to (en0:0) port 80 -> (en0:0) port 8080\n",
+            "rdr pass on lo0 inet proto tcp from any to (en0:0) port 443 -> (en0:0) port 8443\n",
+            "rdr pass on en0 inet proto udp from any to (en0:0) port 53 -> (en0:0) port 5354\n",
+            "rdr pass on en0 inet proto tcp from any to (en0:0) port 53 -> (en0:0) port 5354\n",
+            "rdr pass on en0 inet proto tcp from any to (en0:0) port 80 -> (en0:0) port 8080\n",
+            "rdr pass on en0 inet proto tcp from any to (en0:0) port 443 -> (en0:0) port 8443\n",
+            "rdr pass on lo0 inet proto udp from any to (en1:0) port 53 -> (en1:0) port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to (en1:0) port 53 -> (en1:0) port 5354\n",
+            "rdr pass on lo0 inet proto tcp from any to (en1:0) port 80 -> (en1:0) port 8080\n",
+            "rdr pass on lo0 inet proto tcp from any to (en1:0) port 443 -> (en1:0) port 8443\n",
+            "rdr pass on en1 inet proto udp from any to (en1:0) port 53 -> (en1:0) port 5354\n",
+            "rdr pass on en1 inet proto tcp from any to (en1:0) port 53 -> (en1:0) port 5354\n",
+            "rdr pass on en1 inet proto tcp from any to (en1:0) port 80 -> (en1:0) port 8080\n",
+            "rdr pass on en1 inet proto tcp from any to (en1:0) port 443 -> (en1:0) port 8443\n",
         )
     );
+    assert!(!anchor.content.contains("192.168.1.20"));
+    assert!(!anchor.content.contains("192.168.1.21"));
     assert_eq!(
         pf_block.content,
         concat!(
@@ -81,10 +100,17 @@ fn renders_exact_resolver_pf_manifest_and_fixed_commands() {
         )
     );
     assert!(pf_block.managed_block);
-    assert_eq!(plan.manifest.schema_version, 1);
+    assert_eq!(plan.manifest.schema_version, 2);
     assert_eq!(plan.manifest.user_name, "kien");
-    assert_eq!(plan.manifest.interface, "en0");
-    assert_eq!(plan.manifest.lan_address, Ipv4Addr::new(192, 168, 1, 20));
+    assert_eq!(
+        plan.manifest.interfaces,
+        vec!["en0".to_string(), "en1".to_string()]
+    );
+    let manifest = serde_json::to_value(&plan.manifest).unwrap();
+    assert_eq!(manifest["schemaVersion"], 2);
+    assert_eq!(manifest["interfaces"], serde_json::json!(["en0", "en1"]));
+    assert!(manifest.get("lanAddress").is_none());
+    assert!(manifest.get("interface").is_none());
     assert!(
         plan.manifest
             .artifacts
@@ -98,6 +124,23 @@ fn renders_exact_resolver_pf_manifest_and_fixed_commands() {
         ("/sbin/pfctl".into(), vec!["-a", "dev.owndomains", "-f", "/etc/pf.anchors/dev.owndomains"].into_iter().map(String::from).collect()),
         ("/sbin/pfctl".into(), vec!["-E"].into_iter().map(String::from).collect()),
     ]);
+}
+
+#[test]
+fn covers_present_interfaces_without_a_primary_ipv4_address() {
+    let mut options = options(MacOsArchitecture::Arm64);
+    options.covered_interfaces.push(NetworkInterface {
+        name: "bridge3".into(),
+        primary_ipv4: None,
+    });
+    let plan = build_host_setup_plan(&options).unwrap();
+    let anchor = plan.artifact("/etc/pf.anchors/dev.owndomains").unwrap();
+
+    assert!(anchor.content.contains("(bridge3:0)"));
+    assert_eq!(
+        plan.manifest.interfaces,
+        vec!["bridge3".to_string(), "en0".to_string()]
+    );
 }
 
 #[test]
@@ -141,10 +184,72 @@ fn rejects_untrusted_setup_inputs_and_duplicate_artifacts() {
             .contains("interface")
     );
 
-    let mut mismatched = options(MacOsArchitecture::Arm64);
-    mismatched.interface_addresses = vec![Ipv4Addr::new(192, 168, 1, 21)];
+    let mut empty = options(MacOsArchitecture::Arm64);
+    empty.covered_interfaces.clear();
     assert!(
-        build_host_setup_plan(&mismatched)
+        build_host_setup_plan(&empty)
+            .unwrap_err()
+            .to_string()
+            .contains("eligible")
+    );
+
+    let mut uncovered = options(MacOsArchitecture::Arm64);
+    uncovered.covered_interfaces[0].name = "en1".into();
+    assert!(
+        build_host_setup_plan(&uncovered)
+            .unwrap_err()
+            .to_string()
+            .contains("not covered")
+    );
+
+    let mut duplicate_interfaces = options(MacOsArchitecture::Arm64);
+    duplicate_interfaces
+        .covered_interfaces
+        .push(duplicate_interfaces.covered_interfaces[0].clone());
+    assert!(
+        build_host_setup_plan(&duplicate_interfaces)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate network interface")
+    );
+
+    let mut ineligible = options(MacOsArchitecture::Arm64);
+    ineligible.covered_interfaces.push(NetworkInterface {
+        name: "utun0".into(),
+        primary_ipv4: None,
+    });
+    assert!(
+        build_host_setup_plan(&ineligible)
+            .unwrap_err()
+            .to_string()
+            .contains("interface")
+    );
+
+    let mut oversized = options(MacOsArchitecture::Arm64);
+    oversized.covered_interfaces[0].name = "en00000000000000".into();
+    oversized.interface = "en00000000000000".into();
+    assert!(
+        build_host_setup_plan(&oversized)
+            .unwrap_err()
+            .to_string()
+            .contains("interface")
+    );
+
+    // Covered names are validated independently of the selected interface.
+    let mut oversized_covered = options(MacOsArchitecture::Arm64);
+    oversized_covered.interface = "en0".into();
+    oversized_covered.covered_interfaces[0].name = "en00000000000000".into();
+    assert!(
+        build_host_setup_plan(&oversized_covered)
+            .unwrap_err()
+            .to_string()
+            .contains("interface")
+    );
+
+    let mut alias = options(MacOsArchitecture::Arm64);
+    alias.covered_interfaces[0].primary_ipv4 = Some(Ipv4Addr::new(192, 168, 1, 21));
+    assert!(
+        build_host_setup_plan(&alias)
             .unwrap_err()
             .to_string()
             .contains("address")
@@ -176,6 +281,86 @@ fn rejects_untrusted_setup_inputs_and_duplicate_artifacts() {
             .to_string()
             .contains("duplicate")
     );
+}
+
+#[test]
+fn discovers_only_present_eligible_interfaces_in_stable_order() {
+    struct FakeIfconfig;
+
+    impl CommandRunner for FakeIfconfig {
+        fn run(&self, command: &HostCommand) -> Result<HostCommandOutput, String> {
+            assert_eq!(command.program, PathBuf::from("/sbin/ifconfig"));
+            assert_eq!(command.timeout, Duration::from_secs(2));
+            let output = if command.args.len() == 1 && command.args[0] == "-l" {
+                "lo0 en1 bridge3 utun0 en0 awdl0 en8 en9".to_string()
+            } else {
+                match command.args.first().map(String::as_str) {
+                    Some("en0") => {
+                        "en0: flags=8863\n\tinet 192.168.1.20 netmask 0xffffff00\n".to_string()
+                    }
+                    Some("en1") => {
+                        "en1: flags=8863\n\tinet 192.168.1.21 netmask 0xffffff00\n".to_string()
+                    }
+                    Some("bridge3") => "bridge3: flags=8863\n".to_string(),
+                    Some("en8") => concat!(
+                        "en8: flags=8863\n",
+                        "\tinet 192.0.2.210 netmask 0xffffff00\n",
+                        "\tinet 192.0.2.211 netmask 0xffffff00\n",
+                    )
+                    .to_string(),
+                    // macOS lists aliases as additional `inet` lines without an
+                    // `alias` token. Only the first address is the primary. An
+                    // interface with no IPv4 at all is addressless.
+                    Some("en9") => {
+                        "en9: flags=8863\n\tinet6 fe80::1%en9 prefixlen 64\n".to_string()
+                    }
+                    other => panic!("unexpected interface {other:?}"),
+                }
+            };
+            Ok(HostCommandOutput {
+                status: 0,
+                stdout: output.into_bytes(),
+                stderr: vec![],
+            })
+        }
+    }
+
+    let interfaces = discover_network_interfaces(&FakeIfconfig).unwrap();
+    assert_eq!(
+        interfaces,
+        vec![
+            NetworkInterface {
+                name: "bridge3".into(),
+                primary_ipv4: None,
+            },
+            NetworkInterface {
+                name: "en0".into(),
+                primary_ipv4: Some(Ipv4Addr::new(192, 168, 1, 20)),
+            },
+            NetworkInterface {
+                name: "en1".into(),
+                primary_ipv4: Some(Ipv4Addr::new(192, 168, 1, 21)),
+            },
+            NetworkInterface {
+                name: "en8".into(),
+                primary_ipv4: Some(Ipv4Addr::new(192, 0, 2, 210)),
+            },
+            NetworkInterface {
+                name: "en9".into(),
+                primary_ipv4: None,
+            },
+        ]
+    );
+    let en8 = interfaces
+        .iter()
+        .find(|interface| interface.name == "en8")
+        .unwrap();
+    assert_eq!(en8.primary_ipv4, Some(Ipv4Addr::new(192, 0, 2, 210)));
+    let en9 = interfaces
+        .iter()
+        .find(|interface| interface.name == "en9")
+        .unwrap();
+    assert_eq!(en9.primary_ipv4, None);
 }
 
 #[derive(Default)]
