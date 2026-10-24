@@ -1,6 +1,6 @@
 use super::{
-    CommandRunner, HostArtifact, HostCommand, HostCommandOutput, HostFileKind, HostInstallManifest,
-    HostSetupPlan, RuntimePaths,
+    CommandRunner, HostArtifact, HostCommand, HostCommandOutput, HostFileKind, HostSetupPlan,
+    InstalledHostManifest, RuntimePaths, parse_host_install_manifest, validate_installed_manifest,
 };
 use crate::platform::{SetupAction, SetupApplyResult, SetupFailure, SetupPreview};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -138,11 +138,11 @@ pub fn preview_uninstall(
     let manifest =
         read_manifest(paths, host)?.ok_or_else(|| failure("setup manifest is missing"))?;
     let mut actions = manifest
-        .artifacts
+        .artifacts()
         .iter()
         .rev()
         .map(|artifact| {
-            let backup = backup_path(&manifest, &artifact.path);
+            let backup = backup_path(manifest.backup_directory(), &artifact.path);
             let has_backup = host.inspect_file(&backup).ok().flatten().is_some();
             SetupAction {
                 kind: if has_backup { "restore" } else { "remove" }.into(),
@@ -239,7 +239,7 @@ fn plan_setup<'a>(
         .as_ref()
         .map(|manifest| {
             manifest
-                .artifacts
+                .artifacts()
                 .iter()
                 .map(|item| item.path.clone())
                 .collect::<HashSet<_>>()
@@ -299,7 +299,7 @@ fn plan_setup<'a>(
         let backup_path = previous
             .as_ref()
             .filter(|_| artifact.backup_existing)
-            .map(|_| backup_path(&plan.manifest, &artifact.path));
+            .map(|_| backup_path(&plan.manifest.backup_directory, &artifact.path));
         planned.push(PlannedArtifact {
             artifact,
             desired,
@@ -313,7 +313,7 @@ fn plan_setup<'a>(
 fn read_manifest(
     paths: &RuntimePaths,
     host: &dyn SetupHost,
-) -> Result<Option<HostInstallManifest>, SetupFailure> {
+) -> Result<Option<InstalledHostManifest>, SetupFailure> {
     let Some(file) = host
         .inspect_file(&paths.install_manifest)
         .map_err(failure)?
@@ -323,9 +323,14 @@ fn read_manifest(
     if file.kind != HostFileKind::Regular {
         return Err(failure("setup manifest is not a regular file"));
     }
-    serde_json::from_slice(&file.content)
-        .map(Some)
-        .map_err(|error| failure(format!("setup manifest is corrupt: {error}")))
+    let manifest = parse_host_install_manifest(&file.content)
+        .map_err(|error| failure(format!("setup manifest is corrupt: {error}")))?;
+    if file.owner_id != manifest.user_id() || file.mode != 0o600 {
+        return Err(failure("setup manifest ownership or mode is invalid"));
+    }
+    validate_installed_manifest(paths, &manifest)
+        .map_err(|error| failure(format!("setup manifest is invalid: {error}")))?;
+    Ok(Some(manifest))
 }
 
 fn merge_managed_block(previous: &[u8], block: &[u8]) -> Result<Vec<u8>, SetupFailure> {
@@ -455,10 +460,8 @@ fn rollback_setup(
     unresolved
 }
 
-fn backup_path(manifest: &HostInstallManifest, path: &Path) -> PathBuf {
-    manifest
-        .backup_directory
-        .join(path.strip_prefix("/").unwrap_or(path))
+fn backup_path(backup_directory: &Path, path: &Path) -> PathBuf {
+    backup_directory.join(path.strip_prefix("/").unwrap_or(path))
 }
 
 fn certificate_sha256(host: &dyn SetupHost, path: &Path) -> Result<String, String> {

@@ -25,6 +25,9 @@ pub use host::{
     SystemCommandRunner, SystemHostFileSystem, build_host_setup_plan, discover_network_interfaces,
     validate_host_setup_plan,
 };
+pub(crate) use host::{
+    InstalledHostManifest, parse_host_install_manifest, validate_installed_manifest,
+};
 pub use paths::{MacOsArchitecture, RuntimePaths};
 pub use process::{
     CaddyAdmin, CaddyAdminClient, ChildProcess, DnsReadinessProbe, FileProcessRecords,

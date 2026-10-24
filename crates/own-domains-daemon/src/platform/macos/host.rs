@@ -126,6 +126,126 @@ pub struct HostInstallManifest {
     pub sidecars: SidecarManifest,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LegacyHostInstallManifest {
+    pub user_id: u32,
+    pub backup_directory: PathBuf,
+    pub artifacts: Vec<ManifestArtifact>,
+    pub sidecars: SidecarManifest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum InstalledHostManifest {
+    V1(LegacyHostInstallManifest),
+    V2(HostInstallManifest),
+}
+
+impl InstalledHostManifest {
+    pub(crate) fn user_id(&self) -> u32 {
+        match self {
+            Self::V1(manifest) => manifest.user_id,
+            Self::V2(manifest) => manifest.user_id,
+        }
+    }
+
+    pub(crate) fn backup_directory(&self) -> &Path {
+        match self {
+            Self::V1(manifest) => &manifest.backup_directory,
+            Self::V2(manifest) => &manifest.backup_directory,
+        }
+    }
+
+    pub(crate) fn artifacts(&self) -> &[ManifestArtifact] {
+        match self {
+            Self::V1(manifest) => &manifest.artifacts,
+            Self::V2(manifest) => &manifest.artifacts,
+        }
+    }
+
+    #[allow(dead_code)] // Read by the inspector once schema 2 diagnostics land.
+    pub(crate) fn sidecars(&self) -> &SidecarManifest {
+        match self {
+            Self::V1(manifest) => &manifest.sidecars,
+            Self::V2(manifest) => &manifest.sidecars,
+        }
+    }
+}
+
+pub(crate) fn parse_host_install_manifest(bytes: &[u8]) -> Result<InstalledHostManifest, String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Header {
+        schema_version: u32,
+    }
+
+    let header: Header = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    match header.schema_version {
+        1 => serde_json::from_slice::<LegacyHostInstallManifest>(bytes)
+            .map(InstalledHostManifest::V1)
+            .map_err(|error| error.to_string()),
+        2 => serde_json::from_slice::<HostInstallManifest>(bytes)
+            .map(InstalledHostManifest::V2)
+            .map_err(|error| error.to_string()),
+        version => Err(format!("unsupported install manifest schema {version}")),
+    }
+}
+
+pub(crate) fn validate_installed_manifest(
+    paths: &RuntimePaths,
+    manifest: &InstalledHostManifest,
+) -> Result<(), String> {
+    let backup = manifest.backup_directory();
+    if !backup.is_absolute()
+        || !backup.starts_with(&paths.state_directory)
+        || backup
+            .components()
+            .any(|component| component == std::path::Component::ParentDir)
+    {
+        return Err("install manifest backup directory is invalid".into());
+    }
+    let artifacts = manifest.artifacts();
+    if artifacts.len() != 3 {
+        return Err("install manifest artifact list is invalid".into());
+    }
+    for (path, managed) in [
+        (Path::new("/etc/resolver/own"), false),
+        (Path::new(ANCHOR_PATH), false),
+        (Path::new("/etc/pf.conf"), true),
+    ] {
+        let Some(artifact) = artifacts.iter().find(|artifact| artifact.path == path) else {
+            return Err(format!(
+                "install manifest artifact list is invalid: missing {}",
+                path.display()
+            ));
+        };
+        if artifact.managed_block != managed
+            || artifact.mode != 0o644
+            || artifact.owner_id != 0
+            || artifact.sha256.len() != 64
+            || !artifact.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(format!(
+                "install manifest artifact is invalid: {}",
+                path.display()
+            ));
+        }
+    }
+    if let InstalledHostManifest::V2(manifest) = manifest {
+        let mut names = HashSet::new();
+        if manifest.schema_version != 2
+            || manifest.interfaces.is_empty()
+            || !manifest
+                .interfaces
+                .iter()
+                .all(|name| is_eligible_interface(name) && names.insert(name.as_str()))
+        {
+            return Err("install manifest interface list is invalid".into());
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub struct HostSetupPlan {
     pub paths: RuntimePaths,
