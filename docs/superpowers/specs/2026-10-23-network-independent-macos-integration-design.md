@@ -128,7 +128,9 @@ Loopback, `utun*`, `awdl*`, `llw*`, `anpi*`, `gif*`, `stf*`, and other virtual i
 
 The selected initial address must be the primary IPv4 address of the selected interface. Alias addresses are not accepted as the selected LAN address because the dynamic `:0` rules intentionally target the primary address only.
 
-The design should pre-cover absent common interface names (`en0` through `en15` and `bridge0` through `bridge3`) if the feasibility test proves PF accepts those rules and updates them when interfaces appear. If PF rejects absent interface names or interfaces without a primary IPv4 address, setup covers the eligible interfaces present at setup that have a primary IPv4 address; adding or activating a new hardware interface then requires one additional setup. This is the only accepted recurring-root exception.
+Setup covers every eligible interface present at setup, including interfaces that do not currently have a primary IPv4 address. A rule for a present addressless interface is inert until the interface gains an address; the feasibility gate confirmed that such a rule begins redirecting once the address appears, without reloading the anchor.
+
+Absent interface names are not pre-covered. `pfctl` accepts a rule for an absent name, but the gate could not prove that the rule becomes usable when the interface appears. Adding a previously absent hardware interface therefore requires one additional setup. This is the only accepted recurring-root exception.
 
 ## Manifest schema 2
 
@@ -237,13 +239,33 @@ Automated coverage must include:
 A macOS feasibility gate must run before implementation proceeds beyond host rendering:
 
 1. Load a temporary `dev.owndomains.test` anchor containing dynamic `(en0:0)` rules. Do not load it into the production anchor.
-2. Confirm `pfctl -a dev.owndomains.test -s nat` expands the current address.
-3. Change the interface address using DHCP or a reversible test alias and confirm the loaded rule updates without reloading the anchor.
-4. Switch between two available LAN interfaces and confirm each interface's rule uses that interface's own address.
+2. Confirm the rules load. `pfctl -s nat` displays `(if:0)` symbolically rather than expanding the address; use a packet test to confirm the effective redirect target.
+3. Change the interface address using DHCP or a reversible test alias and confirm the loaded rule updates without reloading the anchor by repeating the packet test at the new address.
+4. Switch between two available LAN interfaces and confirm each interface's rule uses that interface's own address by packet test.
 5. Load a rule for an absent interface name such as `en9`; record whether `pfctl` accepts it. If an additional interface can be created or attached safely, verify that the rule becomes usable when the interface appears. This determines whether absent names may be pre-covered.
 6. Remove the temporary anchor and leave the production PF state unchanged.
 
 If dynamic `(if:0)` rules do not update on address changes, this design is blocked. Do not add a privileged helper without a new design decision.
+
+#### Feasibility gate results
+
+Run on 2026-10-24 against macOS 15.2 (24C101) with PF enabled. The test used the temporary child anchor `com.apple/owndomains-gate`, reversible `192.0.2.x` aliases on `en8`, and bounded Python TCP listeners and clients. It did not modify the production `dev.owndomains` anchor, `/etc/pf.conf`, or `en0` addressing.
+
+| Check | Result |
+| --- | --- |
+| Static control redirect | Passed. |
+| `(en8:0)` packet redirect at `192.0.2.210` | Passed. |
+| Change `en8` primary address to `192.0.2.211`, no anchor reload | Passed at the new address. |
+| Per-interface scoping with `en0` at `192.168.1.4` and `en8` at `192.0.2.210` | Each redirected its own address. |
+| Rule loaded while present `en8` had no IPv4, then address added | Passed after the address appeared. |
+| Rule loaded for absent `en9` | `pfctl` accepted it and displayed `(en9:0:*)`; appearance behavior was not tested. |
+| Rule loaded for absent `bridge3`, then bridge created | Inconclusive. The bridge was inactive with no member and the probe failed; the setup could not establish a usable bridge path. |
+| `pfctl -a <anchor> -s nat` output | Displays `(if:0)` symbolically, not the current address. The `pf.conf` man page documents that parenthesized interfaces update automatically; packet tests are authoritative. |
+
+Cleanup removed all test aliases, listeners, the created bridge, and temporary anchor rules. The production anchor's SHA-256 remained `9bc57bac8aeaf1dd4963ff1a57d10115acf09094f14bb0a9ec15314fa36fc1bb`.
+
+Decision: cover eligible interfaces present at setup, including addressless ones. Do not pre-cover absent names. This satisfies the gate's blocking condition because address changes and per-interface scoping work at packet level.
+
 
 Manual acceptance:
 
@@ -258,7 +280,7 @@ Manual acceptance:
 ## Risks and fallbacks
 
 - PF syntax or macOS behavior may differ from the documented dynamic interface expansion. The feasibility gate is mandatory.
-- Pre-covering absent interface names may be rejected by `pfctl`. If so, only present interfaces are covered, and adding a new hardware interface requires one setup.
+- Pre-covering absent interface names is not used: the gate could not prove that a rule loaded before an interface appears becomes usable when it appears. Only eligible interfaces present at setup are covered; a new hardware interface requires one setup.
 - Requiring the selected address to be the primary IPv4 address may reject a current alias configuration. The UI remedy is to select the interface's primary address.
 - Interface names can change after hardware changes. The app must report an uncovered interface rather than silently widening rules.
 - The PF anchor becomes larger with multiple interfaces. Anchor size is bounded by the fixed port set and the covered-interface limit.
