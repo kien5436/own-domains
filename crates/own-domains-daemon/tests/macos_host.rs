@@ -1,9 +1,9 @@
 use own_domains_core::{DiagnosticStatus, Settings};
 use own_domains_daemon::platform::macos::{
     CommandRunner, HostCommand, HostCommandOutput, HostFileKind, HostFileMetadata, HostFileSystem,
-    HostIntegrationInspector, MacOsArchitecture, MacOsSetupOptions, NetworkInterface,
-    SidecarManifest, SidecarSpec, SystemCommandRunner, SystemHostFileSystem, build_host_setup_plan,
-    discover_network_interfaces, validate_host_setup_plan,
+    HostIntegrationInspector, HostSetupPlan, MacOsArchitecture, MacOsSetupOptions,
+    NetworkInterface, SidecarManifest, SidecarSpec, SystemCommandRunner, SystemHostFileSystem,
+    build_host_setup_plan, discover_network_interfaces, validate_host_setup_plan,
 };
 use std::{
     collections::HashMap,
@@ -396,6 +396,10 @@ impl HostFileSystem for FakeFiles {
 
 struct FakeCommands {
     healthy: bool,
+    interfaces: Vec<NetworkInterface>,
+    interface_error: bool,
+    ifconfig_list_oversized: bool,
+    ifconfig_interface_oversized: bool,
     oversized: bool,
     pf_permission_denied: bool,
     calls: Mutex<Vec<HostCommand>>,
@@ -405,6 +409,56 @@ impl CommandRunner for FakeCommands {
     fn run(&self, command: &HostCommand) -> Result<HostCommandOutput, String> {
         self.calls.lock().unwrap().push(command.clone());
         let program = command.program.to_string_lossy();
+        if program == "/sbin/ifconfig" {
+            if self.interface_error {
+                return Ok(HostCommandOutput {
+                    status: 1,
+                    stdout: vec![],
+                    stderr: b"ifconfig: operation failed".to_vec(),
+                });
+            }
+            if command.args.len() == 1 && command.args[0] == "-l" {
+                if self.ifconfig_list_oversized {
+                    return Ok(HostCommandOutput {
+                        status: 0,
+                        stdout: vec![b'x'; 65_537],
+                        stderr: vec![],
+                    });
+                }
+                return Ok(HostCommandOutput {
+                    status: 0,
+                    stdout: self
+                        .interfaces
+                        .iter()
+                        .map(|interface| interface.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .into_bytes(),
+                    stderr: vec![],
+                });
+            }
+            if self.ifconfig_interface_oversized {
+                return Ok(HostCommandOutput {
+                    status: 0,
+                    stdout: vec![b'x'; 65_537],
+                    stderr: vec![],
+                });
+            }
+            let name = command.args.first().map(String::as_str).unwrap_or_default();
+            let found = self
+                .interfaces
+                .iter()
+                .find(|interface| interface.name == name);
+            return Ok(HostCommandOutput {
+                status: if found.is_some() { 0 } else { 1 },
+                stdout: found
+                    .and_then(|interface| interface.primary_ipv4)
+                    .map(|address| format!("inet {address}"))
+                    .unwrap_or_default()
+                    .into_bytes(),
+                stderr: vec![],
+            });
+        }
         if self.oversized && program == "/usr/sbin/lsof" {
             return Ok(HostCommandOutput {
                 status: 0,
@@ -443,15 +497,6 @@ impl CommandRunner for FakeCommands {
                     "nginx 42 root TCP *:80 (LISTEN)"
                 },
             )
-        } else if program == "/usr/sbin/scutil" || program == "/sbin/ifconfig" {
-            (
-                0,
-                if self.healthy {
-                    "inet 192.168.1.20"
-                } else {
-                    "inet 192.168.1.21"
-                },
-            )
         } else {
             return Err(format!("unexpected executable: {program}"));
         };
@@ -463,11 +508,12 @@ impl CommandRunner for FakeCommands {
     }
 }
 
-fn installed_host() -> (
-    own_domains_daemon::platform::macos::HostSetupPlan,
-    FakeFiles,
-) {
-    let plan = build_host_setup_plan(&options(MacOsArchitecture::Arm64)).unwrap();
+fn installed_host() -> (HostSetupPlan, FakeFiles) {
+    installed_host_for(options(MacOsArchitecture::Arm64))
+}
+
+fn installed_host_for(options: MacOsSetupOptions) -> (HostSetupPlan, FakeFiles) {
+    let plan = build_host_setup_plan(&options).unwrap();
     let mut files = FakeFiles::default();
 
     files.metadata.insert(
@@ -514,15 +560,44 @@ fn installed_host() -> (
     (plan, files)
 }
 
-#[test]
-fn inspector_uses_only_fixed_bounded_commands_for_a_valid_installation() {
-    let (plan, files) = installed_host();
-    let commands = FakeCommands {
-        healthy: true,
+fn interface(name: &str, address: &str) -> NetworkInterface {
+    NetworkInterface {
+        name: name.into(),
+        primary_ipv4: Some(address.parse().unwrap()),
+    }
+}
+
+fn commands(healthy: bool, interfaces: Vec<NetworkInterface>) -> FakeCommands {
+    FakeCommands {
+        healthy,
+        interfaces,
+        interface_error: false,
+        ifconfig_list_oversized: false,
+        ifconfig_interface_oversized: false,
         oversized: false,
         pf_permission_denied: false,
         calls: Mutex::new(vec![]),
-    };
+    }
+}
+
+fn legacy_manifest_bytes(plan: &HostSetupPlan) -> Vec<u8> {
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "schemaVersion": 1,
+        "userName": plan.manifest.user_name,
+        "userId": plan.manifest.user_id,
+        "backupDirectory": plan.manifest.backup_directory,
+        "interface": "en0",
+        "lanAddress": "192.168.1.20",
+        "artifacts": plan.manifest.artifacts,
+        "sidecars": plan.manifest.sidecars,
+    }))
+    .unwrap()
+}
+
+#[test]
+fn inspector_uses_only_fixed_bounded_commands_for_a_valid_installation() {
+    let (plan, files) = installed_host();
+    let commands = commands(true, vec![interface("en0", "192.168.1.20")]);
     let settings = Settings {
         lan_address: "192.168.1.20".into(),
         ..Default::default()
@@ -543,7 +618,7 @@ fn inspector_uses_only_fixed_bounded_commands_for_a_valid_installation() {
             .map(|call| call.program.to_string_lossy().into_owned())
             .collect::<Vec<_>>(),
         vec![
-            "/usr/sbin/scutil",
+            "/sbin/ifconfig",
             "/sbin/ifconfig",
             "/sbin/pfctl",
             "/usr/bin/security",
@@ -557,12 +632,8 @@ fn inspector_uses_only_fixed_bounded_commands_for_a_valid_installation() {
 #[test]
 fn inspector_treats_unprivileged_pf_inspection_as_a_warning() {
     let (plan, files) = installed_host();
-    let commands = FakeCommands {
-        healthy: true,
-        oversized: false,
-        pf_permission_denied: true,
-        calls: Mutex::new(vec![]),
-    };
+    let mut commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    commands.pf_permission_denied = true;
     let settings = Settings {
         lan_address: "192.168.1.20".into(),
         ..Default::default()
@@ -602,12 +673,7 @@ fn inspector_reports_stable_codes_for_host_drift_and_conflicts() {
     files
         .hashes
         .insert(plan.paths.coredns_binary.clone(), "c".repeat(64));
-    let commands = FakeCommands {
-        healthy: false,
-        oversized: false,
-        pf_permission_denied: false,
-        calls: Mutex::new(vec![]),
-    };
+    let commands = commands(false, vec![interface("en0", "192.168.1.98")]);
     let settings = Settings {
         lan_address: "192.168.1.99".into(),
         ..Default::default()
@@ -622,7 +688,7 @@ fn inspector_reports_stable_codes_for_host_drift_and_conflicts() {
     for code in [
         "resolverMismatch",
         "pfAnchorInvalid",
-        "lanIntegrationDrift",
+        "lanAddressInactive",
         "pfAnchorInactive",
         "caNotTrusted",
         "sidecarDigestMismatch",
@@ -636,12 +702,8 @@ fn inspector_reports_stable_codes_for_host_drift_and_conflicts() {
 #[test]
 fn inspector_rejects_oversized_command_output() {
     let (plan, files) = installed_host();
-    let commands = FakeCommands {
-        healthy: true,
-        oversized: true,
-        pf_permission_denied: false,
-        calls: Mutex::new(vec![]),
-    };
+    let mut commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    commands.oversized = true;
     let settings = Settings {
         lan_address: "192.168.1.20".into(),
         ..Default::default()
@@ -653,6 +715,371 @@ fn inspector_rejects_oversized_command_output() {
         diagnostics
             .iter()
             .any(|item| item.code == "inspectionFailed" && item.message.contains("64 KiB"))
+    );
+}
+
+#[test]
+fn inspector_accepts_an_address_change_without_setup() {
+    let (plan, files) = installed_host();
+    let commands = commands(true, vec![interface("en0", "192.168.1.21")]);
+    let settings = Settings {
+        lan_address: "192.168.1.21".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "setupRequired"
+                && diagnostic.code != "lanIntegrationDrift")
+    );
+}
+
+#[test]
+fn inspector_accepts_switching_to_another_covered_interface() {
+    let mut options = options(MacOsArchitecture::Arm64);
+    options.covered_interfaces.push(NetworkInterface {
+        name: "en1".into(),
+        primary_ipv4: Some(Ipv4Addr::new(192, 168, 1, 21)),
+    });
+    let (plan, files) = installed_host_for(options);
+    let commands = commands(
+        true,
+        vec![
+            interface("en0", "192.168.1.20"),
+            interface("en1", "192.168.1.21"),
+        ],
+    );
+    let settings = Settings {
+        lan_address: "192.168.1.21".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn inspector_ignores_an_unused_newly_appeared_interface() {
+    let (plan, files) = installed_host();
+    let commands = commands(
+        true,
+        vec![
+            interface("en0", "192.168.1.20"),
+            interface("en1", "192.168.1.99"),
+        ],
+    );
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn inspector_prefers_a_covered_interface_when_an_uncovered_interface_shares_the_address() {
+    let (plan, files) = installed_host();
+    let commands = commands(
+        true,
+        vec![
+            interface("bridge3", "192.168.1.20"),
+            interface("en0", "192.168.1.20"),
+        ],
+    );
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn inspector_reports_anchor_content_drift() {
+    let (plan, mut files) = installed_host();
+    files.content.insert(
+        PathBuf::from("/etc/pf.anchors/dev.owndomains"),
+        b"rdr pass on en0 inet proto tcp from any to (en0:0) port 53 -> (en0:0) port 9999\n"
+            .to_vec(),
+    );
+    let commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "pfAnchorInvalid");
+}
+
+#[test]
+fn inspector_reports_one_diagnostic_for_an_uncovered_selected_interface() {
+    let (plan, files) = installed_host();
+    let commands = commands(
+        true,
+        vec![
+            interface("en0", "192.168.1.20"),
+            interface("en1", "192.168.1.99"),
+        ],
+    );
+    let settings = Settings {
+        lan_address: "192.168.1.99".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "interfaceCoverageMissing")
+            .count(),
+        1,
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .remedy
+            .as_deref()
+            .is_some_and(|remedy| remedy.contains("Run setup once"))),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "lanAddressInactive")
+    );
+}
+
+#[test]
+fn inspector_prefers_coverage_missing_when_covered_interfaces_are_addressless() {
+    let (plan, files) = installed_host();
+    let commands = commands(
+        true,
+        vec![
+            NetworkInterface {
+                name: "en0".into(),
+                primary_ipv4: None,
+            },
+            interface("en1", "192.168.1.99"),
+        ],
+    );
+    let settings = Settings {
+        lan_address: "192.168.1.99".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "interfaceCoverageMissing")
+            .count(),
+        1,
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "lanAddressInactive")
+    );
+}
+
+#[test]
+fn inspector_reports_schema_one_as_setup_required() {
+    let (plan, mut files) = installed_host();
+    files.content.insert(
+        plan.paths.install_manifest.clone(),
+        legacy_manifest_bytes(&plan),
+    );
+    let commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "setupRequired");
+    assert_eq!(
+        diagnostics[0].message,
+        "The privileged setup uses the previous install manifest format."
+    );
+    assert!(
+        diagnostics[0]
+            .remedy
+            .as_deref()
+            .is_some_and(|remedy| remedy.contains("Run setup once")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn inspector_rejects_a_manifest_artifact_digest_mismatch() {
+    let (plan, mut files) = installed_host();
+    let bytes = files
+        .content
+        .get(&plan.paths.install_manifest)
+        .unwrap()
+        .clone();
+    let mut manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    manifest["artifacts"][0]["sha256"] = serde_json::Value::String("0".repeat(64));
+    files.content.insert(
+        plan.paths.install_manifest.clone(),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    );
+    let commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "setupRequired");
+    assert_eq!(
+        diagnostics[0].message,
+        "The setup manifest does not match the owned host artifacts."
+    );
+}
+
+#[test]
+fn inspector_reports_corrupt_manifest_as_setup_required_with_manual_repair() {
+    let (plan, mut files) = installed_host();
+    files
+        .content
+        .insert(plan.paths.install_manifest.clone(), b"{ not json".to_vec());
+    let commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "setupRequired");
+    assert!(
+        diagnostics[0].message.contains("incompatible"),
+        "{diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics[0].remedy.as_deref(),
+        Some(
+            "Repair or remove the install manifest and the Own Domains resolver/PF files, then run privileged setup again."
+        )
+    );
+}
+
+#[test]
+fn inspector_reports_structurally_invalid_manifest_as_setup_required_with_manual_repair() {
+    let (plan, mut files) = installed_host();
+    let bytes = files
+        .content
+        .get(&plan.paths.install_manifest)
+        .unwrap()
+        .clone();
+    let mut manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    manifest["artifacts"][0]["path"] = serde_json::Value::String("/etc/resolver/not-owned".into());
+    files.content.insert(
+        plan.paths.install_manifest.clone(),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    );
+    let commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "setupRequired");
+    assert!(
+        diagnostics[0].message.contains("structure is invalid"),
+        "{diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics[0].remedy.as_deref(),
+        Some(
+            "Repair or remove the install manifest and the Own Domains resolver/PF files, then run privileged setup again."
+        )
+    );
+}
+
+#[test]
+fn discovery_rejects_oversized_ifconfig_output() {
+    let mut list = commands(true, vec![interface("en0", "192.168.1.20")]);
+    list.ifconfig_list_oversized = true;
+    let error = discover_network_interfaces(&list).unwrap_err();
+    assert!(error.contains("64 KiB"), "{error}");
+
+    let mut per_interface = commands(true, vec![interface("en0", "192.168.1.20")]);
+    per_interface.ifconfig_interface_oversized = true;
+    let error = discover_network_interfaces(&per_interface).unwrap_err();
+    assert!(error.contains("64 KiB"), "{error}");
+    assert!(error.contains("ifconfig en0"), "{error}");
+}
+
+#[test]
+fn inspector_reports_discovery_failure_instead_of_inactive_address() {
+    let (plan, files) = installed_host();
+    let mut commands = commands(true, vec![interface("en0", "192.168.1.20")]);
+    commands.interface_error = true;
+    let settings = Settings {
+        lan_address: "192.168.1.20".into(),
+        ..Default::default()
+    };
+
+    let diagnostics =
+        HostIntegrationInspector::new(&plan.paths, &plan.manifest.sidecars, &files, &commands)
+            .inspect(&settings);
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "inspectionFailed")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "lanAddressInactive")
     );
 }
 

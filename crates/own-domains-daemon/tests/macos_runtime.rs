@@ -876,7 +876,7 @@ fn ambiguous_children_block_start_without_signals_or_spawns() {
 }
 
 #[test]
-fn port_conflict_and_lan_drift_block_start() {
+fn port_conflict_and_inactive_lan_address_block_start() {
     let fixture = Fixture::new();
     let backend = fixture.backend();
     fixture.inspector.set(vec![error_diagnostic(
@@ -891,12 +891,32 @@ fn port_conflict_and_lan_drift_block_start() {
     assert!(fixture.host.spawn_attempts().is_empty());
 
     fixture.inspector.set(vec![error_diagnostic(
-        "setupRequired",
-        "the configured LAN address differs from privileged setup",
+        "lanAddressInactive",
+        "The selected LAN address is not the primary IPv4 address of a covered interface.",
     )]);
     let error = backend.apply(&settings(1, "192.168.1.20")).unwrap_err();
-    assert!(error.to_string().contains("LAN address"), "{error}");
+    assert!(error.to_string().contains("primary IPv4"), "{error}");
     assert!(fixture.host.spawn_attempts().is_empty());
+}
+
+#[test]
+fn inactive_lan_address_blocks_start_without_replacing_the_applied_revision() {
+    let fixture = Fixture::new();
+    let backend = fixture.backend();
+
+    let applied = backend.apply(&settings(1, "192.168.1.20")).unwrap();
+    assert_eq!(applied.applied_revision, 1);
+    let spawns = fixture.host.spawn_attempts().len();
+
+    fixture.inspector.set(vec![error_diagnostic(
+        "lanAddressInactive",
+        "The selected LAN address is not the primary IPv4 address of a covered interface.",
+    )]);
+    let error = backend.apply(&settings(2, "192.168.1.21")).unwrap_err();
+
+    assert!(error.to_string().contains("primary IPv4"), "{error}");
+    assert_eq!(fixture.applied_revision(), "1");
+    assert_eq!(fixture.host.spawn_attempts().len(), spawns);
 }
 
 #[test]

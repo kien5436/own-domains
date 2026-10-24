@@ -13,6 +13,8 @@ const ANCHOR_PATH: &str = "/etc/pf.anchors/dev.owndomains";
 const MAX_FILE_BYTES: usize = 1024 * 1024;
 const MAX_COMMAND_BYTES: usize = 64 * 1024;
 const RESOLVER_CONTENT: &str = "nameserver 127.0.0.1\nport 5354\n";
+const SETUP_ONCE_REMEDY: &str = "Run setup once to enable network-independent routing.";
+const MANUAL_REPAIR_REMEDY: &str = "Repair or remove the install manifest and the Own Domains resolver/PF files, then run privileged setup again.";
 const PF_CONF_BLOCK: &str = concat!(
     "# BEGIN OWN DOMAINS\n",
     "rdr-anchor \"dev.owndomains\"\n",
@@ -163,7 +165,6 @@ impl InstalledHostManifest {
         }
     }
 
-    #[allow(dead_code)] // Read by the inspector once schema 2 diagnostics land.
     pub(crate) fn sidecars(&self) -> &SidecarManifest {
         match self {
             Self::V1(manifest) => &manifest.sidecars,
@@ -246,6 +247,54 @@ pub(crate) fn validate_installed_manifest(
     Ok(())
 }
 
+fn valid_manifest(manifest: &HostInstallManifest) -> bool {
+    if manifest.schema_version != 2 || manifest.interfaces.is_empty() {
+        return false;
+    }
+    let mut names = HashSet::new();
+    if !manifest
+        .interfaces
+        .iter()
+        .all(|name| is_eligible_interface(name) && names.insert(name.as_str()))
+    {
+        return false;
+    }
+    let anchor = render_anchor_for(&manifest.interfaces);
+    let expected: [(PathBuf, String, u32, u32, bool); 3] = [
+        (
+            PathBuf::from("/etc/resolver/own"),
+            sha256(RESOLVER_CONTENT.as_bytes()),
+            0o644,
+            0,
+            false,
+        ),
+        (
+            PathBuf::from(ANCHOR_PATH),
+            sha256(anchor.as_bytes()),
+            0o644,
+            0,
+            false,
+        ),
+        (
+            PathBuf::from("/etc/pf.conf"),
+            sha256(PF_CONF_BLOCK.as_bytes()),
+            0o644,
+            0,
+            true,
+        ),
+    ];
+    manifest.artifacts.len() == expected.len()
+        && expected.iter().all(|(path, digest, mode, owner, managed)| {
+            manifest.artifacts.iter().any(|artifact| {
+                artifact.path == *path
+                    && artifact.sha256 == *digest
+                    && artifact.mode == *mode
+                    && artifact.owner_id == *owner
+                    && artifact.managed_block == *managed
+            })
+        })
+}
+
 #[derive(Clone, Debug)]
 pub struct HostSetupPlan {
     pub paths: RuntimePaths,
@@ -301,7 +350,10 @@ pub enum HostSetupError {
 pub fn discover_network_interfaces(
     commands: &dyn CommandRunner,
 ) -> Result<Vec<NetworkInterface>, String> {
-    let list = commands.run(&inspect_command("/sbin/ifconfig", ["-l"]))?;
+    let list = bounded_output(
+        commands.run(&inspect_command("/sbin/ifconfig", ["-l"]))?,
+        "ifconfig -l",
+    )?;
     if list.status != 0 {
         return Err(format!(
             "ifconfig -l failed: {}",
@@ -313,7 +365,10 @@ pub fn discover_network_interfaces(
         if !is_eligible_interface(name) {
             continue;
         }
-        let output = commands.run(&inspect_command("/sbin/ifconfig", [name]))?;
+        let output = bounded_output(
+            commands.run(&inspect_command("/sbin/ifconfig", [name]))?,
+            &format!("ifconfig {name}"),
+        )?;
         if output.status != 0 {
             return Err(format!(
                 "ifconfig {name} failed: {}",
@@ -327,6 +382,13 @@ pub fn discover_network_interfaces(
     }
     interfaces.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(interfaces)
+}
+
+fn bounded_output(output: HostCommandOutput, label: &str) -> Result<HostCommandOutput, String> {
+    if output.stdout.len().saturating_add(output.stderr.len()) > MAX_COMMAND_BYTES {
+        return Err(format!("{label} output exceeded 64 KiB"));
+    }
+    Ok(output)
 }
 
 fn is_eligible_interface(name: &str) -> bool {
@@ -381,7 +443,7 @@ impl<'a> HostIntegrationInspector<'a> {
         }
     }
 
-    pub fn inspect(&self, _settings: &Settings) -> Vec<Diagnostic> {
+    pub fn inspect(&self, settings: &Settings) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         let manifest = match self.read_manifest(&mut diagnostics) {
             Some(manifest) => manifest,
@@ -403,6 +465,7 @@ impl<'a> HostIntegrationInspector<'a> {
             &mut diagnostics,
         );
         self.inspect_pf_conf(&mut diagnostics);
+        self.inspect_network(settings, &manifest, &mut diagnostics);
         self.inspect_pf(&mut diagnostics);
         self.inspect_trust(&mut diagnostics);
         self.inspect_sidecar(
@@ -436,7 +499,7 @@ impl<'a> HostIntegrationInspector<'a> {
             }
             Ok(None) => {
                 diagnostics.push(error(
-                    "setupMissing",
+                    "setupRequired",
                     "Own Domains host setup is missing.",
                     "Run privileged setup.",
                 ));
@@ -465,22 +528,60 @@ impl<'a> HostIntegrationInspector<'a> {
                 return None;
             }
         };
-        match serde_json::from_slice::<HostInstallManifest>(&bytes) {
-            Ok(manifest)
-                if manifest.schema_version == 2
-                    && &manifest.sidecars == self.sidecars
-                    && metadata.owner_id == manifest.user_id
-                    && metadata.mode == 0o600 =>
-            {
-                Some(manifest)
-            }
-            _ => {
+        let installed = match parse_host_install_manifest(&bytes) {
+            Ok(manifest) => manifest,
+            Err(message) => {
                 diagnostics.push(error(
-                    "setupManifestIncompatible",
-                    "The setup manifest is incompatible with this app build.",
-                    "Run privileged setup again.",
+                    "setupRequired",
+                    &format!("The setup manifest is incompatible with this app build: {message}"),
+                    MANUAL_REPAIR_REMEDY,
+                ));
+                return None;
+            }
+        };
+        if metadata.owner_id != installed.user_id() || metadata.mode != 0o600 {
+            diagnostics.push(error(
+                "setupRequired",
+                "The setup manifest is incompatible with this app build: unexpected ownership or permissions.",
+                MANUAL_REPAIR_REMEDY,
+            ));
+            return None;
+        }
+        match installed {
+            InstalledHostManifest::V1(_) => {
+                diagnostics.push(error(
+                    "setupRequired",
+                    "The privileged setup uses the previous install manifest format.",
+                    SETUP_ONCE_REMEDY,
                 ));
                 None
+            }
+            InstalledHostManifest::V2(manifest) => {
+                let installed = InstalledHostManifest::V2(manifest.clone());
+                if let Err(detail) = validate_installed_manifest(self.paths, &installed) {
+                    diagnostics.push(error(
+                        "setupRequired",
+                        &format!("The setup manifest structure is invalid: {detail}"),
+                        MANUAL_REPAIR_REMEDY,
+                    ));
+                    None
+                } else if installed.sidecars() != self.sidecars {
+                    diagnostics.push(error(
+                        "setupRequired",
+                        "The setup manifest is incompatible with this app build.",
+                        SETUP_ONCE_REMEDY,
+                    ));
+                    None
+                } else if valid_manifest(&manifest) {
+                    Some(manifest)
+                } else {
+                    diagnostics.push(error(
+                        "setupRequired",
+                        "The setup manifest does not match the owned host artifacts.",
+                        SETUP_ONCE_REMEDY,
+                    ));
+                    None
+                }
             }
         }
     }
@@ -535,6 +636,66 @@ impl<'a> HostIntegrationInspector<'a> {
                 "The PF configuration does not contain the owned anchor block.",
                 "Run privileged setup again.",
             ));
+        }
+    }
+
+    fn inspect_network(
+        &self,
+        settings: &Settings,
+        manifest: &HostInstallManifest,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let interfaces = match discover_network_interfaces(self.commands) {
+            Ok(interfaces) => interfaces,
+            Err(message) => {
+                diagnostics.push(error(
+                    "inspectionFailed",
+                    &format!("Unable to inspect network interfaces: {message}"),
+                    "Verify macOS command-line tools and retry.",
+                ));
+                return;
+            }
+        };
+        let covered = manifest
+            .interfaces
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let selected = settings.lan_address.parse::<Ipv4Addr>().ok();
+        let owner = selected.and_then(|address| {
+            interfaces
+                .iter()
+                .find(|interface| {
+                    covered.contains(interface.name.as_str())
+                        && interface.primary_ipv4 == Some(address)
+                })
+                .or_else(|| {
+                    interfaces
+                        .iter()
+                        .find(|interface| interface.primary_ipv4 == Some(address))
+                })
+        });
+        // Success requires the selected address to belong to a covered
+        // interface, which also proves that a covered interface currently has
+        // an address. Prefer a covered owner when an uncovered interface
+        // shares the same address. When the selected address belongs to a
+        // newly appeared eligible interface, coverageMissing takes precedence
+        // even if every covered interface is temporarily addressless.
+        match owner {
+            Some(interface) if covered.contains(interface.name.as_str()) => {}
+            Some(interface) => diagnostics.push(error(
+                "interfaceCoverageMissing",
+                &format!(
+                    "The selected LAN address {} belongs to interface {}, which privileged setup does not cover.",
+                    settings.lan_address, interface.name
+                ),
+                "Run setup once to add the interface.",
+            )),
+            None => diagnostics.push(error(
+                "lanAddressInactive",
+                "The selected LAN address is not the primary IPv4 address of a covered interface.",
+                "Select an active LAN address in Network Settings and save.",
+            )),
         }
     }
 
@@ -653,11 +814,7 @@ impl<'a> HostIntegrationInspector<'a> {
     }
 
     fn run_bounded(&self, command: &HostCommand) -> Result<HostCommandOutput, String> {
-        let output = self.commands.run(command)?;
-        if output.stdout.len().saturating_add(output.stderr.len()) > MAX_COMMAND_BYTES {
-            return Err("command output exceeded 64 KiB".into());
-        }
-        Ok(output)
+        bounded_output(self.commands.run(command)?, "command")
     }
 }
 
