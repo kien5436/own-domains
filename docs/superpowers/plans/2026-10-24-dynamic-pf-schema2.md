@@ -78,6 +78,10 @@ fn renders_exact_resolver_dynamic_anchor_and_schema_two_manifest() {
     assert_eq!(
         anchor.content,
         concat!(
+            "no rdr on lo0 inet proto udp from any port 5354 to any\n",
+            "no rdr on lo0 inet proto tcp from any port 5354 to any\n",
+            "no rdr on lo0 inet proto tcp from any port 8080 to any\n",
+            "no rdr on lo0 inet proto tcp from any port 8443 to any\n",
             "rdr pass on lo0 inet proto udp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354\n",
             "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354\n",
             "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080\n",
@@ -493,6 +497,16 @@ fn render_anchor_for(interfaces: &[String]) -> String {
         ("tcp", 443, 8443),
     ];
     let mut output = String::new();
+    // macOS PF corrupts state and later drops connections when a loopback
+    // redirect keeps the same address. Exempt replies from the high-port
+    // targets before the loopback rules. The static resolver and the runtime
+    // readiness probes connect to these targets directly.
+    output.push_str("no rdr on lo0 inet proto udp from any port 5354 to any\n");
+    for target in [5354, 8080, 8443] {
+        output.push_str(&format!(
+            "no rdr on lo0 inet proto tcp from any port {target} to any\n"
+        ));
+    }
     for (protocol, source, target) in SERVICES {
         output.push_str(&format!(
             "rdr pass on lo0 inet proto {protocol} from any to 127.0.0.1 port {source} -> 127.0.0.1 port {target}\n"

@@ -193,6 +193,17 @@ Not exercised interactively:
 
 - Direct Caddy rejection; the automated runtime test `caddy_rejection_keeps_previous_applied_revision_and_running_children` covers the rollback.
 
+### Network-independent routing record
+
+Recorded 2026-10-25 on the same macOS 15.2 arm64 host against `OwnDomains-native`:
+
+- The schema 1 migration completed with one privileged `setup --apply`. A later privileged apply added the loopback `no rdr` exemptions after live testing exposed a macOS PF state-corruption bug. The manifest reports `schemaVersion: 2`, `interfaces: ["bridge0","en0","en1","en10","en2","en3","en4","en5","en6","en8"]`, and no `lanAddress` or `interface` field.
+- `pfctl -a dev.owndomains -s nat` shows the four `no rdr` loopback exemptions and symbolic `(if:0)` targets for every covered interface, with no literal LAN address.
+- The anchor SHA-256 was `96f9643ef74afd20568a2f6edbbe7ae626799f50129c9bb27b15a8aa6c9f0316` before and after switching `en0`/`192.168.1.4` to `en10`/`169.254.164.65` and back. Both `start` calls reached `running` without an administrator prompt.
+- For both addresses, direct and redirected DNS over UDP and TCP on loopback and the selected address returned NOERROR; `/etc/resolver/own` resolved `setup.own` to the selected address; `http://setup.own` and direct loopback/LAN HTTP returned 200.
+- Five consecutive direct TCP connections to 5354, 8080, and 8443 and redirected connections to 53, 80, and 443 succeeded. This is the regression check for the same-address loopback state corruption fixed by the `no rdr` rules.
+- Not repeated in this run: physical-phone DNS/HTTP access through the en0 rules. The 2026-10-21 phone record used the schema 1 anchor; repeat section 5 with the schema 2 anchor before release.
+
 ### Physical-phone record
 
 Recorded 2026-10-21 with the preserved phone state and the arm64 package above:

@@ -106,14 +106,20 @@ rdr pass on <if> inet proto tcp from any to (<if>:0) port 80 -> (<if>:0) port 80
 rdr pass on <if> inet proto tcp from any to (<if>:0) port 443 -> (<if>:0) port 8443
 ```
 
-The existing static loopback rules for `127.0.0.1` remain for DNS, HTTP, and HTTPS:
+The existing static loopback rules for `127.0.0.1` remain for DNS, HTTP, and HTTPS. A macOS PF quirk corrupts state and drops later connections when a loopback redirect preserves the address (`127.0.0.1` to `127.0.0.1`). A direct UDP query to `127.0.0.1:5354` receives a reply addressed to port 53, which breaks the static `/etc/resolver/own` entry that points at port 5354. A direct TCP connection to `127.0.0.1:5354`, `:8080`, or `:8443` succeeds once, then later connections time out until the bogus state expires. Exempt replies from the high-port targets before the loopback rules:
 
 ```text
+no rdr on lo0 inet proto udp from any port 5354 to any
+no rdr on lo0 inet proto tcp from any port 5354 to any
+no rdr on lo0 inet proto tcp from any port 8080 to any
+no rdr on lo0 inet proto tcp from any port 8443 to any
 rdr pass on lo0 inet proto udp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354
 rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354
 rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080
 rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443
 ```
+
+The exemptions must precede the `rdr` rules. They only affect local packets sourced from the high-port targets; redirected replies still receive their stateful reverse translation, and the 53-to-5354, 80-to-8080, and 443-to-8443 redirects continue to work.
 
 The `(<if>:0)` form selects the interface's primary IPv4 address and is updated automatically when that address changes. It preserves the exact-address scope: a rule for `en0` does not redirect traffic addressed to `en1` or to an unrelated destination.
 

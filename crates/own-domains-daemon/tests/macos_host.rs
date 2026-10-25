@@ -66,6 +66,10 @@ fn renders_exact_resolver_dynamic_anchor_and_schema_two_manifest() {
     assert_eq!(
         anchor.content,
         concat!(
+            "no rdr on lo0 inet proto udp from any port 5354 to any\n",
+            "no rdr on lo0 inet proto tcp from any port 5354 to any\n",
+            "no rdr on lo0 inet proto tcp from any port 8080 to any\n",
+            "no rdr on lo0 inet proto tcp from any port 8443 to any\n",
             "rdr pass on lo0 inet proto udp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354\n",
             "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 53 -> 127.0.0.1 port 5354\n",
             "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080\n",
@@ -124,6 +128,31 @@ fn renders_exact_resolver_dynamic_anchor_and_schema_two_manifest() {
         ("/sbin/pfctl".into(), vec!["-a", "dev.owndomains", "-f", "/etc/pf.anchors/dev.owndomains"].into_iter().map(String::from).collect()),
         ("/sbin/pfctl".into(), vec!["-E"].into_iter().map(String::from).collect()),
     ]);
+}
+
+#[test]
+fn exempts_loopback_target_ports_from_redirect_state_corruption() {
+    let plan = build_host_setup_plan(&options(MacOsArchitecture::Arm64)).unwrap();
+    let anchor = plan.artifact("/etc/pf.anchors/dev.owndomains").unwrap();
+    let exemption_lines: Vec<_> = anchor.content.lines().take(4).collect();
+
+    assert_eq!(
+        exemption_lines,
+        vec![
+            "no rdr on lo0 inet proto udp from any port 5354 to any",
+            "no rdr on lo0 inet proto tcp from any port 5354 to any",
+            "no rdr on lo0 inet proto tcp from any port 8080 to any",
+            "no rdr on lo0 inet proto tcp from any port 8443 to any",
+        ]
+    );
+    assert!(
+        anchor
+            .content
+            .lines()
+            .nth(4)
+            .unwrap()
+            .starts_with("rdr pass on lo0")
+    );
 }
 
 #[test]
