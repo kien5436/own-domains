@@ -45,6 +45,20 @@ Still pending: reboot retest, WSL2/Docker-installed variants, x86_64 hardware.
 Still pending: split-path proof with upstream DNS, GPO-conflict detection, secure-DNS-bypass
 behavior, reboot persistence, x86_64 hardware.
 
+## Gate G: trust add/remove (feasibility, interactive console)
+
+Throwaway self-signed cert (`CN=OwnDomains Gate Test`, thumbprint `C4865404...FA2D`):
+
+- `certutil -addstore -user Root` and `certutil -delstore -user Root <thumbprint>` both succeed
+  from the interactive console logon. Removal verified: store no longer lists the cert.
+- From a non-interactive SSH session both `certutil` and the PowerShell `X509Store` write fail
+  with `0x80070032` / "The request is not supported", while reads work. Trust writes require
+  the interactive user session — consistent with the design placing trust install/removal in
+  the unprivileged interactive user phase, never in the elevated phase or a remote session.
+- Dialog behavior on add/remove: observed by operator during the interactive run (see below).
+
+All harness artifacts removed (test cert in `My` and `Root`, `.cer` file, helper scripts).
+
 ## Gate F: Caddy admin and HTTP/3 (feasibility pass on ARM64)
 
 Caddy 2.11.7 `windows_arm64` (zip SHA-512 matches the published `caddy_2.11.7_checksums.txt`
