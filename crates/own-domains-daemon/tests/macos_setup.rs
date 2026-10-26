@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use own_domains_daemon::platform::macos::{
     HostCommand, HostCommandOutput, HostFileKind, HostSetupPlan, MacOsArchitecture,
     MacOsSetupOptions, ManifestArtifact, NetworkInterface, SetupFile, SetupHost, SidecarManifest,
@@ -6,7 +7,7 @@ use own_domains_daemon::platform::macos::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     net::Ipv4Addr,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -19,6 +20,7 @@ const TEST_CA_PEM: &[u8] =
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HostState {
     files: BTreeMap<PathBuf, SetupFile>,
+    certificates: BTreeSet<String>,
     trusted: bool,
     pf_enabled: bool,
     active_anchor: Option<Vec<u8>>,
@@ -88,15 +90,50 @@ impl SetupHost for FakeHost {
         let program = command.program.to_string_lossy();
         if program == "/usr/bin/security" {
             let action = command.args.first().map(String::as_str);
+            if action == Some("find-certificate") {
+                let listing = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .certificates
+                    .iter()
+                    .map(|fingerprint| format!("SHA-256 hash: {}\n", fingerprint.to_uppercase()))
+                    .collect::<String>();
+                self.step("trust inspection")?;
+                return Ok(HostCommandOutput {
+                    status: 0,
+                    stdout: listing.into_bytes(),
+                    stderr: vec![],
+                });
+            }
             if action == Some("delete-certificate") {
                 assert!(command.args.iter().any(|arg| arg == "-Z"));
-                assert!(command.args.iter().any(|arg| arg == "-t"));
+                assert!(!command.args.iter().any(|arg| arg == "-t"));
                 assert!(
                     command
                         .args
                         .iter()
                         .any(|arg| arg == "/Library/Keychains/System.keychain")
                 );
+                let fingerprint = command
+                    .args
+                    .iter()
+                    .position(|arg| arg == "-Z")
+                    .and_then(|index| command.args.get(index + 1))
+                    .expect("delete-certificate fingerprint");
+                let removed = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .certificates
+                    .remove(&fingerprint.to_ascii_lowercase());
+                if !removed {
+                    return Ok(HostCommandOutput {
+                        status: 1,
+                        stdout: vec![],
+                        stderr: b"certificate not found".to_vec(),
+                    });
+                }
                 self.state.lock().unwrap().trusted = false;
             } else if action == Some("remove-trusted-cert") {
                 let certificate = command.args.get(2).map(PathBuf::from);
@@ -108,6 +145,13 @@ impl SetupHost for FakeHost {
                 }
                 self.state.lock().unwrap().trusted = false;
             } else {
+                if action == Some("add-trusted-cert") {
+                    self.state
+                        .lock()
+                        .unwrap()
+                        .certificates
+                        .insert(test_ca_fingerprint());
+                }
                 self.state.lock().unwrap().trusted = action == Some("add-trusted-cert");
             }
             self.step("trust operation")?;
@@ -189,6 +233,7 @@ fn initial_state() -> HostState {
                 kind: HostFileKind::Regular,
             },
         )]),
+        certificates: BTreeSet::new(),
         trusted: false,
         pf_enabled: false,
         active_anchor: None,
@@ -200,6 +245,17 @@ const LEGACY_ANCHOR: &str =
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn test_ca_fingerprint() -> String {
+    let pem = std::str::from_utf8(TEST_CA_PEM).unwrap();
+    let body = pem
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("-----"))
+        .map(str::trim)
+        .collect::<String>();
+    let der = STANDARD.decode(body.as_bytes()).unwrap();
+    format!("{:x}", Sha256::digest(der))
 }
 
 fn schema_one_state(plan: &HostSetupPlan) -> HostState {
@@ -606,14 +662,38 @@ fn purge_removes_trust_before_removing_the_ca_state() {
         },
     );
     assert!(host.snapshot().trusted);
+    assert!(
+        host.snapshot()
+            .certificates
+            .contains(&test_ca_fingerprint())
+    );
 
     apply_uninstall(&plan.paths, true, &host).unwrap();
 
     assert!(!host.snapshot().trusted);
+    assert!(host.snapshot().certificates.is_empty());
     assert!(
         !host
             .snapshot()
             .files
             .contains_key(&plan.paths.ca_certificate)
     );
+}
+
+#[test]
+fn uninstall_skips_trust_removal_when_the_ca_is_already_absent() {
+    let plan = build_host_setup_plan(&setup_options(Ipv4Addr::new(192, 168, 1, 20))).unwrap();
+    let host = FakeHost::new(initial_state(), None);
+    apply_setup(&plan, &host).unwrap();
+    {
+        let mut state = host.state.lock().unwrap();
+        state.files.remove(&plan.paths.ca_certificate);
+        state.certificates.clear();
+        state.trusted = false;
+    }
+
+    apply_uninstall(&plan.paths, true, &host).unwrap();
+
+    assert!(!host.snapshot().trusted);
+    assert!(host.snapshot().certificates.is_empty());
 }

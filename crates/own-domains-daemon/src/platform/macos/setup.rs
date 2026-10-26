@@ -176,23 +176,25 @@ pub fn apply_uninstall(
         backups: vec![],
     };
     if host
-        .certificate_trusted(&paths.ca_certificate)
-        .unwrap_or(false)
+        .inspect_file(&paths.ca_certificate)
+        .map_err(failure)?
+        .is_some()
     {
         let fingerprint = certificate_sha256(host, &paths.ca_certificate).map_err(failure)?;
-        let delete_trust = command(
-            "/usr/bin/security",
-            [
-                "delete-certificate",
-                "-Z",
-                fingerprint.as_str(),
-                "-t",
-                "/Library/Keychains/System.keychain",
-            ],
-        );
-        let output = host.run(&delete_trust).map_err(failure)?;
-        if output.status != 0 {
-            return Err(failure(command_error(&delete_trust, &output)));
+        if certificate_installed(host, &fingerprint).map_err(failure)? {
+            let delete_certificate = command(
+                "/usr/bin/security",
+                [
+                    "delete-certificate",
+                    "-Z",
+                    fingerprint.as_str(),
+                    "/Library/Keychains/System.keychain",
+                ],
+            );
+            let output = host.run(&delete_certificate).map_err(failure)?;
+            if output.status != 0 {
+                return Err(failure(command_error(&delete_certificate, &output)));
+            }
         }
     }
     for action in &preview.actions {
@@ -402,30 +404,35 @@ fn rollback_setup(
     let mut unresolved = Vec::new();
     if !trusted_before
         && host
-            .certificate_trusted(&plan.paths.ca_certificate)
-            .unwrap_or(false)
+            .inspect_file(&plan.paths.ca_certificate)
+            .ok()
+            .flatten()
+            .is_some()
     {
         match certificate_sha256(host, &plan.paths.ca_certificate) {
-            Ok(fingerprint) => {
-                let delete_trust = command(
-                    "/usr/bin/security",
-                    [
-                        "delete-certificate",
-                        "-Z",
-                        fingerprint.as_str(),
-                        "-t",
-                        "/Library/Keychains/System.keychain",
-                    ],
-                );
-                match host.run(&delete_trust) {
-                    Ok(output) if output.status == 0 => {}
-                    Ok(output) => unresolved.push(format!(
-                        "remove trust: {}",
-                        command_error(&delete_trust, &output)
-                    )),
-                    Err(error) => unresolved.push(format!("remove trust: {error}")),
+            Ok(fingerprint) => match certificate_installed(host, &fingerprint) {
+                Ok(true) => {
+                    let delete_certificate = command(
+                        "/usr/bin/security",
+                        [
+                            "delete-certificate",
+                            "-Z",
+                            fingerprint.as_str(),
+                            "/Library/Keychains/System.keychain",
+                        ],
+                    );
+                    match host.run(&delete_certificate) {
+                        Ok(output) if output.status == 0 => {}
+                        Ok(output) => unresolved.push(format!(
+                            "remove trust: {}",
+                            command_error(&delete_certificate, &output)
+                        )),
+                        Err(error) => unresolved.push(format!("remove trust: {error}")),
+                    }
                 }
-            }
+                Ok(false) => {}
+                Err(error) => unresolved.push(format!("remove trust: {error}")),
+            },
             Err(error) => unresolved.push(format!("remove trust: {error}")),
         }
     }
@@ -462,6 +469,26 @@ fn rollback_setup(
 
 fn backup_path(backup_directory: &Path, path: &Path) -> PathBuf {
     backup_directory.join(path.strip_prefix("/").unwrap_or(path))
+}
+
+fn certificate_installed(host: &dyn SetupHost, fingerprint: &str) -> Result<bool, String> {
+    let find = command(
+        "/usr/bin/security",
+        [
+            "find-certificate",
+            "-a",
+            "-Z",
+            "/Library/Keychains/System.keychain",
+        ],
+    );
+    let output = host.run(&find)?;
+    if output.status != 0 {
+        return Err(command_error(&find, &output));
+    }
+    let listing = String::from_utf8_lossy(&output.stdout)
+        .to_ascii_lowercase()
+        .replace(':', "");
+    Ok(listing.contains(fingerprint))
 }
 
 fn certificate_sha256(host: &dyn SetupHost, path: &Path) -> Result<String, String> {
@@ -682,6 +709,13 @@ impl SetupHost for SystemSetupHost {
     }
 
     fn certificate_trusted(&self, certificate: &Path) -> Result<bool, String> {
+        if self.inspect_file(certificate)?.is_none() {
+            return Ok(false);
+        }
+        let fingerprint = certificate_sha256(self, certificate)?;
+        if !certificate_installed(self, &fingerprint)? {
+            return Ok(false);
+        }
         let certificate = certificate.to_string_lossy();
         Self::run_fixed(
             "/usr/bin/security",
