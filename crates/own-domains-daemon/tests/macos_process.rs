@@ -747,7 +747,7 @@ fn loads_caddy_configuration_over_a_restricted_unix_socket() {
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
             .unwrap();
-        headers
+        String::from_utf8_lossy(&request).into_owned()
     });
 
     wait_for_socket(&socket);
