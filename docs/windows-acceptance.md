@@ -84,3 +84,42 @@ product decision. Still pending: same pass on x86_64 hardware.
 NRPT test rule removed by GUID; no `OwnDomains*` rules remain. Stub process stopped; all
 harness scripts, log, and pidfile deleted from both profiles. Verified via re-listing rules
 and the absence of `:53` listeners owned by the harness.
+
+## Gate D: Job Objects (blocked on this host)
+
+Probed with compiled C# harnesses (`csc.exe`, Framework64) plus a class/length sweep binary,
+run as admin and standard user, over SSH and interactively. All harness files removed after.
+
+What works on this host:
+
+- `CreateJobObject` succeeds (named and unnamed).
+- `PROC_THREAD_ATTRIBUTE_JOB_LIST` launch works: `IsProcessInJob` confirms the child is in
+  the job before it runs user code.
+- The suspend/assign/resume fallback path works: `AssignProcessToJobObject` succeeds.
+- `CREATE_NO_WINDOW` launches show no window.
+
+What fails on this host:
+
+- Every `SetInformationJobObject` limit set fails with `ERROR_BAD_LENGTH` (24), including
+  `BasicLimit` (class 2, 56 bytes) and `ExtendedLimit` (class 9, 136 bytes) with
+  byte-exact buffers, from compiled code, in all four combinations of
+  admin/standard x SSH/interactive.
+- Behavioral proof: with the set failing, closing the job handle leaves the child tree
+  (`cmd` + `ping`) alive — kill-on-close genuinely not applied, not a reporting artifact.
+- Length validation itself works (classes 1/3/5/10/11 fail later on content with 87/50),
+  so the rejection targets the limit-setting classes specifically.
+
+Context findings relevant to the design:
+
+- SSH session processes report `IsProcessInJob == True` (both accounts); the interactive
+  console reports `False`. The daemon runs in the interactive user context, so the normal
+  case is not nested — but any launcher running inside a job must hit
+  `processSupervisionUnavailable`, as designed.
+- No stray test processes or listeners remained after the sessions ended; harness files
+  removed from both profiles and `C:\Users\Public`.
+
+Status: Gate D is blocked on this host by an unexplained kernel rejection, not by the
+design. The API is fundamental to Windows (browsers and services rely on it), so the
+next validation is the same behavioral test on x86_64 hardware and, in parallel, the
+Rust implementation using the `windows` crate. If x86_64 also rejects, the design's
+supervision section must be rewritten.
