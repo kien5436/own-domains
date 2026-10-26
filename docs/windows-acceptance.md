@@ -55,7 +55,9 @@ Throwaway self-signed cert (`CN=OwnDomains Gate Test`, thumbprint `C4865404...FA
   with `0x80070032` / "The request is not supported", while reads work. Trust writes require
   the interactive user session — consistent with the design placing trust install/removal in
   the unprivileged interactive user phase, never in the elevated phase or a remote session.
-- Dialog behavior on add/remove: observed by operator during the interactive run (see below).
+- Dialog behavior: the operator confirmed a confirmation dialog appears on both add and
+  remove in the interactive console. Combined with the UAC prompt, setup can show two dialogs,
+  matching the accepted product decision (per-user trust kept; machine-wide trust rejected).
 
 All harness artifacts removed (test cert in `My` and `Root`, `.cer` file, helper scripts).
 
