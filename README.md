@@ -13,7 +13,7 @@ The native Tauri client and Rust CLI are documented in [Desktop development](doc
 | Ubuntu 24+ | Support target; runtime not implemented |
 | Windows 10/11 | Support target; IPC and runtime not implemented |
 
-`v0.1.0-beta.1` is a source release. No Developer ID-signed or notarized binary is published. Local acceptance uses an ad-hoc-signed arm64 package and does not require an Apple Developer Program account. Developer ID signing and notarization are required only for distribution. See [Platform support](docs/platform-support.md) for the full matrix.
+`v0.1.0-beta.2` is a source release. No Developer ID-signed or notarized binary is published. Local acceptance uses an ad-hoc-signed arm64 package and does not require an Apple Developer Program account. Developer ID signing and notarization are required only for distribution. See [Platform support](docs/platform-support.md) for the full matrix.
 
 ## Native macOS beta
 

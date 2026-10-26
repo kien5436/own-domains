@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0-beta.2 - 2026-10-26
+
+Second beta of the native macOS app. This release makes the privileged host integration independent of the current LAN address.
+
+### Changed
+
+- macOS setup now discovers every eligible LAN interface and installs dynamic `(if:0)` PF redirect rules for all of them. The install manifest uses schema 2 and records interface names instead of a LAN address.
+- Changing the selected LAN address or switching between covered interfaces no longer requires privileged setup. Newly attached hardware interfaces may require one additional setup.
+- The GUI network-settings save path reports interface-coverage and inactive-address diagnostics instead of host-integration drift.
+- An existing schema 1 install is migrated to schema 2 by running setup once.
+
+### Fixed
+
+- PF loopback exemptions prevent macOS redirect state from misdirecting direct high-port traffic.
+- Invalid or tampered install manifests report a manual-repair remedy instead of an unusable automatic action.
+- Uninstall removes the installed Caddy root certificate without requiring an interactive trust-settings prompt, and skips removal when the certificate is already absent.
+
 ## 0.1.0-beta.1 - 2026-10-22
 
 First beta of the native macOS app.
