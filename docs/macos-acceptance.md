@@ -1,6 +1,6 @@
 # macOS runtime acceptance
 
-This checklist is the release gate for the native macOS arm64 runtime. Automated arm64 activation and the physical-phone checks, including profile removal and DNS restoration, have passed. GUI parity checks passed on 2026-10-22: lifecycle, Delete, live routing restoration, forced candidate-failure route retention, and privileged uninstall restoration below. The release gate is complete for this run; Caddy-specific rejection remains covered by the automated runtime tests. The 2026-10-21 record covers the automated gates, the ad-hoc Apple-silicon package, and the physical-phone pass; it does not cover distribution signing.
+This checklist is the release gate for the native macOS arm64 runtime. The 2026-10-21 run passed automated arm64 activation and the physical-phone checks, including profile removal and DNS restoration. GUI parity checks passed on 2026-10-22: lifecycle, Delete, live routing restoration, forced candidate-failure route retention, and privileged uninstall restoration below. Caddy-specific rejection remains covered by the automated runtime tests. The 2026-10-25 network-independent routing record covers schema 2 migration and address/interface switching. The 2026-10-26 physical-phone record covers the section 5 DNS, HTTP, trusted HTTPS, setup-route, fingerprint, and stop/start checks against the schema 2 anchor. Live uninstall and profile removal were not repeated against schema 2; the 2026-10-21 uninstall record and the automated setup/uninstall tests remain the evidence for that path. Neither record covers distribution signing.
 
 ## Required hardware and inputs
 
@@ -202,9 +202,24 @@ Recorded 2026-10-25 on the same macOS 15.2 arm64 host against `OwnDomains-native
 - The anchor SHA-256 was `96f9643ef74afd20568a2f6edbbe7ae626799f50129c9bb27b15a8aa6c9f0316` before and after switching `en0`/`192.168.1.4` to `en10`/`169.254.164.65` and back. Both `start` calls reached `running` without an administrator prompt.
 - For both addresses, direct and redirected DNS over UDP and TCP on loopback and the selected address returned NOERROR; `/etc/resolver/own` resolved `setup.own` to the selected address; `http://setup.own` and direct loopback/LAN HTTP returned 200.
 - Five consecutive direct TCP connections to 5354, 8080, and 8443 and redirected connections to 53, 80, and 443 succeeded. This is the regression check for the same-address loopback state corruption fixed by the `no rdr` rules.
-- Not repeated in this run: physical-phone DNS/HTTP access through the en0 rules. The 2026-10-21 phone record used the schema 1 anchor; repeat section 5 with the schema 2 anchor before release.
+- The 2026-10-26 physical-phone record below covers the section 5 DNS, HTTP, trusted HTTPS, setup-route, fingerprint, and stop/start checks against the schema 2 anchor.
 
-### Physical-phone record
+### Physical-phone record (schema 2)
+
+Recorded 2026-10-26 on the same macOS 15.2 arm64 host against `OwnDomains-native`, schema 2 anchor SHA-256 `96f9643ef74afd20568a2f6edbbe7ae626799f50129c9bb27b15a8aa6c9f0316`:
+
+- The phone was on `Kien mesh` at `192.168.1.82` with manual DNS `192.168.1.4`. The Mac could reach the phone at that address.
+- `http://setup.own` loaded. Installed the configuration profile, enabled the root certificate in **Certificate Trust Settings**, and confirmed `http://setup.own/fingerprint` returned `SHA256:50EADDEFB68DD08853568BDE6C12DAAD1882CEC9D4CFDEDD04B11C4955F2C169`, matching the Mac CA.
+- `http://telegram.own/` loaded through the HTTP mapping.
+- `https://phone.own/` loaded with a trusted padlock and the test upstream page; Safari showed no certificate warning. This used a temporary HTTPS mapping to the `127.0.0.1:4177` test upstream.
+- `http://registry.own` returned `Unknown .own domain` (HTTP 404); `http://setup.own/settings` returned 404. This is the expected retired-management/no-management result.
+- CLI stop removed the daemon, socket, and all owned listeners. Both `http://setup.own/?stopped=1` and `http://telegram.own/?stopped=1` failed to connect from the phone.
+- CLI start returned `ApplyResult { desired_revision: 19, applied_revision: 19, status: Applied }` with no administrator prompt. The anchor SHA-256 remained `96f9643ef74afd20568a2f6edbbe7ae626799f50129c9bb27b15a8aa6c9f0316`; `http://telegram.own/?started=1` loaded again, and `http://setup.own` loaded after the restart.
+- After the checks, the temporary `phone.own` mapping and the `127.0.0.1:4177` test upstream were removed. The `telegram.own` mapping was kept; it returns 502 until a service listens on `4177`. Removing the temporary mapping advanced settings to revision 22; the anchor hash remained unchanged.
+- Direct high-port access from the phone (`http://192.168.1.4:8080/`) is not a gate item and was not used as a pass criterion. A both-direction capture showed the first SYN-ACK misdirected to the phone's port 80 by macOS PF state; the supported phone routes are the redirected 53/80/443 ports, which passed.
+- Live uninstall and profile removal were not repeated against schema 2. The 2026-10-21 uninstall record and the automated setup/uninstall tests remain the evidence for that path.
+
+### Physical-phone record (schema 1)
 
 Recorded 2026-10-21 with the preserved phone state and the arm64 package above:
 
