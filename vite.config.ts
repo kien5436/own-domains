@@ -7,7 +7,7 @@ export default defineConfig({
   server: { proxy: { '/api': 'http://127.0.0.1:4780' } },
   test: {
     environment: 'node',
-    exclude: [...configDefaults.exclude, 'tests/e2e/**'],
+    exclude: [...configDefaults.exclude, 'tests/e2e/**', '.worktrees/**'],
     setupFiles: ['./tests/setup.ts'],
   },
 });
