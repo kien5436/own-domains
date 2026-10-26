@@ -45,6 +45,24 @@ Still pending: reboot retest, WSL2/Docker-installed variants, x86_64 hardware.
 Still pending: split-path proof with upstream DNS, GPO-conflict detection, secure-DNS-bypass
 behavior, reboot persistence, x86_64 hardware.
 
+## Gate F: Caddy admin and HTTP/3 (feasibility pass on ARM64)
+
+Caddy 2.11.7 `windows_arm64` (zip SHA-512 matches the published `caddy_2.11.7_checksums.txt`
+entry `5e232f5f...`) runs on this host. Disposable harness, since removed:
+
+- Relative AF_UNIX admin `"listen": "unix/caddy-admin.sock"` with CWD set to the runtime dir:
+  socket file created, no drive-letter parsing problem.
+- Live config load works: `caddy reload --config caddyB.json --address unix/caddy-admin.sock`
+  switched the served body from `config-a` to `config-b` with no restart.
+- `"protocols": ["h1","h2"]` on the test server: `Get-NetUDPEndpoint -LocalPort 443` empty.
+  No Caddy-owned UDP 443 listener.
+- Stale socket restart: after `Stop-Process`, the dead `caddy-admin.sock` file remained and the
+  next `caddy run` started normally and served traffic.
+- Listeners were exactly `127.0.0.1:80` as configured; no wildcard.
+
+The restart-fallback path was not exercised and remains rejected as a shipping mode per the
+product decision. Still pending: same pass on x86_64 hardware.
+
 ## Cleanup
 
 NRPT test rule removed by GUID; no `OwnDomains*` rules remain. Stub process stopped; all
