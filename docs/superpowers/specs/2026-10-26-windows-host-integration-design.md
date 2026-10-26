@@ -484,7 +484,7 @@ The Caddy JSON uses a relative admin address, for example `"listen": "unix/caddy
 "admin": { "disabled": true }
 ```
 
-With admin disabled, configuration changes stop and restart Caddy with the previous configuration retained for rollback. The runtime reports `caddyAdminUnavailable` as a warning. Live `/load` is not available, so a mapping edit causes a brief HTTPS outage. The fallback is acceptable only if Gate F proves the restart path, previous-config rollback, and readiness probes. Caddy admin is never exposed on TCP, because any local process could otherwise reconfigure Caddy and proxy arbitrary local services.
+With admin disabled, configuration changes stop and restart Caddy with the previous configuration retained for rollback. Product decision (2026-10-26): this restart fallback is not accepted as a shipping mode; Gate F must prove the AF_UNIX live-`/load` path, otherwise the design is blocked and requires a new decision. The runtime reports `caddyAdminUnavailable` as an error, not a warning, until Gate F passes. Caddy admin is never exposed on TCP, because any local process could otherwise reconfigure Caddy and proxy arbitrary local services.
 
 The admin socket is inside a directory whose ACL is current user full, SYSTEM and Administrators full, and no other users. Same-user processes can use it; they can already read the CA key and settings. The design does not add a second authentication layer to the AF_UNIX socket.
 
@@ -520,7 +520,7 @@ certutil -delstore -user Root "<sha1-thumbprint>"
 
 The manifest records both `caThumbprintSha1` (the 40-hex certificate-store thumbprint used by `certutil`) and `caFingerprintSha256` (the 64-hex DER digest used for integrity checks). Uninstall recomputes both from the state-directory certificate and the store before removing anything. A mismatch is `caFingerprintMismatch`; uninstall refuses to remove a certificate it does not own.
 
-`certutil -addstore -user Root` may display the standard Windows root-certificate confirmation dialog. It is not a UAC prompt, but it is an additional consent dialog. **[verify]** Gate G must record whether it appears, whether it can be suppressed without broadening trust, and whether removal prompts. If the product requirement is exactly one dialog of any kind, the alternative is to install the CA in `LocalMachine\Root` during the elevated phase. That trusts the CA for every user and weakens least privilege; it is a design change, not an implementation detail. This design keeps `CurrentUser\Root`.
+`certutil -addstore -user Root` may display the standard Windows root-certificate confirmation dialog. It is not a UAC prompt, but it is an additional consent dialog. **[verify]** Gate G must record whether it appears, whether it can be suppressed without broadening trust, and whether removal prompts. Product decision (2026-10-26): up to two dialogs are accepted (one UAC prompt plus the certificate confirmation). The alternative of installing the CA in `LocalMachine\Root` during the elevated phase is rejected: it would trust the CA for every user and weaken least privilege. This design keeps `CurrentUser\Root`.
 
 Trust installation happens in the unprivileged user phase, after the elevated phase. The elevated process may run under a different administrator account when a standard user enters credentials, so writing `CurrentUser\Root` from the elevated process could trust the administrator's profile instead of the target user's. The elevated phase never touches user trust.
 
@@ -1124,7 +1124,7 @@ New diagnostics:
 | `caTrustRemovalFailed` | Uninstall could not remove the CurrentUser certificate | Rerun `uninstall --apply`; the journal resumes trust removal |
 | `processSupervisionUnavailable` | A Job Object could not be created or assigned | Stop; do not run sidecars unsupervised; report the job-in-job state |
 | `staleOwnedProcess` | A recorded child survived a daemon exit | Start terminates it only after identity verification; ambiguous PIDs are reported |
-| `caddyAdminUnavailable` | The AF_UNIX admin socket is unavailable; restart fallback is active (warning) | No action unless live reload is required; Gate F records the behavior |
+| `caddyAdminUnavailable` | The AF_UNIX admin socket is unavailable; live reload is unproven (error until Gate F passes) | Block shipping until Gate F proves AF_UNIX live reload; restart fallback requires a new product decision |
 | `ipcEndpointBusy` | Another process owns the named pipe | Stop the conflicting process; do not connect to it |
 | `ipcServerIdentityMismatch` | The pipe server is not the expected daemon | Close the connection and investigate the endpoint |
 | `elevationCancelled` | The user cancelled the UAC prompt | Rerun setup or uninstall |
@@ -1382,7 +1382,7 @@ On physical Windows 10 22H2 x64 and Windows 11 x64 hosts:
 9. Reboot; confirm NRPT and firewall persist and `.own` fails before start. Start without UAC and confirm recovery.
 10. Set the network profile to Public; confirm the LAN diagnostic and that host `.own` still works. Set it back to Private; confirm LAN works without setup.
 11. Install Hyper-V, WSL, and Docker. Confirm excluded port ranges are reported. If 53/80/443/4781 are excluded, confirm setup fails with the exact remedy and does not fall back to portproxy.
-12. Confirm no wildcard listener and no UDP 443 listener owned by Caddy. Confirm Caddy admin is AF_UNIX or disabled, and test the restart fallback.
+12. Confirm no wildcard listener and no UDP 443 listener owned by Caddy. Confirm Caddy admin is AF_UNIX with working live `/load`; a disabled-admin restart fallback does not satisfy this step.
 13. Install and remove the CA with `certutil`; confirm the setup page, Firefox, Chrome, and Java behavior. Record the trust prompt behavior.
 14. Run uninstall; confirm one UAC prompt, removal of NRPT, firewall rules, sidecars, manifest, and trust, and preservation of settings without `--purge`.
 15. Run `--purge`; confirm settings and CA are removed after trust removal.
@@ -1405,7 +1405,7 @@ No gate below has been run. The design is not implementation-ready until the gat
 | C. Named pipe | The protected DACL excludes `Everyone`; `PIPE_REJECT_REMOTE_CLIENTS` rejects remote clients; first-instance squatting fails; server identity verification rejects wrong image/SID/session; cancellation and shutdown work; protocol fixtures pass | Not run |
 | D. Job Objects | Sidecars are assigned before running or via suspend/assign/resume; kill-on-close kills the child tree when the daemon exits; no console window appears; job-in-job and silent-breakaway cases fail closed; no orphan survives a crash | Not run |
 | E. Firewall and adapters | The four COM rules are program-scoped, Domain/Private, LocalSubnet, inbound, enabled, edge-traversal blocked, and grouped under `Own Domains`; Public profile blocks LAN `.own`; unprivileged inspection is accurate or reports unverifiable; adapter eligibility accepts USB Ethernet/Wi-Fi and rejects virtual/VPN/tunnel adapters | Not run |
-| F. Caddy admin and HTTP/3 | Caddy accepts a relative AF_UNIX admin address on Windows and handles a pre-existing stale socket without blocking start, or the disabled-admin restart fallback works with previous-config rollback; `protocols: ["h1","h2"]` prevents a UDP 443 listener | Not run |
+| F. Caddy admin and HTTP/3 | Caddy accepts a relative AF_UNIX admin address on Windows, handles a pre-existing stale socket without blocking start, and serves live `/load`; `protocols: ["h1","h2"]` prevents a UDP 443 listener. Restart fallback alone does not pass this gate | Not run |
 | G. Trust | `certutil -addstore -user Root` installs the CA; the confirmation dialog behavior is recorded; `certutil -delstore -user Root` removes it; fingerprint mismatch is refused; Firefox/Java behavior is recorded | Not run |
 | H. Setup and uninstall | Exactly one UAC prompt for a normal setup and one for a normal uninstall; fully matching setup skips UAC; an already-elevated invocation is refused; request/result validation; Authenticode rejection; rollback and resumability; manifest ACL and owner; `--purge` ordering | Not run |
 | I. Reboot, upgrade, and network changes | NRPT/firewall survive reboot; no auto-start; address/DHCP/interface changes need no UAC; app upgrade with unchanged artifacts needs no setup; sidecar change needs one setup | Not run |
@@ -1516,9 +1516,9 @@ Documentation must state:
 2. Add the Windows named-pipe server and client, ACL and identity checks, cancellation, and protocol fixtures. Run Gate C on a real Windows host.
 3. Add Windows sidecar targets, build manifest entries, ZIP fetch/verify, NSIS resource layout, and packaging checks.
 4. Build a disposable feasibility harness for Gates A, B, D, and F: standard-user bind on 53/80/443, NRPT/TTL/stop behavior, Job Object supervision, and Caddy AF_UNIX/HTTP3 behavior. Run it on Windows 10 22H2 x64 and Windows 11 x64. Stop and revise the design if any gate fails. The harness must not ship or install host integration.
-5. Add Windows host artifact rendering: CoreDNS TTL 0, Caddy ports 80/443, HTTP/3 disabled, AF_UNIX admin or disabled, manifest, NRPT, firewall, and trust.
+5. Add Windows host artifact rendering: CoreDNS TTL 0, Caddy ports 80/443, HTTP/3 disabled, AF_UNIX admin with live `/load` (disabled-admin mode is not a shippable fallback), manifest, NRPT, firewall, and trust.
 6. Add the Windows inspector, setup/uninstall transaction, elevation exchange, backups, rollback, and diagnostics.
-7. Add `WindowsRuntimeBackend`, Job Object supervision, process identity, Caddy admin/restart fallback, setup server, and readiness probes.
+7. Add `WindowsRuntimeBackend`, Job Object supervision, process identity, Caddy admin live reload with previous-config rollback, setup server, and readiness probes.
 8. Run Gates E, G, H, and I on disposable Windows 10 22H2 x64 and Windows 11 x64 hosts.
 9. Run Gate J (physical phone) and Gate K (packaging).
 10. Record acceptance evidence, update the support matrix, and mark x86_64 supported. Leave arm64 build-only until Gate L passes.

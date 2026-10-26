@@ -701,7 +701,7 @@ Packaging layout:
 - `.deb`: `/usr/bin/own-domains`, `/usr/bin/own-domains-daemon`, and `/usr/lib/own-domains/sidecars/` containing the sidecar binaries and manifests for the package's target architecture only. Files are root-owned and not writable by the user. Both binaries resolve the resource directory as `/usr/lib/own-domains` (equivalently `../lib/own-domains` from `/usr/bin`) after canonicalizing their executable path.
 - AppImage: the same relative layout under `<AppDir>/usr/lib/own-domains/` for the AppImage's target architecture. The binaries resolve the resource directory from the mounted AppImage root, not the user's current directory. AppImage integrity relies on the downloaded artifact's checksum or signature; the app still verifies the sidecar SHA-256 before execution.
 - `OWN_DOMAINS_RESOURCES` may override the resource directory for unprivileged development and tests; it must be an absolute path containing `sidecars/`. Privileged `setup --apply` ignores the override unless the resolved directory is root-owned and not group- or world-writable.
-- The `.deb` is the recommended package for privileged setup. An AppImage is user-writable; running it with `sudo` is outside the trust boundary unless the user first copies it to a root-owned path.
+- The `.deb` is the only in-scope Linux package for privileged setup. Product scope decision (2026-10-26): AppImage is deferred and out of scope for the first Linux support claim. An AppImage is user-writable; running it with `sudo` is outside the trust boundary unless the user first copies it to a root-owned path.
 - The desktop app passes the absolute state directory (`$XDG_DATA_HOME/own-domains`, normally `~/.local/share/own-domains`) to the daemon and CLI. The CLI's development default `.own-domains` remains for local runs; the CLI canonicalizes it to an absolute path under the target user's home before invoking setup. Setup rejects relative paths and never resolves a path relative to root's home.
 
 The setup and runtime verify the sidecar digest before execution. The process supervisor verifies the canonical executable path, arguments, PID, process group, and start identity before sending signals to a recovered child. A sidecar update that changes the pinned version or digest requires one privileged setup to update the manifest; the runtime never downloads or updates sidecars.
@@ -1038,6 +1038,7 @@ No Linux host behavior may be mixed into the transport extraction or the shared 
 - Changing the IPC protocol, settings schema, mapping semantics, or reserved `setup.own` behavior.
 - Windows support.
 - arm64 runtime support before acceptance.
+- Linux AppImage packaging (deferred; `.deb` only for the first Linux support claim).
 - AppImage/deb auto-update behavior and distribution signing beyond the package integrity assumptions in this design.
 
 ## Source constraints
