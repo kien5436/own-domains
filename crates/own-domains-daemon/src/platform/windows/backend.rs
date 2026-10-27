@@ -80,6 +80,19 @@ impl<'a> WindowsRuntimeBackend<'a> {
         std::fs::write(&path, contents).map_err(failure)?;
         Ok(path)
     }
+
+    /// Terminate every tracked child, best-effort. Used by `stop` and to avoid
+    /// leaking sidecars (and holding ports) when `apply` fails mid-way.
+    fn terminate_all(&self) {
+        let mut children = self
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        for child in children.drain(..) {
+            let _ = child.terminate();
+            let _ = child.wait_exit(Duration::from_secs(5));
+        }
+    }
 }
 
 fn failure(error: impl std::fmt::Display) -> RuntimeError {
@@ -128,18 +141,27 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
         );
         drop(children);
 
-        self.adapters
+        if let Err(error) = self
+            .adapters
             .readiness
             .wait_dns("127.0.0.1", 53, &settings.lan_address)
-            .map_err(RuntimeError::Failure)?;
-        self.adapters
-            .readiness
-            .wait_http("127.0.0.1", 80, "setup.own")
-            .map_err(RuntimeError::Failure)?;
-        self.adapters
-            .caddy
-            .load(&config)
-            .map_err(RuntimeError::Failure)?;
+            .map_err(RuntimeError::Failure)
+            .and_then(|()| {
+                self.adapters
+                    .readiness
+                    .wait_http("127.0.0.1", 80, "setup.own")
+                    .map_err(RuntimeError::Failure)
+            })
+            .and_then(|()| {
+                self.adapters
+                    .caddy
+                    .load(&config)
+                    .map_err(RuntimeError::Failure)
+            })
+        {
+            self.terminate_all();
+            return Err(error);
+        }
 
         self.state
             .lock()
@@ -154,14 +176,7 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
     }
 
     fn stop(&self) -> Result<(), RuntimeError> {
-        let mut children = self
-            .children
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        for child in children.drain(..) {
-            child.terminate().map_err(RuntimeError::Failure)?;
-            let _ = child.wait_exit(Duration::from_secs(5));
-        }
+        self.terminate_all();
         self.state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())

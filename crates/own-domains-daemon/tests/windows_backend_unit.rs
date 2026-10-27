@@ -190,3 +190,46 @@ fn stop_terminates_processes_and_is_idempotent() {
     ));
     backend.stop().unwrap();
 }
+
+/// Readiness that always fails, proving `apply` cleans up instead of leaking.
+struct FailingReadiness;
+
+impl BackendReadiness for FailingReadiness {
+    fn wait_dns(&self, _address: &str, _port: u16, _expected: &str) -> Result<(), String> {
+        Err("dns never ready".into())
+    }
+
+    fn wait_http(&self, _address: &str, _port: u16, _host: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn failed_apply_terminates_spawned_sidecars() {
+    let harness = harness();
+    let failing = FailingReadiness;
+    let backend = WindowsRuntimeBackend::with_adapters(
+        WindowsPaths {
+            runtime_directory: harness.directory.clone(),
+            coredns_exe: PathBuf::from("coredns-test.exe"),
+            caddy_exe: PathBuf::from("caddy-test.exe"),
+            admin_socket: harness.directory.join("caddy-admin.sock"),
+        },
+        WindowsAdapters {
+            process_host: &harness.host,
+            readiness: &failing,
+            caddy: &harness.admin,
+        },
+    );
+    assert!(backend.apply(&settings()).is_err());
+    let log = harness.log.events.lock().unwrap().join("\n");
+    assert!(log.contains("spawn coredns-test.exe"), "{log}");
+    assert!(log.contains("terminate coredns-test.exe"), "{log}");
+    assert!(log.contains("terminate caddy-test.exe"), "{log}");
+    // Nothing left to stop: second stop terminates nothing new.
+    backend.stop().unwrap();
+    assert!(matches!(
+        backend.inspect().unwrap(),
+        own_domains_protocol::RuntimeStatus::Stopped
+    ));
+}
