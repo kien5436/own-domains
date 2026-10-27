@@ -139,7 +139,8 @@ Proven with the Rust implementation (`feat/platform-transport-abstraction` up to
 - End to end with separate binaries: `own-domains.exe start/status/stop` against a
   real `own-domains-daemon.exe` over `--pipe`, with the full server-identity check
   (image path, SID, session) against the real daemon image — no errors, and the
-  runtime reports unavailable as expected (no Windows backend yet).
+  runtime reports unavailable as expected (no Windows backend yet at that time;
+  since landed — see Backend milestone below).
 - Two implementation bugs were caught by the tests, not by review: the client
   rejected in-process test servers (fixed by trusting a kernel-reported server PID
   equal to our own), and clients paired with the never-listened first handle while
@@ -152,3 +153,45 @@ both spellings). Still open for full Gate C: remote-client rejection (needs a se
 machine) and Authenticode publisher pinning (lands with signed packaging). The cancel path documents a deliberate deviation: cross-thread
 `CancelIoEx(handle, NULL)` only cancels the calling thread's I/O, so the waiter
 slices at 50 ms and checks a shared flag instead.
+
+## Backend milestone: WindowsRuntimeBackend (passes on ARM64 VM)
+
+Same VM as the gates above; guest LAN observed as `192.168.1.21` during these
+runs. Sidecars staged once in the user profile: CoreDNS 1.14.7
+`windows_amd64` (no ARM64 upstream asset — 404 — so x64 under emulation;
+published zip SHA-256 `6b718a5e…c6fdd56`) and Caddy 2.11.7 `windows_arm64`
+(published zip SHA-512 `5e232f5f…a3fe982`).
+
+Guest results, all green:
+
+- `cargo test -p own-domains-daemon --test windows_admin` — 3/3: config
+  load + readiness roundtrip over Winsock AF_UNIX with path assertions,
+  500-status handling, relative-socket rejection.
+- `cargo test -p own-domains-daemon --test windows_backend` — 2/2:
+  `cmd /c exit 42` returns 42; the `ping` sleeper shows no console window,
+  reports running, then terminates with a non-still-active code.
+- `cargo test -p own-domains-daemon --test windows_backend_e2e` — full
+  `apply` (render, write, spawn, setup server, DNS + HTTP readiness,
+  admin live-load) then DNS answers `app.own -> 192.168.1.21`, Caddy serves
+  the mapped app (`200`, body `ok`), the setup page serves `200` on
+  `127.0.0.1:4781`, `stop` leaves ports 53/80/443/4781 closed — twice.
+- `cargo test --workspace --locked` on the guest — green. One failure on the
+  way was a test bug (desktop bridge test hardcoded the Unix `daemon.sock`
+  default; Windows defaults to a named pipe by design), fixed and re-run.
+- Manual: `own-domains-daemon.exe --pipe` + Ctrl+C exits promptly with no
+  listeners left behind (operator-confirmed).
+
+Bugs caught by the tests, not by review: the admin stub discarded
+already-coalesced body bytes (mutual hang) and raced `listen`; the first
+single-shot DNS probe met Windows `WSAECONNRESET` (10054) when the packet
+landed before emulated CoreDNS bound (fixed by 30 s polling); a failed
+`apply` leaked sidecars holding ports (now terminated on failure); the HTTP
+probe targeted `setup.own`, which 502s without a setup server (now probes
+the first plain-HTTP mapping and starts the setup server first).
+
+Not claimed: the backend is not yet wired into the daemon `runtime_backend`
+facade (the daemon still reports an unavailable runtime on Windows); the
+`/ca.crt`-style setup routes await the trust milestone; TLS-only configs
+skip HTTP readiness; supervision is plain spawn/terminate (Gate D still
+blocked). Rendered listeners are loopback plus the LAN address only; the
+observed Corefile binds `127.0.0.1` and the LAN address on port 53.
