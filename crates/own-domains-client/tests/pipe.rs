@@ -29,7 +29,19 @@ fn pipe_dacl_grants_only_the_current_user() {
     let _server = IpcServer::bind(&endpoint, state).unwrap();
     let actual = own_domains_protocol::pipe::pipe_security_sddl(&endpoint.display_name()).unwrap();
     let sid = own_domains_protocol::pipe::current_user_sid().unwrap();
-    assert_eq!(actual, format!("O:{sid}G:{sid}D:P(A;;GA;;;{sid})"));
+    // Owner and group are the current user; the DACL is protected (P) with a
+    // single full-access ACE for the owner. Windows renders the requested
+    // generic-all as its file-specific equivalent, so accept both spellings.
+    let prefix = format!("O:{sid}G:{sid}D:P(");
+    assert!(
+        actual.starts_with(&prefix) && actual.ends_with(')'),
+        "unexpected descriptor: {actual}"
+    );
+    let aces = &actual[prefix.len()..actual.len() - 1];
+    assert!(
+        aces == format!("A;;FA;;;{sid}") || aces == format!("A;;GA;;;{sid}"),
+        "unexpected ACEs: {aces}"
+    );
 }
 
 #[test]
