@@ -141,16 +141,26 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
         );
         drop(children);
 
+        // No setup server yet (Task 6 milestone), so setup.own would 502.
+        // Probe the first plain-HTTP mapping instead; TLS-only or empty
+        // configs skip HTTP readiness.
+        let http_host = settings
+            .mappings
+            .iter()
+            .find(|mapping| mapping.enabled && !mapping.tls)
+            .map(|mapping| mapping.hostname.clone());
         if let Err(error) = self
             .adapters
             .readiness
             .wait_dns("127.0.0.1", 53, &settings.lan_address)
             .map_err(RuntimeError::Failure)
-            .and_then(|()| {
-                self.adapters
+            .and_then(|()| match &http_host {
+                Some(host) => self
+                    .adapters
                     .readiness
-                    .wait_http("127.0.0.1", 80, "setup.own")
-                    .map_err(RuntimeError::Failure)
+                    .wait_http("127.0.0.1", 80, host)
+                    .map_err(RuntimeError::Failure),
+                None => Ok(()),
             })
             .and_then(|()| {
                 self.adapters

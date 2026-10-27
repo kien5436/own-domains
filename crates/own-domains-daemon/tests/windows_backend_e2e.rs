@@ -92,16 +92,32 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
         let directory = std::env::temp_dir().join(format!("od-win-e2e-{}", uuid::Uuid::new_v4()));
         let runtime = directory.join("runtime");
 
-        // Upstream responder for the mapped app.own name.
+        // Upstream responder for the mapped app.own name. Readiness polls and
+        // the final assertion each take proxied connections, so serve until
+        // the iteration signals done.
         let upstream = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        upstream.set_nonblocking(true).unwrap();
         let upstream_port = upstream.local_addr().unwrap().port();
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done_flag = done.clone();
         let responder = std::thread::spawn(move || {
-            let (mut stream, _) = upstream.accept().unwrap();
-            let mut head = [0u8; 1024];
-            let _ = stream.read(&mut head).unwrap();
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
-                .unwrap();
+            while !done_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                let (mut stream, _) = match upstream.accept() {
+                    Ok(next) => next,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(50));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                let mut head = [0u8; 1024];
+                if stream.read(&mut head).is_err() {
+                    continue;
+                }
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                );
+            }
         });
 
         let settings = settings(lan, upstream_port);
@@ -144,6 +160,7 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
         for port in [53, 80, 443] {
             assert_port_closed(port);
         }
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
         responder.join().unwrap();
     }
 }

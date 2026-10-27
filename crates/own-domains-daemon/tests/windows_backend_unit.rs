@@ -167,7 +167,10 @@ fn apply_writes_configs_and_starts_sidecars() {
     assert!(log.contains("spawn coredns-test.exe"), "{log}");
     assert!(log.contains("spawn caddy-test.exe"), "{log}");
     assert!(log.contains("wait-dns"), "{log}");
-    assert!(log.contains("wait-http"), "{log}");
+    assert!(
+        log.contains("wait-http 127.0.0.1:80 host=shop.own"),
+        "{log}"
+    );
     assert!(log.contains("admin-load"), "{log}");
 }
 
