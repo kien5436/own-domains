@@ -1,4 +1,6 @@
 mod message;
+#[cfg(windows)]
+pub mod pipe;
 mod transport;
 
 pub use message::*;

@@ -1,7 +1,5 @@
 use crate::{DaemonError, DaemonState};
-use own_domains_protocol::Endpoint;
-#[cfg(unix)]
-use own_domains_protocol::{Command, RequestEnvelope, read_frame, write_json_line};
+use own_domains_protocol::{Command, Endpoint, RequestEnvelope, read_frame, write_json_line};
 #[cfg(unix)]
 use std::path::Path;
 #[cfg(unix)]
@@ -16,10 +14,18 @@ use std::{
     time::Duration,
 };
 use std::{
-    io::{self},
+    io::{self, Read, Write},
     path::PathBuf,
     sync::Arc,
 };
+#[cfg(windows)]
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
+    time::Duration,
+};
+#[cfg(windows)]
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
 #[cfg(unix)]
 pub struct IpcServer {
@@ -139,8 +145,11 @@ impl Drop for IpcServer {
     }
 }
 
-#[cfg(unix)]
-fn handle_client(mut stream: UnixStream, state: Arc<DaemonState>, shutdown: Arc<AtomicBool>) {
+fn handle_client<S: Read + Write>(
+    mut stream: S,
+    state: Arc<DaemonState>,
+    shutdown: Arc<AtomicBool>,
+) {
     loop {
         let frame = match read_frame(&mut stream) {
             Ok(Some(frame)) => frame,
@@ -176,7 +185,6 @@ fn handle_client(mut stream: UnixStream, state: Arc<DaemonState>, shutdown: Arc<
     }
 }
 
-#[cfg(unix)]
 fn empty_snapshot() -> own_domains_protocol::StateSnapshot {
     own_domains_protocol::StateSnapshot {
         settings: Default::default(),
@@ -196,29 +204,301 @@ fn io_error(operation: &'static str, path: &Path, source: io::Error) -> DaemonEr
         source,
     }
 }
-#[cfg(not(unix))]
+#[cfg(windows)]
 pub struct IpcServer {
-    _priv: (),
+    full_name: String,
+    sid: String,
+    first: HANDLE,
+    shutdown: Arc<AtomicBool>,
+    state: Arc<DaemonState>,
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 impl IpcServer {
-    pub fn bind(endpoint: &Endpoint, _state: Arc<DaemonState>) -> Result<Self, DaemonError> {
-        Err(DaemonError::Io {
-            operation: "bind IPC endpoint",
-            path: PathBuf::from(endpoint.display_name()),
-            source: io::Error::new(
-                io::ErrorKind::Unsupported,
-                "named-pipe IPC is not implemented yet",
-            ),
+    pub fn bind(endpoint: &Endpoint, state: Arc<DaemonState>) -> Result<Self, DaemonError> {
+        let Endpoint::NamedPipe(_) = endpoint else {
+            return Err(DaemonError::Io {
+                operation: "bind IPC endpoint",
+                path: PathBuf::from(endpoint.display_name()),
+                source: io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "unix sockets need the unix server",
+                ),
+            });
+        };
+        let full_name = endpoint.display_name();
+        let sid =
+            own_domains_protocol::pipe::current_user_sid().map_err(|message| DaemonError::Io {
+                operation: "bind IPC endpoint",
+                path: PathBuf::from(&full_name),
+                source: io::Error::new(io::ErrorKind::PermissionDenied, message),
+            })?;
+        let first = Self::create_instance(&full_name, &sid, true)?;
+        Ok(Self {
+            full_name,
+            sid,
+            first,
+            shutdown: Arc::new(AtomicBool::new(false)),
+            state,
         })
     }
 
+    /// Create one pipe instance with the explicit owner-only DACL.
+    ///
+    /// Every instance carries the protected DACL: the default named-pipe DACL
+    /// grants `Everyone` read access and must never be used. `first` sets
+    /// `FILE_FLAG_FIRST_PIPE_INSTANCE`, which fails when any process already
+    /// owns the name, so squatting can never silently succeed.
+    fn create_instance(full_name: &str, sid: &str, first: bool) -> Result<HANDLE, DaemonError> {
+        use windows::{
+            Win32::{
+                Foundation::{ERROR_ACCESS_DENIED, FALSE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree},
+                Security::{
+                    Authorization::{
+                        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+                    },
+                    PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+                },
+                Storage::FileSystem::{
+                    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
+                },
+                System::Pipes::{
+                    CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+                    PIPE_TYPE_BYTE, PIPE_WAIT,
+                },
+            },
+            core::{HRESULT, PCWSTR},
+        };
+        let fail = |operation: &'static str, source: io::Error| DaemonError::Io {
+            operation,
+            path: PathBuf::from(full_name),
+            source,
+        };
+        let sddl = format!("O:{sid}G:{sid}D:P(A;;GA;;;{sid})");
+        let wide_sddl: Vec<u16> = sddl.encode_utf16().chain([0]).collect();
+        let mut descriptor = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(wide_sddl.as_ptr()),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                None,
+            )
+        }
+        .map_err(|error| fail("secure IPC endpoint", error.into()))?;
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor.0,
+            bInheritHandle: FALSE,
+        };
+        let wide_name: Vec<u16> = full_name.encode_utf16().chain([0]).collect();
+        let flags = if first {
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE
+        } else {
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED
+        };
+        let handle = unsafe {
+            CreateNamedPipeW(
+                PCWSTR(wide_name.as_ptr()),
+                flags,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                64,
+                65536,
+                65536,
+                0,
+                Some(&attributes as *const _),
+            )
+        };
+        unsafe {
+            LocalFree(Some(HLOCAL(descriptor.0 as _)));
+        }
+        if handle == INVALID_HANDLE_VALUE {
+            let error = windows::core::Error::from_thread();
+            if error.code() == HRESULT::from_win32(ERROR_ACCESS_DENIED.0) {
+                return Err(fail(
+                    "bind IPC endpoint",
+                    io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        "named pipe is already owned by another process",
+                    ),
+                ));
+            }
+            return Err(fail("bind IPC endpoint", error.into()));
+        }
+        Ok(handle)
+    }
+
     pub fn run(self) -> Result<(), DaemonError> {
+        use windows::Win32::System::Threading::CreateEventW;
+        let event =
+            unsafe { CreateEventW(None, true, false, None) }.map_err(|error| DaemonError::Io {
+                operation: "accept IPC client",
+                path: PathBuf::from(&self.full_name),
+                source: error.into(),
+            })?;
+        let outcome = self.run_loop(event);
+        unsafe {
+            let _ = CloseHandle(event);
+        }
+        outcome
+    }
+
+    fn run_loop(&self, event: HANDLE) -> Result<(), DaemonError> {
+        use windows::{
+            Win32::{
+                Foundation::{CloseHandle, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, WAIT_OBJECT_0},
+                System::{
+                    IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
+                    Pipes::{ConnectNamedPipe, DisconnectNamedPipe, GetNamedPipeClientProcessId},
+                    RemoteDesktop::ProcessIdToSessionId,
+                    Threading::{GetCurrentProcessId, ResetEvent, WaitForSingleObject},
+                },
+            },
+            core::HRESULT,
+        };
+        let fail = |source: io::Error| DaemonError::Io {
+            operation: "accept IPC client",
+            path: PathBuf::from(&self.full_name),
+            source,
+        };
+        let mut own_session = 0u32;
+        unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut own_session) }
+            .map_err(|error| fail(error.into()))?;
+        while !self.shutdown.load(Ordering::Acquire) {
+            let instance = match Self::create_instance(&self.full_name, &self.sid, false) {
+                Ok(instance) => instance,
+                Err(error) => {
+                    thread::sleep(Duration::from_millis(100));
+                    if self.shutdown.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
+                    return Err(error);
+                }
+            };
+            let mut overlapped = OVERLAPPED::default();
+            overlapped.hEvent = event;
+            let mut connected = false;
+            unsafe {
+                let _ = ResetEvent(event);
+            }
+            match unsafe { ConnectNamedPipe(instance, Some(std::ptr::addr_of_mut!(overlapped))) } {
+                Ok(()) => connected = true,
+                Err(error) if error.code() == HRESULT::from_win32(ERROR_PIPE_CONNECTED.0) => {
+                    connected = true;
+                }
+                Err(error) if error.code() == HRESULT::from_win32(ERROR_IO_PENDING.0) => loop {
+                    let waited = unsafe { WaitForSingleObject(event, 100) };
+                    if waited == WAIT_OBJECT_0 {
+                        let mut unused = 0u32;
+                        match unsafe {
+                            GetOverlappedResult(instance, &overlapped, &mut unused, false)
+                        } {
+                            Ok(()) => {
+                                connected = true;
+                                break;
+                            }
+                            Err(error)
+                                if error.code() == HRESULT::from_win32(ERROR_PIPE_CONNECTED.0) =>
+                            {
+                                connected = true;
+                                break;
+                            }
+                            Err(_) => break,
+                        }
+                    } else if self.shutdown.load(Ordering::Acquire) {
+                        unsafe {
+                            let _ = CancelIoEx(instance, Some(&overlapped));
+                        }
+                        break;
+                    }
+                },
+                Err(_) => {}
+            }
+            if !connected || self.shutdown.load(Ordering::Acquire) {
+                unsafe {
+                    let _ = DisconnectNamedPipe(instance);
+                    let _ = CloseHandle(instance);
+                }
+                if self.shutdown.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                continue;
+            }
+            let mut client_pid = 0u32;
+            let same_session =
+                unsafe { GetNamedPipeClientProcessId(instance, &mut client_pid) }.is_ok() && {
+                    let mut client_session = 0u32;
+                    unsafe { ProcessIdToSessionId(client_pid, &mut client_session) }.is_ok()
+                        && client_session == own_session
+                };
+            if !same_session {
+                unsafe {
+                    let _ = DisconnectNamedPipe(instance);
+                    let _ = CloseHandle(instance);
+                }
+                continue;
+            }
+            match own_domains_protocol::pipe::PipeStream::new(instance, Duration::from_secs(30)) {
+                Ok(stream) => {
+                    let state = self.state.clone();
+                    let shutdown = self.shutdown.clone();
+                    thread::spawn(move || handle_client(stream, state, shutdown));
+                }
+                Err(_) => unsafe {
+                    let _ = CloseHandle(instance);
+                },
+            }
+        }
         Ok(())
     }
 
-    pub fn shutdown(&self) {}
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Release);
+    }
 
-    pub fn request_shutdown(_endpoint: &Endpoint) {}
+    pub fn request_shutdown(endpoint: &Endpoint) {
+        use windows::{
+            Win32::{
+                Foundation::{GENERIC_READ, GENERIC_WRITE},
+                Storage::FileSystem::{
+                    CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_MODE, OPEN_EXISTING,
+                },
+            },
+            core::PCWSTR,
+        };
+        let wide: Vec<u16> = endpoint.display_name().encode_utf16().chain([0]).collect();
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                GENERIC_READ.0 | GENERIC_WRITE.0,
+                FILE_SHARE_MODE(0),
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_OVERLAPPED,
+                None,
+            )
+        };
+        let Ok(handle) = handle else {
+            return;
+        };
+        if let Ok(mut stream) =
+            own_domains_protocol::pipe::PipeStream::new(handle, Duration::from_secs(2))
+        {
+            let request = RequestEnvelope {
+                protocol_version: own_domains_protocol::PROTOCOL_VERSION,
+                request_id: "shutdown".into(),
+                command: Command::Stop,
+            };
+            let _ = write_json_line(&mut stream, &request);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for IpcServer {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.first);
+        }
+    }
 }
