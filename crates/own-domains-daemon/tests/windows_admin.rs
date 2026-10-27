@@ -39,7 +39,10 @@ fn send_all(handle: usize, buf: &[u8]) {
     }
 }
 
-fn recv_until(handle: usize, marker: &[u8]) -> Vec<u8> {
+/// Read up to and including `marker`; return `(head, tail)` where `tail` is
+/// any already-coalesced bytes past the marker (they belong to the body and
+/// must not be discarded, or both ends hang waiting for bytes already sent).
+fn recv_until(handle: usize, marker: &[u8]) -> (Vec<u8>, Vec<u8>) {
     use windows::Win32::Networking::WinSock::{SEND_RECV_FLAGS, SOCKET, recv};
     let mut out = Vec::new();
     let mut chunk = [0u8; 1024];
@@ -47,8 +50,10 @@ fn recv_until(handle: usize, marker: &[u8]) -> Vec<u8> {
         let done = unsafe { recv(SOCKET(handle), &mut chunk, SEND_RECV_FLAGS(0)) };
         assert!(done > 0, "stub recv failed");
         out.extend_from_slice(&chunk[..done as usize]);
-        if out.windows(marker.len()).any(|w| w == marker) {
-            return out;
+        if let Some(end) = out.windows(marker.len()).position(|w| w == marker) {
+            let split = end + marker.len();
+            let tail = out.split_off(split);
+            return (out, tail);
         }
     }
 }
@@ -59,6 +64,7 @@ fn spawn_stub(
     respond_with: &'static str,
     seen: Arc<std::sync::Mutex<Vec<String>>>,
     connections: usize,
+    ready: std::sync::mpsc::Sender<()>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         startup_wsa();
@@ -89,10 +95,11 @@ fn spawn_stub(
             );
             assert_eq!(listen(listener, connections as i32), 0);
         }
+        let _ = ready.send(());
         for _ in 0..connections {
             let conn = unsafe { accept(listener, None, None).unwrap() };
             let handle = conn.0;
-            let head = recv_until(handle, b"\r\n\r\n");
+            let (head, mut body) = recv_until(handle, b"\r\n\r\n");
             let text = String::from_utf8_lossy(&head);
             let mut lines = text.lines();
             let request_line = lines.next().unwrap_or("").to_string();
@@ -105,7 +112,6 @@ fn spawn_stub(
                     length = value.trim().parse().unwrap_or(0);
                 }
             }
-            let mut body = Vec::new();
             while body.len() < length {
                 let mut one = [0u8; 1024];
                 let done = unsafe {
@@ -141,7 +147,9 @@ fn spawn_stub(
 fn admin_load_switches_config_and_is_ready_passes() {
     let path = socket_path("load");
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let runner = spawn_stub(path.clone(), "200 OK", seen.clone(), 2);
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let runner = spawn_stub(path.clone(), "200 OK", seen.clone(), 2, ready_tx);
+    ready_rx.recv().unwrap();
     let client = CaddyAdminClient::new(&path).unwrap();
     client
         .load(&serde_json::json!({"apps": {"http": {}}}))
@@ -158,7 +166,9 @@ fn admin_load_switches_config_and_is_ready_passes() {
 fn admin_reports_failure_status() {
     let path = socket_path("fail");
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let runner = spawn_stub(path.clone(), "500 Internal Error", seen, 1);
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let runner = spawn_stub(path.clone(), "500 Internal Error", seen, 1, ready_tx);
+    ready_rx.recv().unwrap();
     let client = CaddyAdminClient::new(&path).unwrap();
     let error = client
         .load(&serde_json::json!({"apps": {"http": {}}}))
