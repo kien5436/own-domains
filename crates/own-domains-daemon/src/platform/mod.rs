@@ -22,7 +22,11 @@ pub fn runtime_backend(
     {
         macos::runtime_backend(state_dir, resources, sidecars, settings_only)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows::runtime_backend(state_dir, resources, sidecars, settings_only)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = (state_dir, resources, sidecars, settings_only);
         Ok(Arc::new(crate::UnavailableRuntimeBackend))

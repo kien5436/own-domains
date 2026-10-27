@@ -33,6 +33,34 @@ pub struct WindowsPaths {
     pub admin_socket: PathBuf,
 }
 
+/// Resolve backend file locations from launch inputs. Pure lexical paths:
+/// the caller supplies an absolute current directory, and every output is
+/// absolute. Sidecar manifest lookup lands in release slice 3; until then
+/// the exes are `<sidecars>/coredns.exe` and `<sidecars>/caddy.exe`.
+pub fn resolve_paths(
+    state_dir: &Path,
+    current_dir: &Path,
+    exe_dir: &Path,
+    sidecars: Option<PathBuf>,
+) -> Result<WindowsPaths, String> {
+    let absolutize = |path: &Path| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            current_dir.join(path)
+        }
+    };
+    let state_dir = absolutize(state_dir);
+    let sidecars = sidecars.map_or_else(|| exe_dir.to_path_buf(), |dir| absolutize(&dir));
+    let runtime_directory = state_dir.join("runtime");
+    Ok(WindowsPaths {
+        admin_socket: runtime_directory.join("caddy-admin.sock"),
+        coredns_exe: sidecars.join("coredns.exe"),
+        caddy_exe: sidecars.join("caddy.exe"),
+        runtime_directory,
+    })
+}
+
 pub trait BackendProcessHost: Send + Sync {
     fn spawn(&self, exe: &Path, args: &[String]) -> Result<Box<dyn BackendChild>, String>;
 }
