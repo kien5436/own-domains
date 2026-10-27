@@ -146,8 +146,9 @@ Proven with the Rust implementation (`feat/platform-transport-abstraction` up to
   the accept loop waited elsewhere (fixed by serving the first client on the first
   handle).
 
-Still open for full Gate C: explicit DACL readback on the live pipe, remote-client
-rejection (needs a second machine), and Authenticode publisher pinning (lands with
-signed packaging). The cancel path documents a deliberate deviation: cross-thread
+DACL readback passes: the live pipe reports `O:<sid>G:<sid>D:P(A;;FA;;;<sid>)` —
+protected, owner-only, no `Everyone` (`GA` requested, `FA` stored; the test accepts
+both spellings). Still open for full Gate C: remote-client rejection (needs a second
+machine) and Authenticode publisher pinning (lands with signed packaging). The cancel path documents a deliberate deviation: cross-thread
 `CancelIoEx(handle, NULL)` only cancels the calling thread's I/O, so the waiter
 slices at 50 ms and checks a shared flag instead.
