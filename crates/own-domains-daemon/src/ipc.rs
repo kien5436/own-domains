@@ -496,6 +496,11 @@ impl IpcServer {
     }
 }
 
+// The first-instance handle is an owned kernel object; transferring the
+// server to the accept-loop thread by value is sound.
+#[cfg(windows)]
+unsafe impl Send for IpcServer {}
+
 #[cfg(windows)]
 impl Drop for IpcServer {
     fn drop(&mut self) {

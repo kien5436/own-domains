@@ -147,6 +147,11 @@ mod tests {
                 endpoint,
                 Endpoint::default_for_state_dir(&state_dir).unwrap()
             );
+            let other_dir = std::env::temp_dir().join("od-endpoint-other");
+            assert_ne!(
+                endpoint,
+                Endpoint::default_for_state_dir(&other_dir).unwrap()
+            );
             let Endpoint::NamedPipe(name) = &endpoint else {
                 panic!("expected NamedPipe default on Windows, got {endpoint:?}");
             };
