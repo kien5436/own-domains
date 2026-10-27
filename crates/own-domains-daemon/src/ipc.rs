@@ -328,22 +328,30 @@ impl IpcServer {
         Ok(handle)
     }
 
-    pub fn run(self) -> Result<(), DaemonError> {
-        use windows::Win32::System::Threading::CreateEventW;
+    pub fn run(mut self) -> Result<(), DaemonError> {
+        use windows::Win32::{Foundation::INVALID_HANDLE_VALUE, System::Threading::CreateEventW};
         let event =
             unsafe { CreateEventW(None, true, false, None) }.map_err(|error| DaemonError::Io {
                 operation: "accept IPC client",
                 path: PathBuf::from(&self.full_name),
                 source: error.into(),
             })?;
-        let outcome = self.run_loop(event);
+        // The first handle is a live listening instance from birth: a client
+        // that connects before the loop starts pairs with it. Serve it as the
+        // first accept instead of leaving it as a dead name-holder that would
+        // swallow clients into a void.
+        let first = std::mem::replace(&mut self.first, INVALID_HANDLE_VALUE);
+        let outcome = self.run_loop(event, first);
         unsafe {
             let _ = CloseHandle(event);
+            if self.first != INVALID_HANDLE_VALUE {
+                let _ = CloseHandle(self.first);
+            }
         }
         outcome
     }
 
-    fn run_loop(&self, event: HANDLE) -> Result<(), DaemonError> {
+    fn run_loop(&self, event: HANDLE, initial: HANDLE) -> Result<(), DaemonError> {
         use windows::{
             Win32::{
                 Foundation::{CloseHandle, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, WAIT_OBJECT_0},
@@ -364,16 +372,20 @@ impl IpcServer {
         let mut own_session = 0u32;
         unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut own_session) }
             .map_err(|error| fail(error.into()))?;
+        let mut pending = Some(initial);
         while !self.shutdown.load(Ordering::Acquire) {
-            let instance = match Self::create_instance(&self.full_name, &self.sid, false) {
-                Ok(instance) => instance,
-                Err(error) => {
-                    thread::sleep(Duration::from_millis(100));
-                    if self.shutdown.load(Ordering::Acquire) {
-                        return Ok(());
+            let instance = match pending.take() {
+                Some(handle) => handle,
+                None => match Self::create_instance(&self.full_name, &self.sid, false) {
+                    Ok(instance) => instance,
+                    Err(error) => {
+                        thread::sleep(Duration::from_millis(100));
+                        if self.shutdown.load(Ordering::Acquire) {
+                            return Ok(());
+                        }
+                        return Err(error);
                     }
-                    return Err(error);
-                }
+                },
             };
             let mut overlapped = OVERLAPPED {
                 hEvent: event,
