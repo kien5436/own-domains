@@ -246,37 +246,57 @@ impl PipeStream {
 
 /// Security descriptor of a live pipe as an SDDL string.
 ///
-/// Reads back what `CreateNamedPipeW` installed, so the DACL audit asserts on
-/// the kernel object itself rather than on the string that was requested.
+/// Opens the pipe and reads back what `CreateNamedPipeW` installed, so the
+/// DACL audit asserts on the kernel object itself rather than on the string
+/// that was requested. The `\\.\pipe\` name form does not resolve for
+/// `GetNamedSecurityInfoW` (`ERROR_BAD_PATHNAME`), hence the handle query.
+/// The connection itself is never used; the server-side handler it spawns
+/// idles until the handle closes.
 pub fn pipe_security_sddl(full_name: &str) -> Result<String, String> {
     use windows::Win32::{
-        Foundation::{ERROR_SUCCESS, HLOCAL, LocalFree},
+        Foundation::{CloseHandle, ERROR_SUCCESS, HLOCAL, LocalFree},
         Security::{
             Authorization::{
-                ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
+                ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo,
                 SDDL_REVISION_1, SE_KERNEL_OBJECT,
             },
             DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
             PSECURITY_DESCRIPTOR,
         },
+        Storage::FileSystem::{CreateFileW, FILE_SHARE_MODE, OPEN_EXISTING, READ_CONTROL},
     };
 
     let wide: Vec<u16> = full_name.encode_utf16().chain([0]).collect();
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            READ_CONTROL.0,
+            FILE_SHARE_MODE(0),
+            None,
+            OPEN_EXISTING,
+            Default::default(),
+            None,
+        )
+    }
+    .map_err(|error| format!("pipe open for audit failed: {error}"))?;
     let info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
     let mut descriptor = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
     let status = unsafe {
-        GetNamedSecurityInfoW(
-            PCWSTR(wide.as_ptr()),
+        GetSecurityInfo(
+            handle,
             SE_KERNEL_OBJECT,
             info,
             None,
             None,
             None,
             None,
-            &mut descriptor,
+            Some(&mut descriptor),
         )
     };
     if status != ERROR_SUCCESS {
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
         return Err(format!("pipe security query failed: {status:?}"));
     }
     let text = unsafe {
@@ -294,6 +314,9 @@ pub fn pipe_security_sddl(full_name: &str) -> Result<String, String> {
         LocalFree(Some(HLOCAL(out.as_ptr() as _)));
         text
     };
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
     Ok(text)
 }
 
