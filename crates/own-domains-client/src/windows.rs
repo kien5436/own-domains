@@ -109,6 +109,10 @@ fn strip_long_prefix(path: &str) -> &str {
 /// where no pin is needed.
 struct ServerGuard(Option<HANDLE>);
 
+// The handle is transferred by value only; no shared references cross
+// threads, so sending ownership is sound.
+unsafe impl Send for ServerGuard {}
+
 impl Drop for ServerGuard {
     fn drop(&mut self) {
         if let Some(handle) = self.0 {
@@ -175,11 +179,20 @@ fn connect_pipe(endpoint: &Endpoint, timeout: Duration) -> Result<PipeStream, Cl
     }
 }
 
-fn verify_server(pipe: HANDLE, timeout: Duration) -> Result<ServerGuard, ClientError> {
-    let _ = timeout;
+/// Server PID for an open pipe. A closed or vanished server surfaces here, so
+/// this is identification (retryable), not verification (fatal on mismatch).
+fn identify_server(pipe: HANDLE) -> Result<u32, io::Error> {
     let mut pid = 0u32;
-    unsafe { GetNamedPipeServerProcessId(pipe, &mut pid) }
-        .map_err(|error| untrusted(format!("cannot identify pipe server: {error}")))?;
+    unsafe { GetNamedPipeServerProcessId(pipe, &mut pid) }.map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::ConnectionRefused,
+            format!("pipe server vanished during handshake: {error}"),
+        )
+    })?;
+    Ok(pid)
+}
+
+fn verify_server(pid: u32) -> Result<ServerGuard, ClientError> {
     if pid == unsafe { GetCurrentProcessId() } {
         // The server is our own process (in-process test server or embedded
         // daemon). The kernel reported the PID, so image, user, and session
@@ -188,6 +201,9 @@ fn verify_server(pipe: HANDLE, timeout: Duration) -> Result<ServerGuard, ClientE
     }
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
         .map_err(|error| untrusted(format!("cannot open pipe server {pid}: {error}")))?;
+    // Guarded from here on: every early return drops the handle.
+    let server = ServerGuard(Some(process));
+    let process = server.0.unwrap();
 
     let image = unsafe {
         let mut buf = vec![0u16; 32768];
@@ -198,24 +214,13 @@ fn verify_server(pipe: HANDLE, timeout: Duration) -> Result<ServerGuard, ClientE
             PWSTR(buf.as_mut_ptr()),
             &mut len,
         )
-        .map_err(|error| {
-            let _ = CloseHandle(process);
-            untrusted(format!("cannot read pipe server image: {error}"))
-        })?;
+        .map_err(|error| untrusted(format!("cannot read pipe server image: {error}")))?;
         String::from_utf16_lossy(&buf[..len as usize])
     };
     let expected = expected_daemon_image()
         .and_then(|path| canonical(&path))
-        .map_err(|message| {
-            unsafe {
-                let _ = CloseHandle(process);
-            }
-            untrusted(message)
-        })?;
+        .map_err(untrusted)?;
     if strip_long_prefix(&image).to_lowercase() != expected {
-        unsafe {
-            let _ = CloseHandle(process);
-        }
         return Err(untrusted(format!(
             "pipe server image is not the expected daemon: {image}"
         )));
@@ -237,29 +242,24 @@ fn verify_server(pipe: HANDLE, timeout: Duration) -> Result<ServerGuard, ClientE
         dwLowDateTime: 0,
         dwHighDateTime: 0,
     };
-    unsafe { GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user) }.map_err(
-        |error| {
-            unsafe {
-                let _ = CloseHandle(process);
-            }
-            untrusted(format!("pipe server vanished during verification: {error}"))
-        },
-    )?;
+    // Liveness proof; the open handle below pins the PID for the connection.
+    unsafe { GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user) }
+        .map_err(|error| untrusted(format!("pipe server vanished during verification: {error}")))?;
     let _ = creation;
 
     let server_sid = unsafe {
         let mut token = HANDLE::default();
-        OpenProcessToken(process, TOKEN_QUERY, &mut token).map_err(|error| {
-            let _ = CloseHandle(process);
-            untrusted(format!("cannot open pipe server token: {error}"))
-        })?;
+        OpenProcessToken(process, TOKEN_QUERY, &mut token)
+            .map_err(|error| untrusted(format!("cannot open pipe server token: {error}")))?;
         let sid = (|| {
             let mut needed = 0u32;
             let _ = GetTokenInformation(token, TokenUser, None, 0, &mut needed);
             if needed == 0 {
                 return Err("pipe server token has no user".to_string());
             }
-            let mut raw = vec![0u8; needed as usize];
+            // TOKEN_USER requires 8-byte alignment; a u8 buffer does not
+            // guarantee it.
+            let mut raw = vec![0u64; needed as usize / 8 + 1];
             GetTokenInformation(
                 token,
                 TokenUser,
@@ -282,9 +282,6 @@ fn verify_server(pipe: HANDLE, timeout: Duration) -> Result<ServerGuard, ClientE
     let own_sid = own_domains_protocol::pipe::current_user_sid()
         .map_err(|message| untrusted(format!("cannot read current user: {message}")))?;
     if server_sid != own_sid {
-        unsafe {
-            let _ = CloseHandle(process);
-        }
         return Err(untrusted("pipe server runs as a different user".into()));
     }
 
@@ -295,20 +292,23 @@ fn verify_server(pipe: HANDLE, timeout: Duration) -> Result<ServerGuard, ClientE
             &mut own_session,
         ))
     }
-    .map_err(|error| {
-        unsafe {
-            let _ = CloseHandle(process);
-        }
-        untrusted(format!("cannot read session: {error}"))
-    })?;
+    .map_err(|error| untrusted(format!("cannot read session: {error}")))?;
     if server_session != own_session {
-        unsafe {
-            let _ = CloseHandle(process);
-        }
         return Err(untrusted("pipe server is in a different session".into()));
     }
 
-    Ok(ServerGuard(Some(process)))
+    Ok(server)
+}
+
+/// Platform launch tweaks for the daemon child process.
+///
+/// A GUI-launched daemon must not flash a console window; the Job Object is
+/// the crash backstop, not a visible console.
+pub(crate) fn configure_daemon_command(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW. The daemon never needs a console; Ctrl handling
+    // arrives separately via SetConsoleCtrlHandler.
+    command.creation_flags(0x0800_0000);
 }
 
 #[derive(Clone)]
@@ -339,7 +339,7 @@ impl Client {
     }
 
     pub fn subscribe(&self, after_sequence: Option<u64>) -> Result<EventStream, ClientError> {
-        let (mut stream, _server) = self.open_verified(self.timeout)?;
+        let (mut stream, server) = self.open_verified(self.timeout)?;
         handshake(&mut stream)?;
         exchange(&mut stream, Command::Subscribe { after_sequence })?;
         let cancel = Arc::new(AtomicBool::new(false));
@@ -348,6 +348,7 @@ impl Client {
             pipe: stream,
             pending: Vec::new(),
             cancel,
+            _server: server,
         })
     }
 
@@ -355,10 +356,23 @@ impl Client {
         let Endpoint::NamedPipe(_) = &self.endpoint else {
             return Err(unsupported(&self.endpoint));
         };
-        let stream = connect_pipe(&self.endpoint, timeout)?;
+        // The server may close its instance between our connect and our
+        // identity query; retry the pair a few times before giving up.
+        let mut attempts = 0;
+        let (stream, pid) = loop {
+            let stream = connect_pipe(&self.endpoint, timeout)?;
+            match identify_server(stream.handle()) {
+                Ok(pid) => break (stream, pid),
+                Err(_) if attempts < 2 => {
+                    attempts += 1;
+                    continue;
+                }
+                Err(source) => return Err(unavailable(&self.endpoint, source)),
+            }
+        };
         // On failure the stream drops here and closes the pipe; on success the
         // guard keeps the server PID pinned for the life of this connection.
-        let server = verify_server(stream.handle(), timeout)?;
+        let server = verify_server(pid)?;
         Ok((stream, server))
     }
 }
@@ -367,6 +381,7 @@ pub struct EventStream {
     pipe: PipeStream,
     pending: Vec<u8>,
     cancel: Arc<AtomicBool>,
+    _server: ServerGuard,
 }
 
 pub struct EventStreamCancellation {

@@ -7,15 +7,16 @@
 
 use crate::error::ClientError;
 use own_domains_protocol::{
-    Command, CommandResult, EventEnvelope, PROTOCOL_VERSION, ProtocolError, RequestEnvelope,
-    ResponseEnvelope, read_frame, write_json_line,
+    Command, CommandResult, EventEnvelope, MAX_FRAME, PROTOCOL_VERSION, ProtocolError,
+    RequestEnvelope, ResponseEnvelope, read_frame, write_json_line,
 };
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 
 pub fn exchange<S: Read + Write>(
     stream: &mut S,
     command: Command,
 ) -> Result<CommandResult, ClientError> {
+    let subscribed = matches!(command, Command::Subscribe { .. });
     let request_id = uuid::Uuid::new_v4().to_string();
     let request = RequestEnvelope {
         protocol_version: PROTOCOL_VERSION,
@@ -23,15 +24,19 @@ pub fn exchange<S: Read + Write>(
         command,
     };
     write_json_line(stream, &request)?;
-    // Do not prefetch bytes belonging to the subscription's first event.
-    let line = match read_frame(stream)? {
-        Some(line) => line,
-        None => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "daemon disconnected mid-frame",
-            )
-            .into());
+    // A Subscribe response is followed by the event stream on the same
+    // connection, so its frame must be read byte-precise with no prefetch.
+    // Every other command gets a fresh connection per request, where
+    // buffering is safe and avoids a syscall per byte on large frames.
+    let line = if subscribed {
+        match read_frame(stream)? {
+            Some(line) => line,
+            None => return Err(unexpected_eof()),
+        }
+    } else {
+        match read_buffered(stream)? {
+            Some(line) => line,
+            None => return Err(unexpected_eof()),
         }
     };
     let response: ResponseEnvelope = serde_json::from_slice(&line)?;
@@ -56,6 +61,50 @@ pub fn exchange<S: Read + Write>(
             received,
         }),
         Err(error) => Err(ClientError::Protocol(error)),
+    }
+}
+
+fn unexpected_eof() -> ClientError {
+    std::io::Error::new(
+        std::io::ErrorKind::UnexpectedEof,
+        "daemon disconnected mid-frame",
+    )
+    .into()
+}
+
+/// Single-frame read with chunked syscalls. Only for connections that carry
+/// no further frames: the buffer may prefetch past the newline.
+fn read_buffered<S: Read>(stream: &mut S) -> std::io::Result<Option<Vec<u8>>> {
+    let mut reader = BufReader::with_capacity(8192, stream);
+    let mut line = Vec::new();
+    loop {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "daemon disconnected mid-frame",
+            ));
+        }
+        let end = chunk
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|position| position + 1)
+            .unwrap_or(chunk.len());
+        if line.len() + end > MAX_FRAME + 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "response exceeds 1 MiB",
+            ));
+        }
+        line.extend_from_slice(&chunk[..end]);
+        reader.consume(end);
+        if line.ends_with(b"\n") {
+            line.pop();
+            return Ok(Some(line));
+        }
     }
 }
 

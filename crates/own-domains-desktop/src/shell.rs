@@ -84,7 +84,7 @@ impl LifecycleBackend for Host {
             Ok(client) => stop_and_wait(&client, &state.paths.endpoint, Duration::from_secs(5))
                 .map_err(lifecycle_error)?,
             Err(ClientError::DaemonUnavailable { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound => {}
+                if state.paths.endpoint.is_absent_error(&source) => {}
             Err(error) => return Err(error.into()),
         }
         state

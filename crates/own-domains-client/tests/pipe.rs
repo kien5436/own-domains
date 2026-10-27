@@ -69,7 +69,7 @@ fn client_roundtrips_commands_over_the_pipe() {
     ));
     IpcServer::request_shutdown(&endpoint);
     runner.join().unwrap().unwrap();
-    assert!(!endpoint.is_present());
+    assert!(!endpoint.is_present().unwrap());
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn stop_waits_for_shutdown_and_releases_the_name() {
     let client = Client::with_timeout(&endpoint, Duration::from_secs(10)).unwrap();
     stop_and_wait(&client, &endpoint, Duration::from_secs(10)).unwrap();
     runner.join().unwrap().unwrap();
-    assert!(!endpoint.is_present());
+    assert!(!endpoint.is_present().unwrap());
     IpcServer::bind(&endpoint, state).unwrap();
 }
 

@@ -74,18 +74,24 @@ impl Endpoint {
         }
     }
 
-    /// Whether an endpoint file currently exists. Used to wait for daemon shutdown.
-    pub fn is_present(&self) -> bool {
+    /// Whether an endpoint server currently exists. Used to wait for daemon shutdown.
+    /// `Ok(false)` is confirmed absence; `Err` means the endpoint could not be
+    /// inspected at all and shutdown is unconfirmed.
+    pub fn is_present(&self) -> io::Result<bool> {
         match self {
-            Self::Unix(path) => std::fs::symlink_metadata(path).is_ok(),
+            Self::Unix(path) => match std::fs::symlink_metadata(path) {
+                Ok(_) => Ok(true),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+                Err(error) => Err(error),
+            },
             Self::NamedPipe(_) => {
                 #[cfg(windows)]
                 {
-                    crate::pipe::server_present(&self.display_name())
+                    Ok(crate::pipe::server_present(&self.display_name()))
                 }
                 #[cfg(not(windows))]
                 {
-                    false
+                    Ok(false)
                 }
             }
         }
@@ -119,8 +125,11 @@ pub fn read_frame<R: Read>(stream: &mut R) -> io::Result<Option<Vec<u8>>> {
 }
 
 pub fn write_json_line<W: Write>(stream: &mut W, value: &impl serde::Serialize) -> io::Result<()> {
-    serde_json::to_writer(&mut *stream, value)?;
-    stream.write_all(b"\n")
+    // Serialize before touching the stream so a failure cannot leave a
+    // partial frame behind.
+    let mut frame = serde_json::to_vec(value)?;
+    frame.push(b'\n');
+    stream.write_all(&frame)
 }
 
 #[cfg(test)]
@@ -174,7 +183,7 @@ mod tests {
         assert!(
             !endpoint.is_absent_error(&io::Error::new(io::ErrorKind::PermissionDenied, "denied"))
         );
-        assert!(!endpoint.is_present());
+        assert!(!endpoint.is_present().unwrap());
     }
 
     #[test]

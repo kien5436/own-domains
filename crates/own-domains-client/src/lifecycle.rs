@@ -1,3 +1,7 @@
+#[cfg(unix)]
+use crate::unix::configure_daemon_command;
+#[cfg(windows)]
+use crate::windows::configure_daemon_command;
 use crate::{Client, ClientError};
 use own_domains_protocol::{Command, CommandResult, Endpoint, RuntimeStatus};
 use std::{
@@ -39,6 +43,7 @@ pub fn connect_or_launch(
         Err(error) => return Err(error.into()),
     }
     let mut command = ProcessCommand::new(daemon_executable);
+    configure_daemon_command(&mut command);
     command
         .arg("--state-dir")
         .arg(state_dir)
@@ -89,7 +94,7 @@ pub fn stop_and_wait(
     }
     let deadline = Instant::now() + timeout;
     loop {
-        if !endpoint.is_present() {
+        if !endpoint.is_present().map_err(LifecycleError::Inspect)? {
             return Ok(());
         }
         if Instant::now() >= deadline {

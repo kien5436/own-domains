@@ -9,6 +9,9 @@ use std::{
     time::Duration,
 };
 
+/// Platform launch tweaks for the daemon child process.
+pub(crate) fn configure_daemon_command(_command: &mut std::process::Command) {}
+
 #[derive(Clone)]
 pub struct Client {
     endpoint: Endpoint,

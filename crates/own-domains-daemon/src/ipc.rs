@@ -376,14 +376,17 @@ impl IpcServer {
         while !self.shutdown.load(Ordering::Acquire) {
             let instance = match pending.take() {
                 Some(handle) => handle,
+                // Instance creation can fail transiently (exhausted
+                // instances, scarce resources): back off and keep serving
+                // existing clients rather than tearing down the daemon.
                 None => match Self::create_instance(&self.full_name, &self.sid, false) {
                     Ok(instance) => instance,
-                    Err(error) => {
+                    Err(_) => {
                         thread::sleep(Duration::from_millis(100));
                         if self.shutdown.load(Ordering::Acquire) {
                             return Ok(());
                         }
-                        return Err(error);
+                        continue;
                     }
                 },
             };
@@ -420,8 +423,12 @@ impl IpcServer {
                             Err(_) => break,
                         }
                     } else if self.shutdown.load(Ordering::Acquire) {
+                        // Drain before the stack OVERLAPPED is freed: the
+                        // kernel may still write completion status into it.
                         unsafe {
                             let _ = CancelIoEx(instance, Some(&overlapped));
+                            let mut unused = 0u32;
+                            let _ = GetOverlappedResult(instance, &overlapped, &mut unused, true);
                         }
                         break;
                     }
@@ -456,7 +463,11 @@ impl IpcServer {
                 Ok(stream) => {
                     let state = self.state.clone();
                     let shutdown = self.shutdown.clone();
-                    thread::spawn(move || handle_client(stream, state, shutdown));
+                    thread::spawn(move || {
+                        let mut stream = stream;
+                        stream.set_no_timeout();
+                        handle_client(stream, state, shutdown)
+                    });
                 }
                 Err(_) => unsafe {
                     let _ = CloseHandle(instance);

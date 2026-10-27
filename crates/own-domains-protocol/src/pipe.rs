@@ -52,7 +52,9 @@ pub fn current_user_sid() -> Result<String, String> {
             if needed == 0 {
                 return Err("pipe: token has no user".to_string());
             }
-            let mut raw = vec![0u8; needed as usize];
+            // TOKEN_USER requires 8-byte alignment; a u8 buffer does not
+            // guarantee it.
+            let mut raw = vec![0u64; needed as usize / 8 + 1];
             GetTokenInformation(
                 token,
                 TokenUser,
@@ -82,7 +84,7 @@ pub fn current_user_sid() -> Result<String, String> {
 pub struct PipeStream {
     handle: HANDLE,
     event: HANDLE,
-    timeout_ms: u32,
+    timeout_ms: Option<u32>,
     cancel: Option<Arc<AtomicBool>>,
 }
 
@@ -97,7 +99,7 @@ impl PipeStream {
         Ok(Self {
             handle,
             event,
-            timeout_ms: timeout.as_millis().min(u32::MAX as u128) as u32,
+            timeout_ms: Some(timeout.as_millis().min(u32::MAX as u128) as u32),
             cancel: None,
         })
     }
@@ -190,14 +192,23 @@ impl PipeStream {
         self.cancel = Some(cancel);
     }
 
+    /// Wait without a deadline, as the Unix blocking stream does. Used for
+    /// server-side connections, where an idle subscription must survive.
+    /// Client operations keep their own timeouts.
+    pub fn set_no_timeout(&mut self) {
+        self.timeout_ms = None;
+    }
+
     /// Wait for a pending overlapped operation, polling a cancellation flag.
     ///
-    /// `CancelIoEx(handle, NULL)` only cancels the calling thread's I/O, so a
-    /// cross-thread cancel cannot name the in-flight operation. Instead the
-    /// waiter slices at 50 ms and checks the shared flag; cancellation lands
-    /// within one slice with no handle juggling.
+    /// The cancelling thread never holds the in-flight `OVERLAPPED` (it is
+    /// stack-local to the waiting `read`/`write`), so instead of naming the
+    /// operation to `CancelIoEx` across threads, the waiter slices at 50 ms
+    /// and checks the shared flag; cancellation lands within one slice.
     fn complete(&self, overlapped: &OVERLAPPED, done: &mut u32) -> io::Result<()> {
-        let deadline = Instant::now() + Duration::from_millis(self.timeout_ms as u64);
+        let deadline = self
+            .timeout_ms
+            .map(|ms| Instant::now() + Duration::from_millis(ms as u64));
         loop {
             if self
                 .cancel
@@ -213,18 +224,26 @@ impl PipeStream {
                     "pipe operation cancelled",
                 ));
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                unsafe {
+            let remaining =
+                deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+            if remaining.is_some_and(|remaining| remaining.is_zero()) {
+                // The operation may have completed between the deadline check
+                // and the cancel: only report a timeout when the drain fails.
+                let drained = unsafe {
                     let _ = CancelIoEx(self.handle, Some(overlapped));
-                    let _ = GetOverlappedResult(self.handle, overlapped, done, true);
+                    GetOverlappedResult(self.handle, overlapped, done, true)
+                };
+                if drained.is_ok() {
+                    return Ok(());
                 }
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "pipe operation timed out",
                 ));
             }
-            let slice = remaining.as_millis().min(50) as u32;
+            let slice = remaining
+                .map(|remaining| remaining.as_millis().clamp(1, 50) as u32)
+                .unwrap_or(50);
             let waited = unsafe { WaitForSingleObject(self.event, slice) };
             if waited == WAIT_OBJECT_0 {
                 unsafe {
@@ -234,6 +253,7 @@ impl PipeStream {
             } else if waited != WAIT_TIMEOUT {
                 unsafe {
                     let _ = CancelIoEx(self.handle, Some(overlapped));
+                    let _ = GetOverlappedResult(self.handle, overlapped, done, true);
                 }
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionAborted,
@@ -309,10 +329,13 @@ pub fn pipe_security_sddl(full_name: &str) -> Result<String, String> {
             None,
         );
         LocalFree(Some(HLOCAL(descriptor.0 as _)));
-        result.map_err(|error| format!("pipe SDDL conversion failed: {error}"))?;
-        let text = String::from_utf16_lossy(out.as_wide());
-        LocalFree(Some(HLOCAL(out.as_ptr() as _)));
-        text
+        result
+            .map(|()| {
+                let text = String::from_utf16_lossy(out.as_wide());
+                LocalFree(Some(HLOCAL(out.as_ptr() as _)));
+                text
+            })
+            .map_err(|error| format!("pipe SDDL conversion failed: {error}"))?
     };
     unsafe {
         let _ = CloseHandle(handle);
@@ -322,8 +345,8 @@ pub fn pipe_security_sddl(full_name: &str) -> Result<String, String> {
 
 /// Whether a pipe server currently owns `full_name` (`\\.\pipe\...`).
 ///
-/// `WaitNamedPipeW` with a zero timeout never blocks: success and
-/// pipe-busy/access-denied all mean present; only file-not-found means absent.
+/// `WaitNamedPipeW` with a zero timeout waits up to the server default (50 ms: instances use zero): success
+/// and pipe-busy/access-denied all mean present; only file-not-found means absent.
 pub fn server_present(full_name: &str) -> bool {
     let wide: Vec<u16> = full_name.encode_utf16().chain([0]).collect();
     unsafe {
@@ -342,7 +365,7 @@ pub fn default_pipe_name(state_dir: &Path) -> Result<String, String> {
     use windows::Win32::{
         Globalization::{LCMAP_LOWERCASE, LCMapStringEx, LOCALE_NAME_INVARIANT},
         Storage::FileSystem::GetFullPathNameW,
-        UI::Shell::{PATHCCH_OPTIONS, PathCchCanonicalizeEx},
+        UI::Shell::{PATHCCH_ALLOW_LONG_PATHS, PathCchCanonicalizeEx},
     };
 
     let sid = current_user_sid()?;
@@ -360,7 +383,7 @@ pub fn default_pipe_name(state_dir: &Path) -> Result<String, String> {
         PathCchCanonicalizeEx(
             canon.as_mut_slice(),
             PCWSTR(full.as_ptr()),
-            PATHCCH_OPTIONS(0),
+            PATHCCH_ALLOW_LONG_PATHS,
         )
     }
     .map_err(|error| format!("pipe derivation: cannot canonicalize state directory: {error}"))?;
@@ -419,4 +442,35 @@ pub fn default_pipe_name(state_dir: &Path) -> Result<String, String> {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     Ok(format!("own-domains-{hex}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_pipe_name;
+    use std::path::PathBuf;
+
+    fn named(state_dir: &str) -> String {
+        default_pipe_name(&PathBuf::from(state_dir)).unwrap()
+    }
+
+    #[test]
+    fn derivation_ignores_case_separators_and_trailing_slashes() {
+        let base = std::env::temp_dir().join("od-case-sep");
+        let lower = base.to_string_lossy().to_lowercase();
+        let upper = base.to_string_lossy().to_uppercase();
+        let expected = named(&lower);
+        assert!(expected.starts_with("own-domains-"));
+        assert_eq!(expected.len(), "own-domains-".len() + 32);
+        assert_eq!(named(&upper), expected);
+        assert_eq!(named(&lower.replace('\\', "/")), expected);
+        assert_eq!(named(&format!("{lower}\\")), expected);
+    }
+
+    #[test]
+    fn derivation_supports_long_paths() {
+        let long: String = "d".repeat(200);
+        let dir = std::env::temp_dir().join(format!("od-long-{long}"));
+        let first = default_pipe_name(&dir).unwrap();
+        assert_eq!(default_pipe_name(&dir).unwrap(), first);
+    }
 }
