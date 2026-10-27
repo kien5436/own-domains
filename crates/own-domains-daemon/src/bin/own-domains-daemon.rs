@@ -1,11 +1,13 @@
 use own_domains_core::{DomainService, SettingsStore};
 use own_domains_daemon::{DaemonState, IpcServer, ProcessLock};
+use own_domains_protocol::Endpoint;
 use std::{path::PathBuf, sync::Arc};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let mut state_dir = PathBuf::from(".own-domains");
     let mut socket = None;
+    let mut pipe = None;
     let mut resources = None;
     let mut sidecars = None;
     let mut settings_only = false;
@@ -19,6 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     args.next().ok_or("--socket requires a path")?,
                 ))
             }
+            "--pipe" => pipe = Some(args.next().ok_or("--pipe requires a name")?),
             "--resources" => {
                 resources = Some(PathBuf::from(
                     args.next().ok_or("--resources requires a path")?,
@@ -33,7 +36,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             other => return Err(format!("unknown option: {other}").into()),
         }
     }
-    let socket = socket.unwrap_or_else(|| state_dir.join("daemon.sock"));
+    let endpoint = match (socket, pipe) {
+        (Some(_), Some(_)) => return Err("use either --socket or --pipe".into()),
+        (_, Some(name)) => Endpoint::named_pipe(name)?,
+        (Some(path), None) => Endpoint::unix(path),
+        (None, None) => Endpoint::default_for_state_dir(&state_dir)?,
+    };
     let _lock = ProcessLock::acquire(&state_dir)?;
     let runtime = own_domains_daemon::platform::runtime_backend(
         &state_dir,
@@ -45,14 +53,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         DomainService::new(SettingsStore::new(&state_dir)),
         runtime,
     ));
-    let server = IpcServer::bind(&socket, state)?;
-    install_shutdown_signals(socket)?;
+    let server = IpcServer::bind(&endpoint, state)?;
+    install_shutdown_signals(endpoint)?;
     server.run()?;
     Ok(())
 }
 
 #[cfg(unix)]
-fn install_shutdown_signals(socket: PathBuf) -> std::io::Result<()> {
+fn install_shutdown_signals(endpoint: Endpoint) -> std::io::Result<()> {
     use std::sync::atomic::{AtomicI32, Ordering};
 
     static SIGNAL_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
@@ -90,13 +98,17 @@ fn install_shutdown_signals(socket: PathBuf) -> std::io::Result<()> {
             if read <= 0 {
                 return;
             }
-            IpcServer::request_shutdown(&socket);
+            IpcServer::request_shutdown(&endpoint);
         }
     });
     Ok(())
 }
 
+// TODO: install a SetConsoleCtrlHandler handler that calls
+// `IpcServer::request_shutdown`. Safe to defer: named pipes leave no
+// filesystem residue, so an abrupt exit still releases the endpoint name,
+// and `own-domains stop` performs the graceful path over the pipe.
 #[cfg(not(unix))]
-fn install_shutdown_signals(_socket: PathBuf) -> std::io::Result<()> {
+fn install_shutdown_signals(_endpoint: Endpoint) -> std::io::Result<()> {
     Ok(())
 }

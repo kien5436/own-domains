@@ -1,39 +1,45 @@
+#[cfg(unix)]
 use own_domains_core::{DomainService, SettingsStore};
+#[cfg(unix)]
 use own_domains_daemon::{DaemonState, IpcServer, UnavailableRuntimeBackend};
-use own_domains_desktop::bridge::{BridgeError, DesktopBridge, DesktopPaths};
+use own_domains_desktop::bridge::DesktopPaths;
+#[cfg(unix)]
+use own_domains_desktop::bridge::{BridgeError, DesktopBridge};
+use own_domains_protocol::Endpoint;
+#[cfg(unix)]
 use own_domains_protocol::{Command, CommandResult, ProtocolError};
-use std::{path::Path, sync::Arc, thread};
+use std::path::Path;
+#[cfg(unix)]
+use std::{sync::Arc, thread};
 
 #[test]
 fn rejects_missing_and_relative_state_paths_without_creating_settings() {
-    assert!(DesktopPaths::new(None, None).is_err());
-    assert!(DesktopPaths::new(Some(Path::new("relative")), None).is_err());
-    let paths = DesktopPaths::new(Some(Path::new("/tmp/explicit-state")), None).unwrap();
-    assert_eq!(paths.socket, Path::new("/tmp/explicit-state/daemon.sock"));
-    assert!(
-        DesktopPaths::new(
-            Some(Path::new("/tmp/state")),
-            Some(Path::new("relative.sock"))
-        )
-        .is_err()
-    );
+    let explicit = std::env::temp_dir().join("od-explicit-state");
+    let other = std::env::temp_dir().join("od-state");
+    assert!(DesktopPaths::new(None, None, None).is_err());
+    assert!(DesktopPaths::new(Some(Path::new("relative")), None, None).is_err());
+    let paths = DesktopPaths::new(Some(&explicit), None, None).unwrap();
+    assert_eq!(paths.endpoint, Endpoint::unix(explicit.join("daemon.sock")));
+    assert!(DesktopPaths::new(Some(&other), Some(Path::new("relative.sock")), None).is_err());
 }
 
 #[test]
+#[cfg(unix)]
 fn bridge_preserves_errors_and_uses_only_the_selected_daemon() {
     let directory = std::env::temp_dir().join(format!("od-{}", uuid::Uuid::new_v4()));
     let socket = directory.join("d.sock");
+    let endpoint = Endpoint::unix(socket);
     assert!(matches!(
-        DesktopBridge::connect(&socket),
+        DesktopBridge::connect(&endpoint),
         Err(BridgeError::Unavailable { .. })
     ));
     let state = Arc::new(DaemonState::new(
         DomainService::new(SettingsStore::new(&directory)),
         Arc::new(UnavailableRuntimeBackend),
     ));
-    let server = IpcServer::bind(&socket, state).unwrap();
+    let server = IpcServer::bind(&endpoint, state).unwrap();
     let runner = thread::spawn(move || server.run().unwrap());
-    let bridge = DesktopBridge::connect(&socket).unwrap();
+    let bridge = DesktopBridge::connect(&endpoint).unwrap();
     assert!(matches!(
         bridge.request(Command::Snapshot).unwrap(),
         CommandResult::Snapshot(_)

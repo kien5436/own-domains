@@ -68,7 +68,7 @@ impl LifecycleBackend for Host {
         let _guard = state.operation.lock().unwrap_or_else(|p| p.into_inner());
         let client = connect_or_launch(
             &state.paths.state_dir,
-            &state.paths.socket,
+            &state.paths.endpoint,
             &state.executable,
             START_TIMEOUT,
         )
@@ -80,11 +80,11 @@ impl LifecycleBackend for Host {
     fn stop(&self) -> Result<(), BridgeError> {
         let state = self.0.state::<DesktopState>();
         let _guard = state.operation.lock().unwrap_or_else(|p| p.into_inner());
-        match Client::connect(&state.paths.socket) {
-            Ok(client) => stop_and_wait(&client, &state.paths.socket, Duration::from_secs(5))
+        match Client::connect(&state.paths.endpoint) {
+            Ok(client) => stop_and_wait(&client, &state.paths.endpoint, Duration::from_secs(5))
                 .map_err(lifecycle_error)?,
             Err(ClientError::DaemonUnavailable { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound => {}
+                if state.paths.endpoint.is_absent_error(&source) => {}
             Err(error) => return Err(error.into()),
         }
         state
@@ -144,7 +144,7 @@ async fn daemon_request(
         });
     }
     blocking(move || {
-        DesktopBridge::connect(&app.state::<DesktopState>().paths.socket)?.request(command)
+        DesktopBridge::connect(&app.state::<DesktopState>().paths.endpoint)?.request(command)
     })
     .await
 }
@@ -169,7 +169,7 @@ async fn daemon_subscribe(
     require_main(&window)?;
     blocking(move || {
         let state = app.state::<DesktopState>();
-        let bridge = DesktopBridge::connect(&state.paths.socket)?;
+        let bridge = DesktopBridge::connect(&state.paths.endpoint)?;
         let emitter = app.clone();
         let sink = Arc::new(move |subscription_id, event| match event {
             Ok(envelope) => {
@@ -261,6 +261,7 @@ fn desktop_error(
 fn configuration() -> Result<(DesktopPaths, PathBuf), String> {
     let mut state_dir = std::env::var_os("OWN_DOMAINS_STATE_DIR").map(PathBuf::from);
     let mut socket = None;
+    let mut pipe = None;
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -274,16 +275,20 @@ fn configuration() -> Result<(DesktopPaths, PathBuf), String> {
                     args.next().ok_or("--socket requires a path")?,
                 ))
             }
+            "--pipe" => pipe = Some(args.next().ok_or("--pipe requires a name")?),
             other => return Err(format!("unknown desktop argument: {other}")),
         }
     }
-    let paths = DesktopPaths::new(state_dir.as_deref(), socket.as_deref())
+    let paths = DesktopPaths::new(state_dir.as_deref(), socket.as_deref(), pipe.as_deref())
         .map_err(|error| format!("{error:?}"))?;
     let executable = match std::env::var_os("OWN_DOMAINS_DAEMON") {
         Some(path) => PathBuf::from(path),
         None => std::env::current_exe()
             .map_err(|error| error.to_string())?
-            .with_file_name("own-domains-daemon"),
+            .with_file_name(format!(
+                "own-domains-daemon{}",
+                std::env::consts::EXE_SUFFIX
+            )),
     };
     if !executable.is_absolute() {
         return Err("OWN_DOMAINS_DAEMON must be an absolute path".into());
@@ -407,9 +412,9 @@ pub fn run() {
             // macOS app-menu and dock Quit can bypass ExitRequested; stop the daemon
             // before the process leaves even when the guarded path was skipped.
             let state = handle.state::<DesktopState>();
-            if let Ok(client) = Client::connect(&state.paths.socket)
+            if let Ok(client) = Client::connect(&state.paths.endpoint)
                 && let Err(error) =
-                    stop_and_wait(&client, &state.paths.socket, Duration::from_secs(5))
+                    stop_and_wait(&client, &state.paths.endpoint, Duration::from_secs(5))
             {
                 eprintln!("desktop exit cleanup failed: {error}");
             }

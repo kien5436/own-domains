@@ -1,0 +1,5 @@
+# Byte-exact test fixtures: include_str! embeds raw bytes and the renderers
+# emit LF, so these files must keep LF on every platform (Git for Windows
+# checks out CRLF by default, which breaks exact-string assertions).
+*.expected text eol=lf
+*.json text eol=lf

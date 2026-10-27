@@ -1,35 +1,20 @@
-use own_domains_protocol::{
-    Command, CommandResult, EventEnvelope, PROTOCOL_VERSION, ProtocolError, RequestEnvelope,
-    ResponseEnvelope,
+use crate::{
+    error::ClientError,
+    exchange::{exchange, handshake, parse_event},
 };
+use own_domains_protocol::{Command, CommandResult, Endpoint, EventEnvelope};
 use std::{
-    io::{BufReader, ErrorKind, Read, Write},
+    io::{BufReader, ErrorKind, Read},
     os::unix::net::UnixStream,
-    path::{Path, PathBuf},
     time::Duration,
 };
 
-#[derive(Debug, thiserror::Error)]
-pub enum ClientError {
-    #[error("daemon unavailable at {path}: {source}", path = path.display())]
-    DaemonUnavailable {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("incompatible protocol: supported {supported}, received {received}")]
-    IncompatibleVersion { supported: u16, received: u16 },
-    #[error("daemon protocol error: {0:?}")]
-    Protocol(ProtocolError),
-    #[error("IPC error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("invalid IPC message: {0}")]
-    InvalidMessage(#[from] serde_json::Error),
-}
+/// Platform launch tweaks for the daemon child process.
+pub(crate) fn configure_daemon_command(_command: &mut std::process::Command) {}
 
 #[derive(Clone)]
 pub struct Client {
-    path: PathBuf,
+    endpoint: Endpoint,
     timeout: Duration,
 }
 
@@ -39,31 +24,18 @@ pub struct EventStream {
 }
 
 impl Client {
-    pub fn connect(path: &Path) -> Result<Self, ClientError> {
-        Self::with_timeout(path, Duration::from_secs(5))
+    pub fn connect(endpoint: &Endpoint) -> Result<Self, ClientError> {
+        Self::with_timeout(endpoint, Duration::from_secs(5))
     }
 
-    pub fn with_timeout(path: &Path, timeout: Duration) -> Result<Self, ClientError> {
+    pub fn with_timeout(endpoint: &Endpoint, timeout: Duration) -> Result<Self, ClientError> {
         let client = Self {
-            path: path.to_path_buf(),
+            endpoint: endpoint.clone(),
             timeout,
         };
         let mut stream = client.open()?;
-        let result = exchange(&mut stream, Command::Handshake)?;
-        match result {
-            CommandResult::Handshake {
-                protocol_version: PROTOCOL_VERSION,
-            } => Ok(client),
-            CommandResult::Handshake { protocol_version } => {
-                Err(ClientError::IncompatibleVersion {
-                    supported: PROTOCOL_VERSION,
-                    received: protocol_version,
-                })
-            }
-            _ => Err(ClientError::Protocol(ProtocolError::InvalidRequest {
-                message: "daemon did not return handshake".into(),
-            })),
-        }
+        handshake(&mut stream)?;
+        Ok(client)
     }
 
     pub fn request(&self, command: Command) -> Result<CommandResult, ClientError> {
@@ -83,9 +55,18 @@ impl Client {
     }
 
     fn open(&self) -> Result<UnixStream, ClientError> {
+        let Endpoint::Unix(path) = &self.endpoint else {
+            return Err(ClientError::DaemonUnavailable {
+                endpoint: self.endpoint.display_name(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "named-pipe endpoints need the Windows client",
+                ),
+            });
+        };
         let stream =
-            UnixStream::connect(&self.path).map_err(|source| ClientError::DaemonUnavailable {
-                path: self.path.clone(),
+            UnixStream::connect(path).map_err(|source| ClientError::DaemonUnavailable {
+                endpoint: self.endpoint.display_name(),
                 source,
             })?;
         stream.set_read_timeout(Some(self.timeout))?;
@@ -126,14 +107,7 @@ impl EventStream {
                 }
                 Ok(_) if byte[0] == b'\n' => {
                     let frame = std::mem::take(&mut self.pending);
-                    let event: EventEnvelope = serde_json::from_slice(&frame)?;
-                    if event.protocol_version != PROTOCOL_VERSION {
-                        return Err(ClientError::IncompatibleVersion {
-                            supported: PROTOCOL_VERSION,
-                            received: event.protocol_version,
-                        });
-                    }
-                    return Ok(event);
+                    return parse_event(&frame);
                 }
                 Ok(_) => {
                     self.pending.push(byte[0]);
@@ -158,64 +132,6 @@ impl EventStream {
                 Err(error) => return Err(error.into()),
             }
         }
-    }
-}
-
-fn exchange(stream: &mut UnixStream, command: Command) -> Result<CommandResult, ClientError> {
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let request = RequestEnvelope {
-        protocol_version: PROTOCOL_VERSION,
-        request_id: request_id.clone(),
-        command,
-    };
-    let frame = serde_json::to_vec(&request)?;
-    stream.write_all(&frame)?;
-    stream.write_all(b"\n")?;
-    // Do not prefetch bytes belonging to the subscription's first event.
-    let mut line = Vec::new();
-    let mut byte = [0];
-    loop {
-        if stream.read(&mut byte)? == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "daemon disconnected mid-frame",
-            )
-            .into());
-        }
-        if byte[0] == b'\n' {
-            break;
-        }
-        line.push(byte[0]);
-        if line.len() > 1024 * 1024 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "response exceeds 1 MiB",
-            )
-            .into());
-        }
-    }
-    let response: ResponseEnvelope = serde_json::from_slice(&line)?;
-    if response.protocol_version != PROTOCOL_VERSION {
-        return Err(ClientError::IncompatibleVersion {
-            supported: PROTOCOL_VERSION,
-            received: response.protocol_version,
-        });
-    }
-    if response.request_id != request_id {
-        return Err(ClientError::Protocol(ProtocolError::InvalidRequest {
-            message: "request ID mismatch".into(),
-        }));
-    }
-    match response.result {
-        Ok(result) => Ok(result),
-        Err(ProtocolError::IncompatibleVersion {
-            supported,
-            received,
-        }) => Err(ClientError::IncompatibleVersion {
-            supported,
-            received,
-        }),
-        Err(error) => Err(ClientError::Protocol(error)),
     }
 }
 

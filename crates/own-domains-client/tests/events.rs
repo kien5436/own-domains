@@ -1,3 +1,4 @@
+#![cfg(unix)]
 use own_domains_client::{Client, ClientError};
 use own_domains_protocol::{CommandResult, PROTOCOL_VERSION, ResponseEnvelope};
 use std::{
@@ -65,7 +66,11 @@ fn subscription_preserves_partial_frames_across_idle_timeouts() {
             Duration::from_millis(300),
         ),
     ]);
-    let client = Client::with_timeout(&path, Duration::from_millis(100)).unwrap();
+    let client = Client::with_timeout(
+        &own_domains_client::Endpoint::unix(path),
+        Duration::from_millis(100),
+    )
+    .unwrap();
     let mut stream = client.subscribe(None).unwrap();
     assert_eq!(stream.recv().unwrap().sequence, 1);
     runner.join().unwrap();
@@ -73,7 +78,10 @@ fn subscription_preserves_partial_frames_across_idle_timeouts() {
 #[test]
 fn cancelling_idle_subscription_interrupts_reader() {
     let (path, runner) = server(vec![(vec![], Duration::from_millis(150))]);
-    let mut stream = Client::connect(&path).unwrap().subscribe(None).unwrap();
+    let mut stream = Client::connect(&own_domains_client::Endpoint::unix(path))
+        .unwrap()
+        .subscribe(None)
+        .unwrap();
     let cancel = stream.cancellation_handle().unwrap();
     let reader = thread::spawn(move || stream.recv());
     let start = Instant::now();
@@ -85,7 +93,10 @@ fn cancelling_idle_subscription_interrupts_reader() {
 #[test]
 fn rejects_incompatible_event_versions() {
     let (path, runner) = server(vec![(b"{\"protocolVersion\":3,\"sequence\":1,\"event\":{\"type\":\"settingsChanged\",\"payload\":{\"revision\":1}}}\n".to_vec(), Duration::ZERO)]);
-    let mut stream = Client::connect(&path).unwrap().subscribe(None).unwrap();
+    let mut stream = Client::connect(&own_domains_client::Endpoint::unix(path))
+        .unwrap()
+        .subscribe(None)
+        .unwrap();
     assert!(matches!(
         stream.recv(),
         Err(ClientError::IncompatibleVersion { received: 3, .. })

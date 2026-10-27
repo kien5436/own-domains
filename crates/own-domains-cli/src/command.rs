@@ -7,7 +7,7 @@ use own_domains_daemon::{
     DaemonState, ProcessLock, UnavailableRuntimeBackend,
     platform::{SetupApplyResult, SetupFailure, SetupPreview, SetupRequest, UninstallRequest},
 };
-use own_domains_protocol::{Command, CommandResult, ProtocolError};
+use own_domains_protocol::{Command, CommandResult, Endpoint, ProtocolError};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -21,6 +21,8 @@ pub struct Cli {
     pub state_dir: PathBuf,
     #[arg(long, global = true)]
     pub socket: Option<PathBuf>,
+    #[arg(long, global = true)]
+    pub pipe: Option<String>,
     #[arg(long, global = true)]
     pub json: bool,
     #[command(subcommand)]
@@ -128,18 +130,26 @@ pub fn execute(cli: Cli) -> CommandOutput {
     if let CliCommand::Uninstall { apply, purge } = &cli.command {
         return execute_uninstall(*apply, *purge, &cli.state_dir);
     }
-    let socket = cli
-        .socket
-        .clone()
-        .unwrap_or_else(|| cli.state_dir.join("daemon.sock"));
+    let endpoint = match (&cli.socket, &cli.pipe) {
+        (Some(_), Some(_)) => return CommandOutput::error(2, "use either --socket or --pipe"),
+        (_, Some(name)) => match Endpoint::named_pipe(name.clone()) {
+            Ok(endpoint) => endpoint,
+            Err(message) => return CommandOutput::error(2, message),
+        },
+        (Some(path), None) => Endpoint::unix(path.clone()),
+        (None, None) => match Endpoint::default_for_state_dir(&cli.state_dir) {
+            Ok(endpoint) => endpoint,
+            Err(message) => return CommandOutput::error(2, message),
+        },
+    };
     let client_timeout = if matches!(cli.command, CliCommand::Start) {
         Duration::from_secs(30)
     } else {
         Duration::from_secs(5)
     };
-    match Client::with_timeout(&socket, client_timeout) {
+    match Client::with_timeout(&endpoint, client_timeout) {
         Ok(client) if matches!(cli.command, CliCommand::Stop) => {
-            match stop_and_wait(&client, &socket, Duration::from_secs(5)) {
+            match stop_and_wait(&client, &endpoint, Duration::from_secs(5)) {
                 Ok(()) => render(
                     CommandResult::Runtime(own_domains_protocol::RuntimeStatus::Stopped),
                     cli.json,
@@ -150,7 +160,7 @@ pub fn execute(cli: Cli) -> CommandOutput {
             }
         }
         Ok(client) => run_live(&client, &cli.command, cli.json),
-        Err(ClientError::DaemonUnavailable { .. }) => run_offline(&cli, &socket),
+        Err(ClientError::DaemonUnavailable { .. }) => run_offline(&cli, &endpoint),
         Err(error) => client_error(error),
     }
 }
@@ -272,9 +282,9 @@ fn run_live(client: &Client, command: &CliCommand, json: bool) -> CommandOutput 
     }
 }
 
-fn run_offline(cli: &Cli, socket: &std::path::Path) -> CommandOutput {
+fn run_offline(cli: &Cli, endpoint: &own_domains_protocol::Endpoint) -> CommandOutput {
     match &cli.command {
-        CliCommand::Start => start_daemon(cli, socket),
+        CliCommand::Start => start_daemon(cli, endpoint),
         CliCommand::Stop | CliCommand::Status => CommandOutput::success(if cli.json {
             "{\"runtimeStatus\":\"stopped\"}\n".into()
         } else {
@@ -439,11 +449,16 @@ fn mutation_for_existing(
     }
 }
 
-fn start_daemon(cli: &Cli, socket: &std::path::Path) -> CommandOutput {
+fn start_daemon(cli: &Cli, endpoint: &own_domains_protocol::Endpoint) -> CommandOutput {
     let executable = std::env::var_os("OWN_DOMAINS_DAEMON")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("own-domains-daemon"));
-    match connect_or_launch(&cli.state_dir, socket, &executable, Duration::from_secs(30)) {
+    match connect_or_launch(
+        &cli.state_dir,
+        endpoint,
+        &executable,
+        Duration::from_secs(30),
+    ) {
         Ok(client) => match client.request(Command::Start) {
             Ok(result) => render(result, cli.json, None),
             Err(error) => client_error(error),

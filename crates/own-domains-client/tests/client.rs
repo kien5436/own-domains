@@ -1,4 +1,5 @@
-use own_domains_client::{Client, ClientError};
+#![cfg(unix)]
+use own_domains_client::{Client, ClientError, Endpoint};
 use own_domains_core::{DomainService, SettingsStore};
 use own_domains_daemon::{DaemonState, IpcServer, UnavailableRuntimeBackend};
 use own_domains_protocol::{Command, CommandResult};
@@ -20,7 +21,7 @@ fn unavailable_daemon_is_classified() {
         &uuid::Uuid::new_v4().to_string()[..8]
     ));
     assert!(matches!(
-        Client::connect(&path),
+        Client::connect(&Endpoint::unix(path)),
         Err(ClientError::DaemonUnavailable { .. })
     ));
 }
@@ -36,9 +37,9 @@ fn client_handshakes_and_correlates_requests() {
         DomainService::new(SettingsStore::new(directory.join("state"))),
         Arc::new(UnavailableRuntimeBackend),
     ));
-    let server = IpcServer::bind(&socket, state).unwrap();
+    let server = IpcServer::bind(&Endpoint::unix(socket.clone()), state).unwrap();
     let runner = thread::spawn(move || server.run().unwrap());
-    let client = Client::with_timeout(&socket, Duration::from_secs(1)).unwrap();
+    let client = Client::with_timeout(&Endpoint::unix(socket), Duration::from_secs(1)).unwrap();
     assert!(matches!(
         client.request(Command::List).unwrap(),
         CommandResult::Settings(_)

@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 use own_domains_daemon::platform::macos::{
     CaddyAdminClient, ChildProcess, DnsReadinessProbe, HttpReadinessProbe, ListenerBinding,
     MacOsArchitecture, OwnedProcessRecord, ProcessComponent, ProcessError, ProcessHost,

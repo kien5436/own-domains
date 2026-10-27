@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use own_domains_daemon::platform::macos::{
     HostCommand, HostCommandOutput, HostFileKind, HostSetupPlan, MacOsArchitecture,

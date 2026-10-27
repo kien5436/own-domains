@@ -2467,6 +2467,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "uuid",
+ "windows",
 ]
 
 [[package]]
@@ -2492,6 +2493,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.21",
  "uuid",
+ "windows",
 ]
 
 [[package]]
@@ -2517,6 +2519,8 @@ dependencies = [
  "own-domains-core",
  "serde",
  "serde_json",
+ "sha2",
+ "windows",
 ]
 
 [[package]]

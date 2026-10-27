@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 use own_domains_core::{DomainMapping, Settings};
 use own_domains_daemon::platform::macos::{
     ConfigurationError, ConfigurationFiles, ConfigurationStager, ConfigurationValidator,

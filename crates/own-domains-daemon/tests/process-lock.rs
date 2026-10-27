@@ -1,5 +1,7 @@
 use own_domains_daemon::{DaemonError, ProcessLock};
-use std::{fs, os::unix::fs::PermissionsExt};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 fn temporary_directory() -> std::path::PathBuf {
     std::env::temp_dir().join(format!("own-domains-lock-{}", uuid::Uuid::new_v4()))
@@ -20,6 +22,7 @@ fn lock_is_exclusive_and_released_on_drop() {
 }
 
 #[test]
+#[cfg(unix)]
 fn state_directory_and_lock_are_owner_only() {
     let directory = temporary_directory();
     let _lock = ProcessLock::acquire(&directory).unwrap();
