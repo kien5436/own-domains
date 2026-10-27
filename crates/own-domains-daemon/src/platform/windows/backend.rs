@@ -16,6 +16,11 @@ use own_domains_core::{ApplyResult, ApplyStatus, Settings, build_corefile, build
 use own_domains_protocol::RuntimeStatus;
 
 use super::config::{windows_dns_options, windows_proxy_options};
+#[cfg(windows)]
+use super::process::WindowsChild;
+use crate::probe::{
+    CaddyAdmin, CaddyAdminClient, DnsReadinessProbe, HttpReadinessProbe, ReadinessProbe,
+};
 
 pub struct WindowsPaths {
     pub runtime_directory: PathBuf,
@@ -184,5 +189,81 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
         _settings: &Settings,
     ) -> Result<Vec<own_domains_core::Diagnostic>, RuntimeError> {
         Ok(Vec::new())
+    }
+}
+
+#[cfg(windows)]
+/// Quote one command-line argument per the C runtime rules used by
+/// `CreateProcessW` with a null application name: arguments containing
+/// whitespace are wrapped in quotes; quotes and control characters are
+/// rejected rather than escaped.
+fn quote_arg(arg: &str) -> Result<String, String> {
+    if arg.bytes().any(|b| b == b'"' || b < 0x20) {
+        return Err("unsupported character in command argument".to_string());
+    }
+    Ok(if arg.bytes().any(|b| b == b' ' || b == b'\t') {
+        format!("\"{arg}\"")
+    } else {
+        arg.to_string()
+    })
+}
+
+#[cfg(windows)]
+/// Real process host: `CREATE_NO_WINDOW` launches, `TerminateProcess` stops.
+pub struct SystemProcessHost;
+
+#[cfg(windows)]
+impl BackendProcessHost for SystemProcessHost {
+    fn spawn(&self, exe: &Path, args: &[String]) -> Result<Box<dyn BackendChild>, String> {
+        let mut command_line = quote_arg(&exe.to_string_lossy())?;
+        for arg in args {
+            command_line.push(' ');
+            command_line.push_str(&quote_arg(arg)?);
+        }
+        WindowsChild::spawn_no_window(&command_line)
+            .map(|child| Box::new(child) as Box<dyn BackendChild>)
+            .map_err(|error| format!("cannot launch sidecar: {error}"))
+    }
+}
+
+#[cfg(windows)]
+impl BackendChild for WindowsChild {
+    fn terminate(&self) -> Result<(), String> {
+        WindowsChild::terminate(self).map_err(|error| error.to_string())
+    }
+
+    fn wait_exit(&self, timeout: Duration) -> Result<u32, String> {
+        WindowsChild::wait_timeout(self, timeout).map_err(|error| error.to_string())
+    }
+}
+
+/// Real readiness probes with VM-tolerant timeouts (emulated sidecars and
+/// first-run CA generation are slow).
+pub struct SystemReadiness;
+
+const READINESS_TIMEOUT: Duration = Duration::from_secs(30);
+
+impl BackendReadiness for SystemReadiness {
+    fn wait_dns(&self, address: &str, port: u16, expected: &str) -> Result<(), String> {
+        let address: std::net::Ipv4Addr = address
+            .parse()
+            .map_err(|_| format!("invalid probe address: {address}"))?;
+        let expected: std::net::Ipv4Addr = expected
+            .parse()
+            .map_err(|_| format!("invalid expected address: {expected}"))?;
+        DnsReadinessProbe::new(address, port, expected, READINESS_TIMEOUT).check()
+    }
+
+    fn wait_http(&self, address: &str, port: u16, host: &str) -> Result<(), String> {
+        let address: std::net::Ipv4Addr = address
+            .parse()
+            .map_err(|_| format!("invalid probe address: {address}"))?;
+        HttpReadinessProbe::new(address, port, host, "/", 200, READINESS_TIMEOUT).check()
+    }
+}
+
+impl BackendAdmin for CaddyAdminClient {
+    fn load(&self, config: &serde_json::Value) -> Result<(), String> {
+        <Self as CaddyAdmin>::load(self, config)
     }
 }
