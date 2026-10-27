@@ -123,3 +123,31 @@ design. The API is fundamental to Windows (browsers and services rely on it), so
 next validation is the same behavioral test on x86_64 hardware and, in parallel, the
 Rust implementation using the `windows` crate. If x86_64 also rejects, the design's
 supervision section must be rewritten.
+
+## Gate C: Named pipe (transport passes on ARM64)
+
+Proven with the Rust implementation (`feat/platform-transport-abstraction` up to
+`83e2a6d`), on the same ARM64 VM as the other gates:
+
+- `cargo test -p own-domains-client --test pipe`: 5/5 pass against a live server —
+  first-instance rejection is `AddrInUse`, handshake + `Snapshot` roundtrip through
+  the verified client, subscription streams a published event until cancel, `stop`
+  waits for shutdown and releases the name (re-bind succeeds), and a missing pipe
+  classifies as absence.
+- Pipe-name derivation is deterministic per state directory and distinct across
+  directories (`cargo test -p own-domains-protocol`).
+- End to end with separate binaries: `own-domains.exe start/status/stop` against a
+  real `own-domains-daemon.exe` over `--pipe`, with the full server-identity check
+  (image path, SID, session) against the real daemon image — no errors, and the
+  runtime reports unavailable as expected (no Windows backend yet).
+- Two implementation bugs were caught by the tests, not by review: the client
+  rejected in-process test servers (fixed by trusting a kernel-reported server PID
+  equal to our own), and clients paired with the never-listened first handle while
+  the accept loop waited elsewhere (fixed by serving the first client on the first
+  handle).
+
+Still open for full Gate C: explicit DACL readback on the live pipe, remote-client
+rejection (needs a second machine), and Authenticode publisher pinning (lands with
+signed packaging). The cancel path documents a deliberate deviation: cross-thread
+`CancelIoEx(handle, NULL)` only cancels the calling thread's I/O, so the waiter
+slices at 50 ms and checks a shared flag instead.
