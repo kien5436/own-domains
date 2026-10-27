@@ -241,7 +241,29 @@ impl BackendChild for WindowsChild {
 /// first-run CA generation are slow).
 pub struct SystemReadiness;
 
-const READINESS_TIMEOUT: Duration = Duration::from_secs(30);
+const READINESS_DEADLINE: Duration = Duration::from_secs(30);
+const READINESS_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
+const READINESS_RETRY_DELAY: Duration = Duration::from_millis(500);
+
+/// Retry `probe` until the deadline. Windows UDP returns WSAECONNRESET
+/// (10054) instead of a timeout when the packet arrives before CoreDNS binds,
+/// so every error is transient until the deadline expires.
+fn wait_for_probe(
+    label: &str,
+    mut probe: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + READINESS_DEADLINE;
+    loop {
+        let error = match probe() {
+            Ok(()) => return Ok(()),
+            Err(message) => message,
+        };
+        if std::time::Instant::now() >= deadline {
+            return Err(format!("{label} was not ready within 30s: {error}"));
+        }
+        std::thread::sleep(READINESS_RETRY_DELAY);
+    }
+}
 
 impl BackendReadiness for SystemReadiness {
     fn wait_dns(&self, address: &str, port: u16, expected: &str) -> Result<(), String> {
@@ -251,14 +273,27 @@ impl BackendReadiness for SystemReadiness {
         let expected: std::net::Ipv4Addr = expected
             .parse()
             .map_err(|_| format!("invalid expected address: {expected}"))?;
-        DnsReadinessProbe::new(address, port, expected, READINESS_TIMEOUT).check()
+        wait_for_probe("CoreDNS", || {
+            DnsReadinessProbe::new(address, port, expected, READINESS_ATTEMPT_TIMEOUT).check()
+        })
     }
 
     fn wait_http(&self, address: &str, port: u16, host: &str) -> Result<(), String> {
         let address: std::net::Ipv4Addr = address
             .parse()
             .map_err(|_| format!("invalid probe address: {address}"))?;
-        HttpReadinessProbe::new(address, port, host, "/", 200, READINESS_TIMEOUT).check()
+        let host = host.to_string();
+        wait_for_probe("HTTP", || {
+            HttpReadinessProbe::new(
+                address,
+                port,
+                host.clone(),
+                "/",
+                200,
+                READINESS_ATTEMPT_TIMEOUT,
+            )
+            .check()
+        })
     }
 }
 
