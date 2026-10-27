@@ -13,7 +13,10 @@ use std::{
 };
 
 use crate::{RuntimeError, SetupServer};
-use own_domains_core::{ApplyResult, ApplyStatus, Settings, build_corefile, build_proxy_config};
+use own_domains_core::{
+    ApplyResult, ApplyStatus, Diagnostic, DiagnosticStatus, Settings, build_corefile,
+    build_proxy_config,
+};
 use own_domains_protocol::RuntimeStatus;
 
 use super::config::{windows_dns_options, windows_proxy_options};
@@ -227,11 +230,28 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
         )
     }
 
-    fn diagnose(
-        &self,
-        _settings: &Settings,
-    ) -> Result<Vec<own_domains_core::Diagnostic>, RuntimeError> {
-        Ok(Vec::new())
+    fn diagnose(&self, _settings: &Settings) -> Result<Vec<Diagnostic>, RuntimeError> {
+        // Basics only: the full host-integration catalog (NRPT, firewall,
+        // trust) stays in milestone 3. Missing sidecars are the actionable
+        // failure at this stage; everything else surfaces via apply errors.
+        let mut diagnostics = Vec::new();
+        for (label, exe) in [
+            ("CoreDNS", &self.paths.coredns_exe),
+            ("Caddy", &self.paths.caddy_exe),
+        ] {
+            if !exe.is_file() {
+                diagnostics.push(Diagnostic {
+                    code: "missingSidecar".into(),
+                    status: DiagnosticStatus::Error,
+                    message: format!("{label} executable not found at {}", exe.display()),
+                    remedy: Some(format!(
+                        "Stage the Windows {label} sidecar build at {} before applying",
+                        exe.display()
+                    )),
+                });
+            }
+        }
+        Ok(diagnostics)
     }
 }
 

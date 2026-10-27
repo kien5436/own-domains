@@ -270,3 +270,87 @@ fn failed_apply_terminates_spawned_sidecars() {
         own_domains_protocol::RuntimeStatus::Stopped
     ));
 }
+
+#[test]
+fn inspect_tracks_apply_and_stop() {
+    let harness = harness();
+    let backend = backend(&harness);
+    assert!(matches!(
+        backend.inspect().unwrap(),
+        own_domains_protocol::RuntimeStatus::Stopped
+    ));
+    backend.apply(&settings()).unwrap();
+    assert!(matches!(
+        backend.inspect().unwrap(),
+        own_domains_protocol::RuntimeStatus::Running
+    ));
+    backend.stop().unwrap();
+    assert!(matches!(
+        backend.inspect().unwrap(),
+        own_domains_protocol::RuntimeStatus::Stopped
+    ));
+}
+
+#[test]
+fn diagnose_flags_missing_sidecars_with_remedies() {
+    let harness = harness();
+    let backend = WindowsRuntimeBackend::with_adapters(
+        WindowsPaths {
+            runtime_directory: harness.directory.clone(),
+            coredns_exe: PathBuf::from("C:\\definitely\\missing\\coredns.exe"),
+            caddy_exe: PathBuf::from("C:\\definitely\\missing\\caddy.exe"),
+            admin_socket: harness.directory.join("caddy-admin.sock"),
+        },
+        WindowsAdapters {
+            process_host: &harness.host,
+            readiness: &harness.readiness,
+            caddy: &harness.admin,
+            setup: &harness.setup,
+        },
+    );
+    let diagnostics = backend.diagnose(&settings()).unwrap();
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    for diagnostic in &diagnostics {
+        assert_eq!(diagnostic.code, "missingSidecar");
+        assert_eq!(diagnostic.status, own_domains_core::DiagnosticStatus::Error);
+        assert!(
+            diagnostic
+                .remedy
+                .as_ref()
+                .is_some_and(|remedy| !remedy.is_empty()),
+            "{diagnostic:?}"
+        );
+    }
+    let messages = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(messages.contains("coredns.exe"), "{messages}");
+    assert!(messages.contains("caddy.exe"), "{messages}");
+}
+
+#[test]
+fn diagnose_is_quiet_when_sidecars_exist() {
+    let harness = harness();
+    let coredns = harness.directory.join("coredns.exe");
+    let caddy = harness.directory.join("caddy.exe");
+    std::fs::create_dir_all(&harness.directory).unwrap();
+    std::fs::write(&coredns, b"fake").unwrap();
+    std::fs::write(&caddy, b"fake").unwrap();
+    let backend = WindowsRuntimeBackend::with_adapters(
+        WindowsPaths {
+            runtime_directory: harness.directory.clone(),
+            coredns_exe: coredns,
+            caddy_exe: caddy,
+            admin_socket: harness.directory.join("caddy-admin.sock"),
+        },
+        WindowsAdapters {
+            process_host: &harness.host,
+            readiness: &harness.readiness,
+            caddy: &harness.admin,
+            setup: &harness.setup,
+        },
+    );
+    assert!(backend.diagnose(&settings()).unwrap().is_empty());
+}
