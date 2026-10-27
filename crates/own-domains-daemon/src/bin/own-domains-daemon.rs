@@ -104,6 +104,10 @@ fn install_shutdown_signals(endpoint: Endpoint) -> std::io::Result<()> {
     Ok(())
 }
 
+// TODO: install a SetConsoleCtrlHandler handler that calls
+// `IpcServer::request_shutdown`. Safe to defer: named pipes leave no
+// filesystem residue, so an abrupt exit still releases the endpoint name,
+// and `own-domains stop` performs the graceful path over the pipe.
 #[cfg(not(unix))]
 fn install_shutdown_signals(_endpoint: Endpoint) -> std::io::Result<()> {
     Ok(())
