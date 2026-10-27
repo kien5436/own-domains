@@ -25,7 +25,21 @@
         },
         "executableSha256": "3a8af202ced2856902f9402fa462e7d385e4c71930648a4f2fe519b0d66f1e06"
       }
-    }
+    },
+    "windowsReleases": [
+      {
+        "architecture": "amd64",
+        "target": "x86_64-pc-windows-msvc",
+        "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_windows_amd64.zip",
+        "archiveMember": "coredns.exe",
+        "checksum": {
+          "algorithm": "sha256",
+          "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_windows_amd64.zip.sha256",
+          "value": "6b718a5ed57d7034b1e4c3df500121307830da291d15cf8387f41c297c6fdd56"
+        },
+        "executableSha256": "a6ac3466a93f907c5ef7c170a41fdc6901df195da223c60adeca8de1a891d8b5"
+      }
+    ]
   },
   "caddy": {
     "version": "2.11.7",
@@ -58,6 +72,32 @@
         },
         "executableSha256": "8b27d3dc71bddaf49f63e8b5620ea49cb432b0b3b0a9685d5c06e0aac15bd928"
       }
-    }
+    },
+    "windowsReleases": [
+      {
+        "architecture": "amd64",
+        "target": "x86_64-pc-windows-msvc",
+        "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_windows_amd64.zip",
+        "archiveMember": "caddy.exe",
+        "checksum": {
+          "algorithm": "sha512",
+          "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_checksums.txt",
+          "value": "c308154504e53755958ffc62d8a2657ab17eefd6dd25c45dbb2c3d93d29519971f77ca652f7d0f2bcb7f980b9ba3822478865e29969d0272d7613550a43152b1"
+        },
+        "executableSha256": "5f93a9bd555f3aac9d33af2756ba14b3519d8cca4ffd55256bdaeab444c9db2a"
+      },
+      {
+        "architecture": "arm64",
+        "target": "aarch64-pc-windows-msvc",
+        "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_windows_arm64.zip",
+        "archiveMember": "caddy.exe",
+        "checksum": {
+          "algorithm": "sha512",
+          "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_checksums.txt",
+          "value": "5e232f5fd68968c288034d98f8b4a6b16f246da6d5f1d3a8c7543b83327f1de0bf5d01d627768fbfd1dd254d7d53eb94589a40b126c29def10ac01365a3fe982"
+        },
+        "executableSha256": "79c43d6e18b5762a3ccfefc60d8ad3bbcbe6438d175fa18a5d6aa560e36f7044"
+      }
+    ]
   }
 }

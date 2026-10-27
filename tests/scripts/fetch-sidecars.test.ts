@@ -439,81 +439,81 @@ describe('windows release manifest validation', () => {
   });
 });
 
+const crcTable = (() => {
+  const table = new Uint32Array(256);
+
+  for (let index = 0; 256 > index; index += 1) {
+    let value = index;
+
+    for (let bit = 0; 8 > bit; bit += 1) value = 0 === (value & 1) ? value >>> 1 : (value >>> 1) ^ 0xedb88320;
+    table[index] = value >>> 0;
+  }
+
+  return table;
+})();
+
+const tableLookup = (byte: number, value: number): number =>
+  ((value >>> 8) ^ crcTable[(value ^ byte) & 0xff]) >>> 0;
+
+const crc32 = (data: Buffer): number => {
+  let value = 0xffffffff;
+
+  for (const byte of data) value = tableLookup(byte, value);
+
+  return (value ^ 0xffffffff) >>> 0;
+};
+
+const zipArchive = (entries: { name: string; content: string; method?: 'stored' | 'deflated' }[]): Buffer => {
+  const chunks: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const raw = Buffer.from(entry.content);
+    const data = 'deflated' === (entry.method ?? 'stored') ? deflateRawSync(raw) : raw;
+    const method = 'deflated' === (entry.method ?? 'stored') ? 8 : 0;
+    const name = Buffer.from(entry.name);
+    const local = Buffer.alloc(30);
+
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(8 === method ? 0x0800 : 0, 6);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(crc32(raw), 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(raw.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    chunks.push(local, name, data);
+
+    const header = Buffer.alloc(46);
+
+    header.writeUInt32LE(0x02014b50, 0);
+    header.writeUInt16LE(8 === method ? 0x0800 : 0, 8);
+    header.writeUInt16LE(method, 10);
+    header.writeUInt32LE(crc32(raw), 16);
+    header.writeUInt32LE(data.length, 20);
+    header.writeUInt32LE(raw.length, 24);
+    header.writeUInt16LE(name.length, 28);
+    header.writeUInt32LE(offset, 42);
+    central.push(header, name);
+    offset += local.length + name.length + data.length;
+  }
+
+  const centralStart = offset;
+  const centralDirectory = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(centralStart, 16);
+
+  return Buffer.concat([...chunks, centralDirectory, end]);
+};
+
 describe('zip member extraction', () => {
-  const crcTable = (() => {
-    const table = new Uint32Array(256);
-
-    for (let index = 0; 256 > index; index += 1) {
-      let value = index;
-
-      for (let bit = 0; 8 > bit; bit += 1) value = 0 === (value & 1) ? value >>> 1 : (value >>> 1) ^ 0xedb88320;
-      table[index] = value >>> 0;
-    }
-
-    return table;
-  })();
-
-  const tableLookup = (byte: number, value: number): number =>
-    ((value >>> 8) ^ crcTable[(value ^ byte) & 0xff]) >>> 0;
-
-  const crc32 = (data: Buffer): number => {
-    let value = 0xffffffff;
-
-    for (const byte of data) value = tableLookup(byte, value);
-
-    return (value ^ 0xffffffff) >>> 0;
-  };
-
-  const zipArchive = (entries: { name: string; content: string; method?: 'stored' | 'deflated' }[]): Buffer => {
-    const chunks: Buffer[] = [];
-    const central: Buffer[] = [];
-    let offset = 0;
-
-    for (const entry of entries) {
-      const raw = Buffer.from(entry.content);
-      const data = 'deflated' === (entry.method ?? 'stored') ? deflateRawSync(raw) : raw;
-      const method = 'deflated' === (entry.method ?? 'stored') ? 8 : 0;
-      const name = Buffer.from(entry.name);
-      const local = Buffer.alloc(30);
-
-      local.writeUInt32LE(0x04034b50, 0);
-      local.writeUInt16LE(20, 4);
-      local.writeUInt16LE(8 === method ? 0x0800 : 0, 6);
-      local.writeUInt16LE(method, 8);
-      local.writeUInt32LE(crc32(raw), 14);
-      local.writeUInt32LE(data.length, 18);
-      local.writeUInt32LE(raw.length, 22);
-      local.writeUInt16LE(name.length, 26);
-      local.writeUInt16LE(0, 28);
-      chunks.push(local, name, data);
-
-      const header = Buffer.alloc(46);
-
-      header.writeUInt32LE(0x02014b50, 0);
-      header.writeUInt16LE(8 === method ? 0x0800 : 0, 8);
-      header.writeUInt16LE(method, 10);
-      header.writeUInt32LE(crc32(raw), 16);
-      header.writeUInt32LE(data.length, 20);
-      header.writeUInt32LE(raw.length, 24);
-      header.writeUInt16LE(name.length, 28);
-      header.writeUInt32LE(offset, 42);
-      central.push(header, name);
-      offset += local.length + name.length + data.length;
-    }
-
-    const centralStart = offset;
-    const centralDirectory = Buffer.concat(central);
-    const end = Buffer.alloc(22);
-
-    end.writeUInt32LE(0x06054b50, 0);
-    end.writeUInt16LE(entries.length, 8);
-    end.writeUInt16LE(entries.length, 10);
-    end.writeUInt32LE(centralDirectory.length, 12);
-    end.writeUInt32LE(centralStart, 16);
-
-    return Buffer.concat([...chunks, centralDirectory, end]);
-  };
-
   it('round-trips stored and deflated members', () => {
     const archive = zipArchive([
       { name: 'coredns.exe', content: 'core-binary', method: 'stored' },
@@ -537,5 +537,158 @@ describe('zip member extraction', () => {
 
     expect(() => extractZipMember(archive.subarray(0, 20), 'coredns.exe')).toThrow();
     expect(() => extractZipMember(Buffer.from('not a zip'), 'coredns.exe')).toThrow();
+  });
+});
+
+describe('windows platform fetch', () => {
+  const windowsManifest = (): SidecarBuildManifest => {
+    const { manifest } = fixture();
+    const mutable = manifest as unknown as {
+      coredns: { windowsReleases: unknown[] };
+      caddy: { windowsReleases: unknown[] };
+    };
+    const coreZip = zipArchive([{ name: 'coredns.exe', content: 'core-binary' }]);
+    const caddyZip = zipArchive([{ name: 'caddy.exe', content: 'caddy-binary' }]);
+    const coreSha = digest('sha256', coreZip);
+    const caddySha = digest('sha512', caddyZip);
+
+    mutable.coredns.windowsReleases = [
+      {
+        architecture: 'amd64',
+        target: 'x86_64-pc-windows-msvc',
+        url: 'https://github.com/example/sidecars/releases/download/v1/core-win64.zip',
+        archiveMember: 'coredns.exe',
+        checksum: {
+          algorithm: 'sha256',
+          url: 'https://github.com/example/sidecars/releases/download/v1/core-win64.zip.sha256',
+          value: coreSha,
+        },
+        executableSha256: digest('sha256', Buffer.from('core-binary')),
+      },
+    ];
+    mutable.caddy.windowsReleases = [
+      {
+        architecture: 'amd64',
+        target: 'x86_64-pc-windows-msvc',
+        url: 'https://github.com/example/sidecars/releases/download/v1/caddy-win64.zip',
+        archiveMember: 'caddy.exe',
+        checksum: {
+          algorithm: 'sha512',
+          url: 'https://github.com/example/sidecars/releases/download/v1/checksums.txt',
+          value: caddySha,
+        },
+        executableSha256: digest('sha256', Buffer.from('caddy-binary')),
+      },
+      {
+        architecture: 'arm64',
+        target: 'aarch64-pc-windows-msvc',
+        url: 'https://github.com/example/sidecars/releases/download/v1/caddy-winarm64.zip',
+        archiveMember: 'caddy.exe',
+        checksum: {
+          algorithm: 'sha512',
+          url: 'https://github.com/example/sidecars/releases/download/v1/checksums.txt',
+          value: caddySha,
+        },
+        executableSha256: digest('sha256', Buffer.from('caddy-binary')),
+      },
+    ];
+
+    return { manifest, coreZip, caddyZip };
+  };
+
+  const windowsResponses = (
+    manifest: SidecarBuildManifest,
+    coreZip: Buffer,
+    caddyZip: Buffer,
+  ): Map<string, HttpResponse> => {
+    const mutable = manifest as unknown as {
+      coredns: { windowsReleases: [{ url: string; checksum: { url: string } }] };
+      caddy: { windowsReleases: [{ url: string; checksum: { url: string } }] };
+    };
+    const coreRelease = mutable.coredns.windowsReleases[0];
+    const caddyRelease = mutable.caddy.windowsReleases[0];
+    const coreSha = digest('sha256', coreZip);
+    const caddySha = digest('sha512', caddyZip);
+
+    return new Map([
+      [coreRelease.url, { status: 200, headers: {}, body: coreZip }],
+      [coreRelease.checksum.url, { status: 200, headers: {}, body: Buffer.from(`${coreSha}  core-win64.zip\n`) }],
+      [caddyRelease.url, { status: 200, headers: {}, body: caddyZip }],
+      [
+        caddyRelease.checksum.url,
+        {
+          status: 200,
+          headers: {},
+          body: Buffer.from(`${caddySha}  caddy-win64.zip\n${caddySha}  caddy-winarm64.zip\n`),
+        },
+      ],
+    ]);
+  };
+
+  it('fetches windows sidecars with exe suffixes and a runtime manifest', async () => {
+    const { manifest, coreZip, caddyZip } = windowsManifest() as unknown as {
+      manifest: SidecarBuildManifest;
+      coreZip: Buffer;
+      caddyZip: Buffer;
+    };
+    const outputDirectory = temporaryDirectory();
+    const fetched = await fetchSidecars({
+      manifest,
+      outputDirectory,
+      platform: 'windows',
+      architectures: ['amd64'],
+      fetchBytes: fetcher(windowsResponses(manifest, coreZip, caddyZip)),
+    });
+
+    expect(fetched).toHaveLength(1);
+    const target = join(outputDirectory, 'x86_64-pc-windows-msvc');
+
+    expect(readFileSync(join(target, 'coredns-x86_64-pc-windows-msvc.exe'), 'utf8')).toBe('core-binary');
+    expect(readFileSync(join(target, 'caddy-x86_64-pc-windows-msvc.exe'), 'utf8')).toBe('caddy-binary');
+    expect(JSON.parse(readFileSync(join(target, 'manifest.json'), 'utf8'))).toEqual({
+      schemaVersion: 1,
+      coredns: { version: '1.0.0', sha256: digest('sha256', Buffer.from('core-binary')) },
+      caddy: { version: '1.0.0', sha256: digest('sha256', Buffer.from('caddy-binary')) },
+    });
+    expect(existsSync(join(target, 'coredns-x86_64-pc-windows-msvc.exe.tmp'))).toBe(false);
+  });
+
+  it('rejects a windows checksum mismatch without writing', async () => {
+    const { manifest, coreZip, caddyZip } = windowsManifest() as unknown as {
+      manifest: SidecarBuildManifest;
+      coreZip: Buffer;
+      caddyZip: Buffer;
+    };
+    const mutable = manifest as unknown as { coredns: { windowsReleases: [{ checksum: { value: string } }] } };
+
+    mutable.coredns.windowsReleases[0].checksum.value = '0'.repeat(64);
+
+    await expect(
+      fetchSidecars({
+        manifest,
+        outputDirectory: temporaryDirectory(),
+        platform: 'windows',
+        architectures: ['amd64'],
+        fetchBytes: fetcher(windowsResponses(manifest, coreZip, caddyZip)),
+      }),
+    ).rejects.toThrow(/checksum|digest/i);
+  });
+
+  it('fails clearly when the windows release is undefined for an arch', async () => {
+    const { manifest, coreZip, caddyZip } = windowsManifest() as unknown as {
+      manifest: SidecarBuildManifest;
+      coreZip: Buffer;
+      caddyZip: Buffer;
+    };
+
+    await expect(
+      fetchSidecars({
+        manifest,
+        outputDirectory: temporaryDirectory(),
+        platform: 'windows',
+        architectures: ['arm64'],
+        fetchBytes: fetcher(windowsResponses(manifest, coreZip, caddyZip)),
+      }),
+    ).rejects.toThrow(/coredns.*arm64|arm64.*coredns/i);
   });
 });

@@ -18,6 +18,8 @@ import { gunzipSync, inflateRawSync } from 'node:zlib';
 
 export type Architecture = 'arm64' | 'amd64';
 
+export type SidecarPlatform = 'darwin' | 'windows';
+
 export type SidecarName = 'coredns' | 'caddy';
 
 export interface HttpResponse {
@@ -87,6 +89,7 @@ export interface FetchedSidecar {
 export interface FetchSidecarsOptions {
   manifest: SidecarBuildManifest;
   outputDirectory: string;
+  platform?: SidecarPlatform;
   architectures: Architecture[];
   fetchBytes: (url: string) => Promise<Buffer>;
   verifySignatures?: boolean;
@@ -96,6 +99,7 @@ export interface FetchSidecarsOptions {
 export interface VerifySidecarsOptions {
   manifest: SidecarBuildManifest;
   outputDirectory: string;
+  platform?: SidecarPlatform;
   architectures: Architecture[];
   runVersion?: (path: string, component: SidecarName) => string;
 }
@@ -129,7 +133,9 @@ function hostArchitecture(): Architecture {
   throw new Error(`unsupported host architecture: ${process.arch}`);
 }
 
-function defaultArchitectures(): Architecture[] {
+function defaultArchitectures(platform: SidecarPlatform = 'darwin'): Architecture[] {
+  if ('windows' === platform) return ['amd64'];
+
   return 'darwin' === process.platform ? [hostArchitecture()] : [...ARCHITECTURES];
 }
 
@@ -514,10 +520,24 @@ function atomicWrite(path: string, contents: Buffer, mode: number): void {
 }
 
 function binaryPath(directory: string, component: SidecarName, target: string): string {
-  return join(directory, `${component}-${target}`);
+  return join(directory, `${component}-${target}${target.includes('-windows-') ? '.exe' : ''}`);
 }
 
-function sidecarExpectation(manifest: SidecarBuildManifest, architecture: Architecture) {
+function sidecarExpectation(
+  manifest: SidecarBuildManifest,
+  platform: SidecarPlatform,
+  architecture: Architecture,
+) {
+  if ('windows' === platform) {
+    const coredns = manifest.coredns.windowsReleases?.find((release) => release.architecture === architecture);
+    const caddy = manifest.caddy.windowsReleases?.find((release) => release.architecture === architecture);
+
+    if (!coredns) throw new Error(`coredns windows ${architecture} release is not defined`);
+    if (!caddy) throw new Error(`caddy windows ${architecture} release is not defined`);
+
+    return { target: WINDOWS_TARGETS[architecture], coredns, caddy };
+  }
+
   return {
     target: TARGETS[architecture],
     coredns: manifest.coredns.releases[architecture],
@@ -581,7 +601,8 @@ async function downloadSidecar(
   if (actual !== expected)
     throw new Error(`${name} archive checksum mismatch: expected ${expected}, received ${actual}`);
 
-  const executable = extractArchiveMember(archive, release.archiveMember);
+  const extract = /\.zip$/i.test(new URL(release.url).pathname) ? extractZipMember : extractArchiveMember;
+  const executable = extract(archive, release.archiveMember);
   const executableSha256 = digest('sha256', executable);
 
   if (executableSha256 !== release.executableSha256)
@@ -592,10 +613,11 @@ async function downloadSidecar(
 
 export async function fetchSidecars(options: FetchSidecarsOptions): Promise<FetchedSidecar[]> {
   const manifest = parseManifest(options.manifest);
+  const platform = options.platform ?? 'darwin';
   const fetched: FetchedSidecar[] = [];
 
   for (const architecture of options.architectures) {
-    const { target, coredns, caddy } = sidecarExpectation(manifest, architecture);
+    const { target, coredns, caddy } = sidecarExpectation(manifest, platform, architecture);
     // Downloads are sequential to bound memory and temporary disk use.
     // eslint-disable-next-line no-await-in-loop
     const corednsBytes = await downloadSidecar(
@@ -679,8 +701,10 @@ export async function verifySidecars(options: VerifySidecarsOptions): Promise<Fe
   const manifest = parseManifest(options.manifest);
   const verified: FetchedSidecar[] = [];
 
+  const platform = options.platform ?? 'darwin';
+
   for (const architecture of options.architectures) {
-    const { target, coredns, caddy } = sidecarExpectation(manifest, architecture);
+    const { target, coredns, caddy } = sidecarExpectation(manifest, platform, architecture);
     const directory = join(options.outputDirectory, target);
     const runtimeManifestPath = join(directory, 'manifest.json');
 
@@ -708,7 +732,8 @@ export async function verifySidecars(options: VerifySidecarsOptions): Promise<Fe
 
       const mode = statSync(path).mode & 0o777;
 
-      if (0 === (mode & 0o111)) throw new Error(`${component} is not executable: ${path}`);
+      if ('win32' !== process.platform && 0 === (mode & 0o111))
+        throw new Error(`${component} is not executable: ${path}`);
 
       if (options.runVersion) {
         const output = options.runVersion(path, component);
@@ -736,6 +761,7 @@ export async function verifySidecars(options: VerifySidecarsOptions): Promise<Fe
 function parseArguments(argv: string[]) {
   let verifyOnly = false;
   let architectureValue: string | undefined;
+  let platform: SidecarPlatform = 'darwin';
   let outputDirectory = join(process.cwd(), 'sidecars', 'build');
   let manifestPath = join(process.cwd(), 'sidecars', 'manifest.json');
 
@@ -750,6 +776,12 @@ function parseArguments(argv: string[]) {
       case '--arch':
         architectureValue = argv[++index];
         if (!architectureValue) throw new Error('--arch requires arm64, amd64, or all');
+
+        break;
+      case '--platform':
+        if ('darwin' !== argv[index + 1] && 'windows' !== argv[index + 1])
+          throw new Error('--platform requires darwin or windows');
+        platform = argv[++index] as SidecarPlatform;
 
         break;
       case '--output':
@@ -768,7 +800,8 @@ function parseArguments(argv: string[]) {
 
   return {
     verifyOnly,
-    architectures: architectureValue ? parseArchitectures(architectureValue) : defaultArchitectures(),
+    platform,
+    architectures: architectureValue ? parseArchitectures(architectureValue) : defaultArchitectures(platform),
     outputDirectory,
     manifestPath,
   };
@@ -792,20 +825,24 @@ export async function runCli(argv: string[]): Promise<number> {
     const manifest = parseManifest(
       JSON.parse(readFileSync(options.manifestPath, 'utf8')) as SidecarBuildManifest,
     );
+    const hostTargets = 'win32' === process.platform ? WINDOWS_TARGETS : TARGETS;
+    const platformTargets = 'windows' === options.platform ? WINDOWS_TARGETS : TARGETS;
     const shouldRunVersions
-      = 'darwin' === process.platform
-        && options.architectures.every((architecture) => TARGETS[architecture] === TARGETS[hostArchitecture()]);
+      = ('win32' === process.platform) === ('windows' === options.platform)
+        && options.architectures.every((architecture) => platformTargets[architecture] === hostTargets[hostArchitecture()]);
     const runVersion = shouldRunVersions ? nativeVersion : undefined;
     const sidecars = options.verifyOnly
       ? await verifySidecars({
         manifest,
         outputDirectory: options.outputDirectory,
+        platform: options.platform,
         architectures: options.architectures,
         runVersion,
       })
       : await fetchSidecars({
         manifest,
         outputDirectory: options.outputDirectory,
+        platform: options.platform,
         architectures: options.architectures,
         fetchBytes: defaultFetchBytes,
         runVersion,

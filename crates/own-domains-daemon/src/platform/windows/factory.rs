@@ -10,7 +10,7 @@ use std::{
 
 pub(crate) fn runtime_backend(
     state_dir: &Path,
-    _resources: Option<PathBuf>,
+    resources: Option<PathBuf>,
     sidecars: Option<PathBuf>,
     settings_only: bool,
 ) -> Result<Arc<dyn RuntimeBackend>, Box<dyn std::error::Error>> {
@@ -22,7 +22,13 @@ pub(crate) fn runtime_backend(
         .parent()
         .ok_or("the daemon executable has no parent directory")?
         .to_path_buf();
-    let paths = resolve_paths(state_dir, &current_dir, &exe_dir, sidecars)?;
+    let paths = resolve_paths(
+        state_dir,
+        &current_dir,
+        &exe_dir,
+        resources.as_deref(),
+        sidecars,
+    )?;
     let admin = CaddyAdminClient::new(paths.admin_socket.clone())?;
     let backend = WindowsRuntimeBackend::with_adapters(
         paths,

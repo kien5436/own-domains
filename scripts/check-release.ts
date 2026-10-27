@@ -60,17 +60,26 @@ function runVersion(path: string, component: SidecarName, architecture: string):
 
 async function verifyPreflight(): Promise<void> {
   const manifest = parseManifest(join(process.cwd(), 'sidecars', 'manifest.json'));
-  const verified = await verifySidecars({
-    manifest,
-    outputDirectory: join(process.cwd(), 'sidecars', 'build'),
-    architectures: ARCHITECTURES.map((architecture) => architecture.name),
-  });
+  const outputDirectory = join(process.cwd(), 'sidecars', 'build');
+  const verified = [
+    ...(await verifySidecars({
+      manifest,
+      outputDirectory,
+      architectures: ARCHITECTURES.map((architecture) => architecture.name),
+    })),
+    ...(await verifySidecars({
+      manifest,
+      outputDirectory,
+      platform: 'windows',
+      architectures: ['amd64'],
+    })),
+  ];
 
-  for (const [index, sidecar] of verified.entries())
+  for (const sidecar of verified)
     process.stdout.write(
       `${JSON.stringify({
         event: 'release-preflight',
-        architecture: ARCHITECTURES[index]?.name,
+        architecture: sidecar.architecture,
         target: sidecar.target,
         coredns: sidecar.corednsPath,
         caddy: sidecar.caddyPath,

@@ -37,10 +37,26 @@ pub struct WindowsPaths {
 /// the caller supplies an absolute current directory, and every output is
 /// absolute. Sidecar manifest lookup lands in release slice 3; until then
 /// the exes are `<sidecars>/coredns.exe` and `<sidecars>/caddy.exe`.
+fn bundled_target() -> &'static str {
+    #[cfg(target_arch = "x86_64")]
+    {
+        "x86_64-pc-windows-msvc"
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        "aarch64-pc-windows-msvc"
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        "unknown-windows-target"
+    }
+}
+
 pub fn resolve_paths(
     state_dir: &Path,
     current_dir: &Path,
     exe_dir: &Path,
+    resources: Option<&Path>,
     sidecars: Option<PathBuf>,
 ) -> Result<WindowsPaths, String> {
     let absolutize = |path: &Path| {
@@ -51,12 +67,44 @@ pub fn resolve_paths(
         }
     };
     let state_dir = absolutize(state_dir);
-    let sidecars = sidecars.map_or_else(|| exe_dir.to_path_buf(), |dir| absolutize(&dir));
+    // Each branch resolves full exe file names: plain `coredns.exe` for
+    // explicit and exe-adjacent layouts, triple-infixed names for the staged
+    // bundle (`coredns-<target>.exe`, mirroring the fetch output).
+    let (sidecars, coredns_name, caddy_name) = match sidecars {
+        Some(dir) => (
+            absolutize(&dir),
+            "coredns.exe".to_string(),
+            "caddy.exe".to_string(),
+        ),
+        None => match resources {
+            Some(resources) => {
+                let bundled = resources.join("sidecars").join(bundled_target());
+                let names = (
+                    format!("coredns-{}.exe", bundled_target()),
+                    format!("caddy-{}.exe", bundled_target()),
+                );
+                if bundled.join(&names.0).is_file() && bundled.join(&names.1).is_file() {
+                    (bundled, names.0, names.1)
+                } else {
+                    (
+                        exe_dir.to_path_buf(),
+                        "coredns.exe".to_string(),
+                        "caddy.exe".to_string(),
+                    )
+                }
+            }
+            None => (
+                exe_dir.to_path_buf(),
+                "coredns.exe".to_string(),
+                "caddy.exe".to_string(),
+            ),
+        },
+    };
     let runtime_directory = state_dir.join("runtime");
     Ok(WindowsPaths {
         admin_socket: runtime_directory.join("caddy-admin.sock"),
-        coredns_exe: sidecars.join("coredns.exe"),
-        caddy_exe: sidecars.join("caddy.exe"),
+        coredns_exe: sidecars.join(coredns_name),
+        caddy_exe: sidecars.join(caddy_name),
         runtime_directory,
     })
 }
