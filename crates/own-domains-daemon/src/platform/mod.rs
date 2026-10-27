@@ -1,4 +1,5 @@
 mod host;
+mod sidecar;
 
 #[cfg(target_os = "macos")]
 pub mod macos;
@@ -11,6 +12,7 @@ pub use host::{
     HostInspector, HostInstaller, SetupAction, SetupApplyResult, SetupFailure, SetupPreview,
     SetupRequest, UninstallRequest,
 };
+pub use sidecar::{SidecarManifest, SidecarSpec};
 
 pub fn runtime_backend(
     state_dir: &Path,

@@ -1,4 +1,4 @@
-use super::{MacOsArchitecture, RuntimePaths};
+use super::{MacOsArchitecture, RuntimePaths, SidecarManifest, SidecarSpec};
 use own_domains_core::{Diagnostic, DiagnosticStatus, Settings};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,21 +21,6 @@ const PF_CONF_BLOCK: &str = concat!(
     "load anchor \"dev.owndomains\" from \"/etc/pf.anchors/dev.owndomains\"\n",
     "# END OWN DOMAINS\n",
 );
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SidecarSpec {
-    pub version: String,
-    pub sha256: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SidecarManifest {
-    pub schema_version: u32,
-    pub coredns: SidecarSpec,
-    pub caddy: SidecarSpec,
-}
 
 #[derive(Clone, Debug)]
 pub struct MacOsSetupOptions {
