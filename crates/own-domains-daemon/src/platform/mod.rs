@@ -1,6 +1,8 @@
 mod host;
 mod sidecar;
 
+pub mod linux;
+
 #[cfg(target_os = "macos")]
 pub mod macos;
 

@@ -1,0 +1,11 @@
+//! Linux host integration (Phase 2).
+//!
+//! Rendering first: the backend, inspector, and setup transaction build on
+//! these constructors. Nothing here touches the machine; privileged setup and
+//! uninstall land in a later milestone.
+
+mod config;
+
+pub use config::{
+    linux_dns_options, linux_proxy_options, render_linux_corefile, render_linux_proxy,
+};
