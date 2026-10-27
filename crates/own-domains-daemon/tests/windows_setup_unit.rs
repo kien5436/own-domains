@@ -8,7 +8,10 @@ use own_domains_daemon::platform::{
 };
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 type Responder = Box<dyn Fn(&str, &[String]) -> Result<String, String> + Send>;
@@ -61,6 +64,30 @@ impl SessionProbe for FakeSession {
     }
 }
 
+/// Default answers every harness needs: the pre-existing-cert thumbprint
+/// query and auto-naming NRPT lookups (absent, then created). Test-specific
+/// behavior delegates through `respond`.
+fn chain(
+    respond: impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static,
+) -> impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static {
+    let queries = Arc::new(AtomicUsize::new(0));
+    move |program, args| {
+        if program == "powershell" {
+            if args.iter().any(|arg| arg.contains("X509Certificate2")) {
+                return Ok("AB12CD34EF56\n".into());
+            }
+            if args.iter().any(|arg| arg.contains("ExpandProperty Name")) {
+                return Ok(if queries.fetch_add(1, Ordering::SeqCst) == 0 {
+                    String::new()
+                } else {
+                    "RULE-AUTO-1\n".into()
+                });
+            }
+        }
+        respond(program, args)
+    }
+}
+
 struct Harness {
     state: PathBuf,
     runner: Arc<FakeRunner>,
@@ -69,13 +96,7 @@ struct Harness {
 
 fn harness(interactive: bool) -> Harness {
     let state = std::env::temp_dir().join(format!("od-win-setup-{}", uuid::Uuid::new_v4()));
-    let runner = Arc::new(FakeRunner::with_handler(|program, args| {
-        if program == "powershell" && args.iter().any(|arg| arg.contains("Thumbprint")) {
-            Ok("AB12CD34EF56\n".into())
-        } else {
-            Ok(String::new())
-        }
-    }));
+    let runner = Arc::new(FakeRunner::with_handler(chain(|_, _| Ok(String::new()))));
     let installer = WindowsHostInstaller::with_parts(
         Box::new(FakeRunnerHandle(runner.clone())),
         Box::new(FakeSession { interactive }),
@@ -218,7 +239,7 @@ fn nrpt_harness(
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("ca.crt"), b"fake-cert").unwrap();
     let runner = Arc::new(FakeRunner::with_handler(move |program, args| {
-        if program == "powershell" && args.iter().any(|arg| arg.contains("Thumbprint")) {
+        if program == "powershell" && args.iter().any(|arg| arg.contains("X509Certificate2")) {
             return Ok("AB12CD34EF56\n".into());
         }
         respond(program, args)
@@ -246,7 +267,24 @@ fn powershell_commands(harness: &Harness) -> Vec<String> {
 
 #[test]
 fn nrpt_apply_checks_then_adds_with_exact_argv() {
-    let harness = nrpt_harness(|_, _| Ok(String::new()));
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let queries = Arc::new(AtomicUsize::new(0));
+    let queries_seen = queries.clone();
+    let harness = nrpt_harness(move |_, args| {
+        if args
+            .iter()
+            .any(|arg| arg.contains("Select-Object -ExpandProperty Name"))
+        {
+            // First lookup: absent. Second lookup (after Add): created.
+            Ok(if queries_seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                String::new()
+            } else {
+                "RULE-NAME-1\n".into()
+            })
+        } else {
+            Ok(String::new())
+        }
+    });
     let request = SetupRequest {
         state_directory: harness.state.clone(),
         lan_address: "192.168.1.20".into(),
@@ -254,28 +292,31 @@ fn nrpt_apply_checks_then_adds_with_exact_argv() {
     };
     harness.installer.apply_setup(&request).unwrap();
     let commands = powershell_commands(&harness);
-    let get = commands.iter().position(|command| {
-        command.contains("Get-DnsClientNrptRule") && command.contains("-Namespace .own")
-    });
-    let add = commands.iter().position(|command| {
-        command.contains("Add-DnsClientNrptRule")
-            && command.contains("-Namespace .own")
-            && command.contains("-NameServers 127.0.0.1")
-    });
-    assert!(get.is_some() && add.is_some(), "{commands:?}");
-    assert!(get < add, "{commands:?}");
+    let adds: Vec<_> = commands
+        .iter()
+        .filter(|command| command.contains("Add-DnsClientNrptRule"))
+        .collect();
+    assert_eq!(adds.len(), 1, "{commands:?}");
+    assert!(
+        adds[0].contains("-Namespace .own")
+            && adds[0].contains("-NameServers 127.0.0.1")
+            && adds[0].contains("-DisplayName OwnDomains"),
+        "{commands:?}"
+    );
+    assert_eq!(queries.load(Ordering::SeqCst), 2);
     let receipt: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(harness.state.join("applied").join("nrpt.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(receipt["namespace"], ".own");
+    assert_eq!(receipt["name"], "RULE-NAME-1");
 }
 
 #[test]
 fn nrpt_apply_skips_add_when_rule_exists() {
     let harness = nrpt_harness(|_, args| {
         if args.iter().any(|arg| arg.contains("Get-DnsClientNrptRule")) {
-            Ok("Namespace : .own\nNameServers : 127.0.0.1\n".into())
+            Ok("RULE-NAME-9\n".into())
         } else {
             Ok(String::new())
         }
@@ -293,6 +334,11 @@ fn nrpt_apply_skips_add_when_rule_exists() {
             .any(|command| command.contains("Add-DnsClientNrptRule")),
         "{commands:?}"
     );
+    let receipt: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(harness.state.join("applied").join("nrpt.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt["name"], "RULE-NAME-9");
 }
 
 #[test]
@@ -319,10 +365,10 @@ fn nrpt_add_failure_aborts_without_receipt() {
 }
 
 #[test]
-fn nrpt_remove_uses_namespace_and_skips_when_absent() {
+fn nrpt_remove_uses_receipt_name_and_skips_when_absent() {
     let harness = nrpt_harness(|_, args| {
         if args.iter().any(|arg| arg.contains("Get-DnsClientNrptRule")) {
-            Ok("Namespace : .own\n".into())
+            Ok("RULE-NAME-9\nOTHER-RULE\n".into())
         } else {
             Ok(String::new())
         }
@@ -330,7 +376,7 @@ fn nrpt_remove_uses_namespace_and_skips_when_absent() {
     std::fs::create_dir_all(harness.state.join("applied")).unwrap();
     std::fs::write(
         harness.state.join("applied").join("nrpt.json"),
-        r#"{"namespace":".own","nameservers":["127.0.0.1"]}"#,
+        r#"{"namespace":".own","nameservers":["127.0.0.1"],"name":"RULE-NAME-9"}"#,
     )
     .unwrap();
     harness
@@ -344,8 +390,7 @@ fn nrpt_remove_uses_namespace_and_skips_when_absent() {
     assert!(
         commands
             .iter()
-            .any(|command| command.contains("Remove-DnsClientNrptRule")
-                && command.contains("-Namespace .own")),
+            .any(|command| command.contains("Remove-DnsClientNrptRule -Name RULE-NAME-9 -Force")),
         "{commands:?}"
     );
 
@@ -354,7 +399,7 @@ fn nrpt_remove_uses_namespace_and_skips_when_absent() {
     std::fs::create_dir_all(idle.state.join("applied")).unwrap();
     std::fs::write(
         idle.state.join("applied").join("nrpt.json"),
-        r#"{"namespace":".own","nameservers":["127.0.0.1"]}"#,
+        r#"{"namespace":".own","nameservers":["127.0.0.1"],"name":"RULE-NAME-9"}"#,
     )
     .unwrap();
     idle.installer
@@ -373,12 +418,30 @@ fn nrpt_remove_uses_namespace_and_skips_when_absent() {
     assert!(!idle.state.join("applied").join("nrpt.json").exists());
 }
 
+fn firewall_harness(
+    respond: impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static,
+) -> Harness {
+    let state = std::env::temp_dir().join(format!("od-win-setup-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("ca.crt"), b"fake-cert").unwrap();
+    let runner = Arc::new(FakeRunner::with_handler(chain(respond)));
+    let installer = WindowsHostInstaller::with_parts(
+        Box::new(FakeRunnerHandle(runner.clone())),
+        Box::new(FakeSession { interactive: true }),
+    );
+    Harness {
+        state,
+        runner,
+        installer,
+    }
+}
+
 fn trust_harness(
     respond: impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static,
 ) -> Harness {
     let state = std::env::temp_dir().join(format!("od-win-setup-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&state).unwrap();
-    let runner = Arc::new(FakeRunner::with_handler(respond));
+    let runner = Arc::new(FakeRunner::with_handler(chain(respond)));
     let installer = WindowsHostInstaller::with_parts(
         Box::new(FakeRunnerHandle(runner.clone())),
         Box::new(FakeSession { interactive: true }),
@@ -486,7 +549,7 @@ fn trust_uninstall_removes_generated_cert_file_but_keeps_provided_one() {
     );
 
     // Provided cert: store entry removed, file preserved.
-    let provided = nrpt_harness(|_, _| Ok(String::new()));
+    let provided = firewall_harness(|_, _| Ok(String::new()));
     let request = SetupRequest {
         state_directory: provided.state.clone(),
         lan_address: "192.168.1.20".into(),
@@ -546,7 +609,7 @@ fn netsh_calls(harness: &Harness) -> Vec<Vec<String>> {
 
 #[test]
 fn firewall_adds_rule_with_exact_argv_when_missing() {
-    let harness = nrpt_harness(|_, _| Ok(String::new()));
+    let harness = firewall_harness(|_, _| Ok(String::new()));
     let request = SetupRequest {
         state_directory: harness.state.clone(),
         lan_address: "192.168.1.20".into(),
@@ -587,7 +650,7 @@ fn firewall_adds_rule_with_exact_argv_when_missing() {
 
 #[test]
 fn firewall_skips_add_when_rule_exists() {
-    let harness = nrpt_harness(|program, args| {
+    let harness = firewall_harness(|program, args| {
         if program == "netsh" && args.iter().any(|arg| arg == "show") {
             Ok("Rule Name: OwnDomains-LAN\nEnabled: Yes\n".into())
         } else {
@@ -609,7 +672,7 @@ fn firewall_skips_add_when_rule_exists() {
 
 #[test]
 fn firewall_add_failure_aborts_without_receipt() {
-    let harness = nrpt_harness(|program, args| {
+    let harness = firewall_harness(|program, args| {
         if program == "netsh" && args.iter().any(|arg| arg == "add") {
             Err("Access is denied.".into())
         } else {
@@ -634,7 +697,7 @@ fn firewall_add_failure_aborts_without_receipt() {
 
 #[test]
 fn firewall_remove_deletes_present_rule_and_skips_absent() {
-    let present = nrpt_harness(|program, args| {
+    let present = firewall_harness(|program, args| {
         if program == "netsh" && args.iter().any(|arg| arg == "show") {
             Ok("Rule Name: OwnDomains-LAN\n".into())
         } else {
@@ -667,7 +730,7 @@ fn firewall_remove_deletes_present_rule_and_skips_absent() {
         "{calls:?}"
     );
 
-    let absent = nrpt_harness(|_, _| Ok("No rules match the specified criteria.\n".into()));
+    let absent = firewall_harness(|_, _| Ok("No rules match the specified criteria.\n".into()));
     let request = SetupRequest {
         state_directory: absent.state.clone(),
         lan_address: "192.168.1.20".into(),

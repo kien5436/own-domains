@@ -115,32 +115,57 @@ impl WindowsHostInstaller {
         })
     }
 
-    fn apply_nrpt(&self) -> Result<serde_json::Value, String> {
-        let present = self
-            .powershell(&format!(
-                "Get-DnsClientNrptRule -Namespace {NRPT_NAMESPACE}"
-            ))
-            .map(|output| output.contains(NRPT_NAMESPACE))
-            .unwrap_or(false);
-        if !present {
-            self.powershell(&format!(
-                "Add-DnsClientNrptRule -Namespace {NRPT_NAMESPACE} -NameServers {NRPT_NAMESERVERS}"
-            ))?;
-        }
-        Ok(serde_json::json!({"namespace": NRPT_NAMESPACE, "nameservers": [NRPT_NAMESERVERS]}))
+    /// The auto-assigned name of our NRPT rule, if one routes `.own` today.
+    /// `Get-`/`Remove-` key on `-Name` (there is no `-Namespace` filter on
+    /// this build), so every lookup filters the full list instead.
+    fn nrpt_rule_name(&self) -> Result<Option<String>, String> {
+        let output = self.powershell(
+            "try { Get-DnsClientNrptRule -ErrorAction Stop | Where-Object { $_.Namespace -contains '.own' } | Select-Object -ExpandProperty Name | Select-Object -First 1 } catch { }",
+        )?;
+        let name = output.trim().to_string();
+        Ok((!name.is_empty()).then_some(name))
     }
 
-    fn remove_nrpt(&self) -> Result<(), String> {
-        let present = self
-            .powershell(&format!(
-                "Get-DnsClientNrptRule -Namespace {NRPT_NAMESPACE}"
-            ))
-            .map(|output| output.contains(NRPT_NAMESPACE))
-            .unwrap_or(false);
-        if present {
-            self.powershell(&format!(
-                "Remove-DnsClientNrptRule -Namespace {NRPT_NAMESPACE} -Force"
-            ))?;
+    fn nrpt_rule_names(&self) -> Result<Vec<String>, String> {
+        let output = self.powershell(
+            "try { Get-DnsClientNrptRule -ErrorAction Stop | Select-Object -ExpandProperty Name } catch { }",
+        )?;
+        Ok(output
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect())
+    }
+
+    fn apply_nrpt(&self) -> Result<serde_json::Value, String> {
+        if let Some(name) = self.nrpt_rule_name()? {
+            return Ok(serde_json::json!({
+                "namespace": NRPT_NAMESPACE,
+                "nameservers": [NRPT_NAMESERVERS],
+                "name": name,
+            }));
+        }
+        self.powershell(&format!(
+            "Add-DnsClientNrptRule -Namespace {NRPT_NAMESPACE} -NameServers {NRPT_NAMESERVERS} -DisplayName OwnDomains"
+        ))?;
+        let name = self
+            .nrpt_rule_name()?
+            .ok_or_else(|| "NRPT rule was not created".to_string())?;
+        Ok(serde_json::json!({
+            "namespace": NRPT_NAMESPACE,
+            "nameservers": [NRPT_NAMESERVERS],
+            "name": name,
+        }))
+    }
+
+    fn remove_nrpt(&self, receipt: &serde_json::Value) -> Result<(), String> {
+        let name = receipt
+            .get("name")
+            .and_then(|value| value.as_str())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| "NRPT receipt has no name".to_string())?;
+        if self.nrpt_rule_names()?.iter().any(|known| known == name) {
+            self.powershell(&format!("Remove-DnsClientNrptRule -Name {name} -Force"))?;
         }
         Ok(())
     }
@@ -410,7 +435,8 @@ impl WindowsHostInstaller {
         if !receipt.is_file() {
             return Ok(());
         }
-        self.remove_nrpt()
+        let value = self.read_receipt(&receipt)?;
+        self.remove_nrpt(&value)
             .map_err(|error| self.failure("nrpt.json removal failed", error))?;
         std::fs::remove_file(&receipt)
             .map_err(|error| self.failure("unable to delete the receipt", error.to_string()))
