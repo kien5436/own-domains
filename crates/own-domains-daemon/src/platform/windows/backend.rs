@@ -6,12 +6,13 @@
 //! inspector land in later milestones.
 
 use std::{
+    net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Mutex,
     time::Duration,
 };
 
-use crate::RuntimeError;
+use crate::{RuntimeError, SetupServer};
 use own_domains_core::{ApplyResult, ApplyStatus, Settings, build_corefile, build_proxy_config};
 use own_domains_protocol::RuntimeStatus;
 
@@ -47,10 +48,17 @@ pub trait BackendAdmin: Send + Sync {
     fn load(&self, config: &serde_json::Value) -> Result<(), String>;
 }
 
+pub trait BackendSetup: Send + Sync {
+    fn start(&self, address: SocketAddr, certificate: PathBuf) -> Result<(), String>;
+    fn stop(&self) -> Result<(), String>;
+    fn is_running(&self) -> bool;
+}
+
 pub struct WindowsAdapters<'a> {
     pub process_host: &'a dyn BackendProcessHost,
     pub readiness: &'a dyn BackendReadiness,
     pub caddy: &'a dyn BackendAdmin,
+    pub setup: &'a dyn BackendSetup,
 }
 
 struct BackendState {
@@ -141,9 +149,8 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
         );
         drop(children);
 
-        // No setup server yet (Task 6 milestone), so setup.own would 502.
-        // Probe the first plain-HTTP mapping instead; TLS-only or empty
-        // configs skip HTTP readiness.
+        // Probe the first plain-HTTP mapping; TLS-only or empty configs
+        // skip HTTP readiness.
         let http_host = settings
             .mappings
             .iter()
@@ -151,9 +158,18 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
             .map(|mapping| mapping.hostname.clone());
         if let Err(error) = self
             .adapters
-            .readiness
-            .wait_dns("127.0.0.1", 53, &settings.lan_address)
+            .setup
+            .start(
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 4781)),
+                self.paths.runtime_directory.join("ca.crt"),
+            )
             .map_err(RuntimeError::Failure)
+            .and_then(|()| {
+                self.adapters
+                    .readiness
+                    .wait_dns("127.0.0.1", 53, &settings.lan_address)
+                    .map_err(RuntimeError::Failure)
+            })
             .and_then(|()| match &http_host {
                 Some(host) => self
                     .adapters
@@ -170,6 +186,7 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
             })
         {
             self.terminate_all();
+            let _ = self.adapters.setup.stop();
             return Err(error);
         }
 
@@ -187,6 +204,7 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
 
     fn stop(&self) -> Result<(), RuntimeError> {
         self.terminate_all();
+        let _ = self.adapters.setup.stop();
         self.state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -325,5 +343,63 @@ impl BackendReadiness for SystemReadiness {
 impl BackendAdmin for CaddyAdminClient {
     fn load(&self, config: &serde_json::Value) -> Result<(), String> {
         <Self as CaddyAdmin>::load(self, config)
+    }
+}
+
+/// Real setup server: the shared in-process HTTP server on 127.0.0.1:4781.
+/// The certificate path only matters for the `/ca.crt`-style routes, which
+/// resolve once the Windows trust milestone lands; `/` serves regardless.
+pub struct SystemSetup {
+    server: Mutex<Option<SetupServer>>,
+}
+
+impl SystemSetup {
+    pub fn new() -> Self {
+        Self {
+            server: Mutex::new(None),
+        }
+    }
+}
+
+impl Default for SystemSetup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BackendSetup for SystemSetup {
+    fn start(&self, address: SocketAddr, certificate: PathBuf) -> Result<(), String> {
+        let mut server = self
+            .server
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if server.is_some() {
+            return Ok(());
+        }
+        let bound = SetupServer::bind(address, certificate)
+            .map_err(|error| format!("unable to start the setup server: {error}"))?;
+        *server = Some(bound);
+        Ok(())
+    }
+
+    fn stop(&self) -> Result<(), String> {
+        let mut server = self
+            .server
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Some(bound) = server.as_ref() {
+            bound
+                .shutdown()
+                .map_err(|error| format!("unable to stop the setup server: {error}"))?;
+        }
+        *server = None;
+        Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        self.server
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .is_some()
     }
 }

@@ -21,8 +21,8 @@
 
 use own_domains_core::{DomainMapping, Settings};
 use own_domains_daemon::platform::windows::backend::{
-    BackendReadiness, SystemProcessHost, SystemReadiness, WindowsAdapters, WindowsPaths,
-    WindowsRuntimeBackend,
+    BackendReadiness, SystemProcessHost, SystemReadiness, SystemSetup, WindowsAdapters,
+    WindowsPaths, WindowsRuntimeBackend,
 };
 
 use own_domains_daemon::{RuntimeBackend, probe::CaddyAdminClient};
@@ -122,6 +122,7 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
 
         let settings = settings(lan, upstream_port);
         let admin = CaddyAdminClient::new(runtime.join("caddy-admin.sock")).unwrap();
+        let setup = SystemSetup::new();
         let backend = WindowsRuntimeBackend::with_adapters(
             WindowsPaths {
                 runtime_directory: runtime.clone(),
@@ -133,6 +134,7 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
                 process_host: &SystemProcessHost,
                 readiness: &SystemReadiness,
                 caddy: &admin,
+                setup: &setup,
             },
         );
 
@@ -144,6 +146,16 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
         own_domains_daemon::platform::windows::backend::SystemReadiness
             .wait_dns("127.0.0.1", 53, &lan.to_string())
             .unwrap();
+
+        // The setup page serves directly while the backend runs.
+        let stream = TcpStream::connect_timeout(
+            &std::net::SocketAddr::from((Ipv4Addr::LOCALHOST, 4781)),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        let setup_body = read_response(stream, "setup.own");
+        assert!(setup_body.contains(" 200 "), "{setup_body}");
+        assert!(setup_body.contains("Own Domains"), "{setup_body}");
 
         // HTTP serves the mapped app through Caddy.
         let stream = TcpStream::connect_timeout(
@@ -157,7 +169,7 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
 
         backend.stop().unwrap();
         assert!(matches!(backend.inspect().unwrap(), RuntimeStatus::Stopped));
-        for port in [53, 80, 443] {
+        for port in [53, 80, 443, 4781] {
             assert_port_closed(port);
         }
         done.store(true, std::sync::atomic::Ordering::Relaxed);

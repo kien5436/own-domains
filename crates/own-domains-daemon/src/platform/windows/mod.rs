@@ -10,7 +10,7 @@ mod config;
 pub mod process;
 
 pub use backend::{
-    BackendAdmin, BackendChild, BackendProcessHost, BackendReadiness, WindowsAdapters,
-    WindowsPaths, WindowsRuntimeBackend,
+    BackendAdmin, BackendChild, BackendProcessHost, BackendReadiness, BackendSetup, SystemSetup,
+    WindowsAdapters, WindowsPaths, WindowsRuntimeBackend,
 };
 pub use config::{windows_dns_options, windows_proxy_options};

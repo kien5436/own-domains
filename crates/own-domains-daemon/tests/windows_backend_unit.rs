@@ -7,11 +7,12 @@ use own_domains_core::{ApplyStatus, DomainMapping, Settings};
 use own_domains_daemon::{
     RuntimeBackend,
     platform::windows::backend::{
-        BackendAdmin, BackendChild, BackendProcessHost, BackendReadiness, WindowsAdapters,
-        WindowsPaths, WindowsRuntimeBackend,
+        BackendAdmin, BackendChild, BackendProcessHost, BackendReadiness, BackendSetup,
+        WindowsAdapters, WindowsPaths, WindowsRuntimeBackend,
     },
 };
 use std::{
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -119,6 +120,7 @@ fn backend(state: &BackendHarness) -> WindowsRuntimeBackend<'_> {
             process_host: &state.host,
             readiness: &state.readiness,
             caddy: &state.admin,
+            setup: &state.setup,
         },
     )
 }
@@ -129,6 +131,7 @@ struct BackendHarness {
     host: FakeHost,
     readiness: FakeReadiness,
     admin: FakeAdmin,
+    setup: FakeSetup,
 }
 
 fn harness() -> BackendHarness {
@@ -139,7 +142,11 @@ fn harness() -> BackendHarness {
         log: log.clone(),
         host: FakeHost { log: log.clone() },
         readiness: FakeReadiness { log: log.clone() },
-        admin: FakeAdmin { log },
+        admin: FakeAdmin { log: log.clone() },
+        setup: FakeSetup {
+            log,
+            running: Mutex::new(false),
+        },
     }
 }
 
@@ -166,6 +173,7 @@ fn apply_writes_configs_and_starts_sidecars() {
     let log = harness.log.events.lock().unwrap().join("\n");
     assert!(log.contains("spawn coredns-test.exe"), "{log}");
     assert!(log.contains("spawn caddy-test.exe"), "{log}");
+    assert!(log.contains("setup-start 127.0.0.1:4781"), "{log}");
     assert!(log.contains("wait-dns"), "{log}");
     assert!(
         log.contains("wait-http 127.0.0.1:80 host=shop.own"),
@@ -187,6 +195,7 @@ fn stop_terminates_processes_and_is_idempotent() {
     let log = harness.log.events.lock().unwrap().join("\n");
     assert!(log.contains("terminate coredns-test.exe"), "{log}");
     assert!(log.contains("terminate caddy-test.exe"), "{log}");
+    assert!(log.contains("setup-stop"), "{log}");
     assert!(matches!(
         backend.inspect().unwrap(),
         own_domains_protocol::RuntimeStatus::Stopped
@@ -207,6 +216,29 @@ impl BackendReadiness for FailingReadiness {
     }
 }
 
+struct FakeSetup {
+    log: Arc<Log>,
+    running: Mutex<bool>,
+}
+
+impl BackendSetup for FakeSetup {
+    fn start(&self, address: SocketAddr, _certificate: PathBuf) -> Result<(), String> {
+        self.log.push(format!("setup-start {address}"));
+        *self.running.lock().unwrap() = true;
+        Ok(())
+    }
+
+    fn stop(&self) -> Result<(), String> {
+        self.log.push("setup-stop".to_string());
+        *self.running.lock().unwrap() = false;
+        Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        *self.running.lock().unwrap()
+    }
+}
+
 #[test]
 fn failed_apply_terminates_spawned_sidecars() {
     let harness = harness();
@@ -222,6 +254,7 @@ fn failed_apply_terminates_spawned_sidecars() {
             process_host: &harness.host,
             readiness: &failing,
             caddy: &harness.admin,
+            setup: &harness.setup,
         },
     );
     assert!(backend.apply(&settings()).is_err());
@@ -229,6 +262,7 @@ fn failed_apply_terminates_spawned_sidecars() {
     assert!(log.contains("spawn coredns-test.exe"), "{log}");
     assert!(log.contains("terminate coredns-test.exe"), "{log}");
     assert!(log.contains("terminate caddy-test.exe"), "{log}");
+    assert!(log.contains("setup-stop"), "{log}");
     // Nothing left to stop: second stop terminates nothing new.
     backend.stop().unwrap();
     assert!(matches!(
