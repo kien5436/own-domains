@@ -1,34 +1,54 @@
 # Repository Guidelines
 
+## Overview
+
+Own Domains pairs a legacy TypeScript runtime (React dashboard, dnsmasq DNS, Caddy proxy, `src/cli` setup/doctor/uninstall) with a native Rust/Tauri macOS beta (`crates/`, bundled CoreDNS/Caddy sidecars).
+
+- Native acceptance target is Apple silicon macOS 15+; Intel macOS is buildable but not acceptance-required. Ubuntu 24+ and Windows 10/11 are support targets whose native runtime returns `runtimeUnavailable`.
+- Keep the legacy TypeScript runtime and its migration/uninstall support until no beta users depend on it.
+- Defer volatile platform, signing, and acceptance detail to `README.md` and `docs/` (`desktop.md`, `platform-support.md`, `native-core.md`, `cli.md`, `macos-acceptance.md`) instead of duplicating it here.
+
 ## Project Structure & Module Organization
 
-This repository is currently a clean starting point. Keep implementation code under `src/`, automated tests under `tests/`, and static resources under `assets/`. Mirror source paths in the test tree—for example, test `src/domain/parser.ts` in `tests/domain/parser.test.ts`. Place project-wide configuration at the repository root and keep generated output in ignored directories such as `dist/` or `coverage/`.
+- `src/web/` — React dashboard, organized by feature (`features/`, `app/`, `lib/`).
+- `src/server/` — legacy backend: `domains/`, `http/`, `network/`, `proxy/`.
+- `src/cli/` — legacy `setup`, `doctor`, `uninstall` commands and their plan/writer/service splits.
+- `src/shared/` — types shared by web and server.
+- `crates/own-domains-{core,protocol,daemon,client,cli,desktop}/` — portable Rust core, IPC protocol, daemon, client, CLI, and Tauri desktop app.
+- `tests/` — mirrors `src/` paths, plus `e2e/` (Playwright), `integration/` (dnsmasq/Caddy), `fixtures/` (core-parity, IPC, sidecars), and `scripts/`. Rust crate tests live under `crates/*/tests/`.
+- `docs/` — architecture, platform support, setup, and acceptance records. `scripts/` — `install.sh`, `uninstall.sh`, sidecar fetch/stage, release checks. `sidecars/` — pinned manifests (binaries under ignored `sidecars/build/`).
+- Ignored outputs: `dist/`, `target/`, `sidecars/build/`, `artifacts/`, `coverage/`, `playwright-report/`, `test-results/`, `.worktrees/`.
 
-Prefer small modules with one clear responsibility. Group code by domain or feature once the project grows; avoid broad catch-all directories such as `utils/` unless the contents are genuinely shared.
+Prefer small modules with one clear responsibility. Group web code by feature; keep components, hooks, API access, and pure validation in separate focused files.
 
 ## Build, Test, and Development Commands
 
-This project uses Node.js, React, TypeScript, and pnpm:
+Node.js, React, TypeScript via pnpm; Rust 1.90+ via Cargo:
 
 - `pnpm install` — install locked dependencies.
-- `pnpm run dev` — start the Vite dashboard; run `pnpm run dev:server` separately for the local API.
-- `pnpm test` — run the complete test suite.
-- `pnpm run lint` — check formatting and static-analysis rules.
-- `pnpm run typecheck` — validate TypeScript without emitting files.
-- `pnpm run build` — create production artifacts.
-- `pnpm run setup -- --dry-run` — preview required macOS service changes.
-- `pnpm run doctor` — report missing DNS, proxy, and resolver prerequisites.
+- `pnpm run dev` — start the Vite dashboard; `pnpm run dev:server` for the local API; `pnpm run desktop:dev` for the Tauri client.
+- `pnpm test` — Vitest unit/component/API tests (excludes `tests/e2e/**` and `.worktrees/**`).
+- `pnpm run test:e2e` — Playwright browser tests.
+- `pnpm run test:native-daemon` — `cargo test --workspace`.
+- `pnpm run verify:native-core` — Rust core tests plus `pnpm test`, `lint`, `typecheck`, and `build`.
+- `pnpm run lint` — eslint; `pnpm run typecheck` — `tsc -b`; `pnpm run build` — `tsc -b && vite build`.
+- `pnpm run sidecars:fetch -- --verify-only` — verify pinned CoreDNS/Caddy digests (omit the flag once to download into `sidecars/build/`).
+- `pnpm run desktop:prepare` / `pnpm run desktop:build` — stage daemon and build the desktop app; `:arm64`/`:x86_64` variants for arch-specific macOS builds.
+- `pnpm run setup -- --dry-run` — preview privileged host changes; `pnpm run doctor` — check DNS/proxy prerequisites; `pnpm run uninstall` — remove managed services.
+- `pnpm run release:preflight` / `pnpm run release:check` — distribution readiness checks.
 
-Do not introduce production dependencies without prior approval.
+DNS/Caddy integration tests self-skip when `dnsmasq`, `caddy`, or `dig` are absent. Do not introduce production dependencies without prior approval.
 
 ## Coding Style & Naming Conventions
 
-Follow `eslint-config-pk` through `eslint.config.js`. Use `camelCase` for functions and variables, `PascalCase` for React components and types, and lowercase kebab-case for non-component modules. Organize frontend code by feature; keep components, hooks, API access, and pure validation in separate focused files. Use Tailwind CSS utilities and shared theme tokens instead of large component-specific stylesheets.
+- Follow `eslint-config-pk` through `eslint.config.js`. Use `camelCase` for functions/variables, `PascalCase` for React components and types, lowercase kebab-case for non-component modules. Use Tailwind CSS utilities and shared theme tokens, not large component-specific stylesheets.
+- Rust uses edition 2024. Keep shared behavior in `core` and wire contracts in `protocol`; keep platform work behind the daemon/CLI host-adapter contracts and do not add platform branches to shared command or core code.
+- Never re-sign the pinned CoreDNS/Caddy sidecars (signature bytes are part of the pinned SHA-256 digest). Never run the legacy TypeScript settings writer against a native state dir — it does not participate in the Rust process lock.
 
 ## Testing Guidelines
 
-Add tests with every behavior change or bug fix. Vitest covers unit, component, and API integration tests; React Testing Library exercises UI behavior. Keep tests deterministic, independent, and named after observable behavior. Use `*.test.*` and mirror source paths under `tests/`. Run tests, lint, typecheck, and build before opening a pull request.
+Add tests with every behavior change or bug fix. Cover Vitest/RTL for web and server, `cargo test` for Rust crates, Playwright for browser flows, and parity fixtures for core compatibility. Keep tests deterministic, independent, and named after observable behavior. Mirror `src/` paths under `tests/` with `*.test.*` naming. There is no CI workflow; run and report the relevant local checks before opening a pull request.
 
 ## Commit & Pull Request Guidelines
 
-There is no existing commit history to establish a convention. Use concise imperative subjects, optionally prefixed by type, such as `feat: add domain parser` or `docs: clarify setup`. Pull requests should explain what changed, why it changed, and how it was verified. Link relevant issues and include screenshots for visible interface changes. Keep each pull request narrowly scoped and call out configuration, migration, or security implications explicitly.
+History uses `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:` prefixes. Use concise imperative subjects; add a body only for complex or breaking work explaining what and why. Pull requests state what changed, why, and how it was verified, and call out platform, migration, signing, or security impact. Keep each pull request narrowly scoped.
