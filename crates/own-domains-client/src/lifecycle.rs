@@ -1,5 +1,5 @@
 use crate::{Client, ClientError};
-use own_domains_protocol::{Command, CommandResult, RuntimeStatus};
+use own_domains_protocol::{Command, CommandResult, Endpoint, RuntimeStatus};
 use std::{
     io,
     path::Path,
@@ -23,30 +23,42 @@ pub enum LifecycleError {
     #[error("unable to inspect daemon socket: {0}")]
     Inspect(#[source] io::Error),
 }
-fn absent(error: &ClientError) -> bool {
-    matches!(error, ClientError::DaemonUnavailable { source, .. } if matches!(source.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused))
+fn absent(endpoint: &Endpoint, error: &ClientError) -> bool {
+    matches!(error, ClientError::DaemonUnavailable { source, .. } if endpoint.is_absent_error(source))
 }
 pub fn connect_or_launch(
     state_dir: &Path,
-    socket: &Path,
+    endpoint: &Endpoint,
     daemon_executable: &Path,
     timeout: Duration,
 ) -> Result<Client, LifecycleError> {
     let deadline = Instant::now() + timeout;
-    match Client::with_timeout(socket, timeout) {
+    match Client::with_timeout(endpoint, timeout) {
         Ok(client) => return Ok(client),
-        Err(error) if absent(&error) => {}
+        Err(error) if absent(endpoint, &error) => {}
         Err(error) => return Err(error.into()),
     }
-    let mut child = ProcessCommand::new(daemon_executable)
+    let mut command = ProcessCommand::new(daemon_executable);
+    command
         .arg("--state-dir")
         .arg(state_dir)
-        .arg("--socket")
-        .arg(socket)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .spawn()
-        .map_err(LifecycleError::Launch)?;
+        .stdout(Stdio::null());
+    match endpoint.launch_argument() {
+        Some((flag, value)) => {
+            command.arg(flag).arg(value);
+        }
+        None => {
+            return Err(LifecycleError::Launch(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!(
+                    "daemon launch cannot reproduce endpoint {}",
+                    endpoint.display_name()
+                ),
+            )));
+        }
+    }
+    let mut child = command.spawn().map_err(LifecycleError::Launch)?;
     // Reap our own child on exit; never kill a PID learned from an IPC peer.
     thread::spawn(move || {
         let _ = child.wait();
@@ -56,9 +68,9 @@ pub fn connect_or_launch(
         if remaining.is_zero() {
             return Err(LifecycleError::StartupTimeout);
         }
-        match Client::with_timeout(socket, remaining) {
+        match Client::with_timeout(endpoint, remaining) {
             Ok(client) => return Ok(client),
-            Err(error) if absent(&error) => {}
+            Err(error) if absent(endpoint, &error) => {}
             Err(error) => return Err(error.into()),
         }
         thread::sleep(remaining.min(Duration::from_millis(20)));
@@ -66,7 +78,7 @@ pub fn connect_or_launch(
 }
 pub fn stop_and_wait(
     client: &Client,
-    socket: &Path,
+    endpoint: &Endpoint,
     timeout: Duration,
 ) -> Result<(), LifecycleError> {
     if !matches!(
@@ -77,10 +89,8 @@ pub fn stop_and_wait(
     }
     let deadline = Instant::now() + timeout;
     loop {
-        match std::fs::symlink_metadata(socket) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(LifecycleError::Inspect(error)),
-            Ok(_) => {}
+        if !endpoint.is_present() {
+            return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(LifecycleError::ShutdownTimeout);

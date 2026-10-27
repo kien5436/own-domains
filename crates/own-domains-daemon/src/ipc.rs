@@ -1,23 +1,27 @@
 use crate::{DaemonError, DaemonState};
-use own_domains_protocol::{Command, RequestEnvelope};
+use own_domains_protocol::Endpoint;
+#[cfg(unix)]
+use own_domains_protocol::{Command, RequestEnvelope, read_frame, write_json_line};
+#[cfg(unix)]
+use std::path::Path;
+#[cfg(unix)]
 use std::{
     fs,
-    io::{self, Read, Write},
     os::unix::{
         fs::{FileTypeExt, MetadataExt, PermissionsExt},
         net::{UnixListener, UnixStream},
     },
-    path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::Duration,
 };
+use std::{
+    io::{self},
+    path::PathBuf,
+    sync::Arc,
+};
 
-const MAX_FRAME: usize = 1024 * 1024;
-
+#[cfg(unix)]
 pub struct IpcServer {
     listener: UnixListener,
     path: PathBuf,
@@ -26,8 +30,19 @@ pub struct IpcServer {
     shutdown: Arc<AtomicBool>,
 }
 
+#[cfg(unix)]
 impl IpcServer {
-    pub fn bind(path: &Path, state: Arc<DaemonState>) -> Result<Self, DaemonError> {
+    pub fn bind(endpoint: &Endpoint, state: Arc<DaemonState>) -> Result<Self, DaemonError> {
+        let Endpoint::Unix(path) = endpoint else {
+            return Err(DaemonError::Io {
+                operation: "bind IPC endpoint",
+                path: PathBuf::from(endpoint.display_name()),
+                source: io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "named-pipe endpoints need the Windows server",
+                ),
+            });
+        };
         let parent = path
             .parent()
             .ok_or_else(|| DaemonError::InvalidSocketPath {
@@ -98,21 +113,22 @@ impl IpcServer {
         self.shutdown.store(true, Ordering::Release);
     }
 
-    pub fn request_shutdown(path: &Path) {
+    pub fn request_shutdown(endpoint: &Endpoint) {
+        let Endpoint::Unix(path) = endpoint else {
+            return;
+        };
         if let Ok(mut stream) = UnixStream::connect(path) {
             let request = RequestEnvelope {
                 protocol_version: own_domains_protocol::PROTOCOL_VERSION,
                 request_id: "shutdown".into(),
                 command: Command::Stop,
             };
-            if let Ok(frame) = serde_json::to_vec(&request) {
-                let _ = stream.write_all(&frame);
-                let _ = stream.write_all(b"\n");
-            }
+            let _ = write_json_line(&mut stream, &request);
         }
     }
 }
 
+#[cfg(unix)]
 impl Drop for IpcServer {
     fn drop(&mut self) {
         if let Ok(metadata) = fs::metadata(&self.path)
@@ -123,6 +139,7 @@ impl Drop for IpcServer {
     }
 }
 
+#[cfg(unix)]
 fn handle_client(mut stream: UnixStream, state: Arc<DaemonState>, shutdown: Arc<AtomicBool>) {
     loop {
         let frame = match read_frame(&mut stream) {
@@ -159,37 +176,7 @@ fn handle_client(mut stream: UnixStream, state: Arc<DaemonState>, shutdown: Arc<
     }
 }
 
-fn read_frame(stream: &mut UnixStream) -> io::Result<Option<Vec<u8>>> {
-    let mut frame = Vec::new();
-    let mut byte = [0];
-    loop {
-        match stream.read(&mut byte)? {
-            0 if frame.is_empty() => return Ok(None),
-            0 => {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "IPC frame is missing newline",
-                ));
-            }
-            _ if byte[0] == b'\n' => return Ok(Some(frame)),
-            _ => {
-                frame.push(byte[0]);
-                if frame.len() > MAX_FRAME {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "IPC frame exceeds 1 MiB",
-                    ));
-                }
-            }
-        }
-    }
-}
-
-fn write_json_line(stream: &mut UnixStream, value: &impl serde::Serialize) -> io::Result<()> {
-    serde_json::to_writer(&mut *stream, value)?;
-    stream.write_all(b"\n")
-}
-
+#[cfg(unix)]
 fn empty_snapshot() -> own_domains_protocol::StateSnapshot {
     own_domains_protocol::StateSnapshot {
         settings: Default::default(),
@@ -201,10 +188,37 @@ fn empty_snapshot() -> own_domains_protocol::StateSnapshot {
     }
 }
 
+#[cfg(unix)]
 fn io_error(operation: &'static str, path: &Path, source: io::Error) -> DaemonError {
     DaemonError::Io {
         operation,
         path: path.to_path_buf(),
         source,
     }
+}
+#[cfg(not(unix))]
+pub struct IpcServer {
+    _priv: (),
+}
+
+#[cfg(not(unix))]
+impl IpcServer {
+    pub fn bind(endpoint: &Endpoint, _state: Arc<DaemonState>) -> Result<Self, DaemonError> {
+        Err(DaemonError::Io {
+            operation: "bind IPC endpoint",
+            path: PathBuf::from(endpoint.display_name()),
+            source: io::Error::new(
+                io::ErrorKind::Unsupported,
+                "named-pipe IPC is not implemented yet",
+            ),
+        })
+    }
+
+    pub fn run(self) -> Result<(), DaemonError> {
+        Ok(())
+    }
+
+    pub fn shutdown(&self) {}
+
+    pub fn request_shutdown(_endpoint: &Endpoint) {}
 }

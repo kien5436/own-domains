@@ -1,7 +1,8 @@
+#![cfg(unix)]
 use own_domains_core::{DomainService, SettingsStore};
 use own_domains_daemon::{DaemonState, IpcServer, UnavailableRuntimeBackend};
 use own_domains_protocol::{
-    Command, CommandResult, PROTOCOL_VERSION, RequestEnvelope, ResponseEnvelope,
+    Command, CommandResult, Endpoint, PROTOCOL_VERSION, RequestEnvelope, ResponseEnvelope,
 };
 use std::{
     fs,
@@ -25,7 +26,7 @@ fn setup() -> (std::path::PathBuf, Arc<DaemonState>, IpcServer) {
         DomainService::new(SettingsStore::new(directory.join("state"))),
         Arc::new(UnavailableRuntimeBackend),
     ));
-    let server = IpcServer::bind(&socket, state.clone()).unwrap();
+    let server = IpcServer::bind(&Endpoint::unix(socket.clone()), state.clone()).unwrap();
     (socket, state, server)
 }
 
@@ -70,7 +71,7 @@ fn malformed_client_does_not_break_following_requests() {
         response.result,
         Ok(CommandResult::Handshake { .. })
     ));
-    IpcServer::request_shutdown(&socket);
+    IpcServer::request_shutdown(&Endpoint::unix(socket));
     runner.join().unwrap();
     thread::sleep(Duration::from_millis(10));
 }

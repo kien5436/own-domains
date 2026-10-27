@@ -1,19 +1,18 @@
 use own_domains_protocol::{
-    Command, CommandResult, EventEnvelope, PROTOCOL_VERSION, ProtocolError, RequestEnvelope,
-    ResponseEnvelope,
+    Command, CommandResult, Endpoint, EventEnvelope, PROTOCOL_VERSION, ProtocolError,
+    RequestEnvelope, ResponseEnvelope, read_frame, write_json_line,
 };
 use std::{
-    io::{BufReader, ErrorKind, Read, Write},
+    io::{BufReader, ErrorKind, Read},
     os::unix::net::UnixStream,
-    path::{Path, PathBuf},
     time::Duration,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("daemon unavailable at {path}: {source}", path = path.display())]
+    #[error("daemon unavailable at {endpoint}: {source}")]
     DaemonUnavailable {
-        path: PathBuf,
+        endpoint: String,
         #[source]
         source: std::io::Error,
     },
@@ -29,7 +28,7 @@ pub enum ClientError {
 
 #[derive(Clone)]
 pub struct Client {
-    path: PathBuf,
+    endpoint: Endpoint,
     timeout: Duration,
 }
 
@@ -39,13 +38,13 @@ pub struct EventStream {
 }
 
 impl Client {
-    pub fn connect(path: &Path) -> Result<Self, ClientError> {
-        Self::with_timeout(path, Duration::from_secs(5))
+    pub fn connect(endpoint: &Endpoint) -> Result<Self, ClientError> {
+        Self::with_timeout(endpoint, Duration::from_secs(5))
     }
 
-    pub fn with_timeout(path: &Path, timeout: Duration) -> Result<Self, ClientError> {
+    pub fn with_timeout(endpoint: &Endpoint, timeout: Duration) -> Result<Self, ClientError> {
         let client = Self {
-            path: path.to_path_buf(),
+            endpoint: endpoint.clone(),
             timeout,
         };
         let mut stream = client.open()?;
@@ -83,9 +82,18 @@ impl Client {
     }
 
     fn open(&self) -> Result<UnixStream, ClientError> {
+        let Endpoint::Unix(path) = &self.endpoint else {
+            return Err(ClientError::DaemonUnavailable {
+                endpoint: self.endpoint.display_name(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "named-pipe endpoints need the Windows client",
+                ),
+            });
+        };
         let stream =
-            UnixStream::connect(&self.path).map_err(|source| ClientError::DaemonUnavailable {
-                path: self.path.clone(),
+            UnixStream::connect(path).map_err(|source| ClientError::DaemonUnavailable {
+                endpoint: self.endpoint.display_name(),
                 source,
             })?;
         stream.set_read_timeout(Some(self.timeout))?;
@@ -168,32 +176,18 @@ fn exchange(stream: &mut UnixStream, command: Command) -> Result<CommandResult, 
         request_id: request_id.clone(),
         command,
     };
-    let frame = serde_json::to_vec(&request)?;
-    stream.write_all(&frame)?;
-    stream.write_all(b"\n")?;
+    write_json_line(stream, &request)?;
     // Do not prefetch bytes belonging to the subscription's first event.
-    let mut line = Vec::new();
-    let mut byte = [0];
-    loop {
-        if stream.read(&mut byte)? == 0 {
+    let line = match read_frame(stream)? {
+        Some(line) => line,
+        None => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "daemon disconnected mid-frame",
             )
             .into());
         }
-        if byte[0] == b'\n' {
-            break;
-        }
-        line.push(byte[0]);
-        if line.len() > 1024 * 1024 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "response exceeds 1 MiB",
-            )
-            .into());
-        }
-    }
+    };
     let response: ResponseEnvelope = serde_json::from_slice(&line)?;
     if response.protocol_version != PROTOCOL_VERSION {
         return Err(ClientError::IncompatibleVersion {

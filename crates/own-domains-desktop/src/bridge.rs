@@ -1,4 +1,4 @@
-use own_domains_client::{Client, ClientError};
+use own_domains_client::{Client, ClientError, Endpoint};
 use own_domains_protocol::{Command, CommandResult, ProtocolError};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -39,10 +39,14 @@ impl From<ClientError> for BridgeError {
 #[derive(Clone)]
 pub struct DesktopPaths {
     pub state_dir: PathBuf,
-    pub socket: PathBuf,
+    pub endpoint: Endpoint,
 }
 impl DesktopPaths {
-    pub fn new(state_dir: Option<&Path>, socket: Option<&Path>) -> Result<Self, BridgeError> {
+    pub fn new(
+        state_dir: Option<&Path>,
+        socket: Option<&Path>,
+        pipe: Option<&str>,
+    ) -> Result<Self, BridgeError> {
         let state_dir = state_dir
             .filter(|path| path.is_absolute())
             .ok_or_else(|| BridgeError::InvalidMessage {
@@ -51,15 +55,28 @@ impl DesktopPaths {
                         .into(),
             })?
             .to_path_buf();
-        let socket = socket
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| state_dir.join("daemon.sock"));
-        if !socket.is_absolute() {
+        if socket.is_some() && pipe.is_some() {
             return Err(BridgeError::InvalidMessage {
-                message: "--socket must be absolute".into(),
+                message: "use either --socket or --pipe".into(),
             });
         }
-        Ok(Self { state_dir, socket })
+        let endpoint = match (socket, pipe) {
+            (_, Some(name)) => Endpoint::named_pipe(name.into())
+                .map_err(|message| BridgeError::InvalidMessage { message })?,
+            (Some(path), None) => {
+                if !path.is_absolute() {
+                    return Err(BridgeError::InvalidMessage {
+                        message: "--socket must be absolute".into(),
+                    });
+                }
+                Endpoint::unix(path.to_path_buf())
+            }
+            (None, None) => Endpoint::default_for_state_dir(&state_dir),
+        };
+        Ok(Self {
+            state_dir,
+            endpoint,
+        })
     }
 }
 
@@ -68,9 +85,9 @@ pub struct DesktopBridge {
     pub(crate) client: Client,
 }
 impl DesktopBridge {
-    pub fn connect(socket: &Path) -> Result<Self, BridgeError> {
+    pub fn connect(endpoint: &Endpoint) -> Result<Self, BridgeError> {
         Ok(Self {
-            client: Client::connect(socket)?,
+            client: Client::connect(endpoint)?,
         })
     }
     pub fn request(&self, command: Command) -> Result<CommandResult, BridgeError> {

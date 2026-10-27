@@ -1,10 +1,15 @@
 use own_domains_cli::{Cli, CliCommand, execute, validate_privileged_setup_identity};
+#[cfg(unix)]
 use own_domains_client::Client;
+#[cfg(unix)]
 use own_domains_core::{
     ApplyResult, ApplyStatus, Diagnostic, DomainService, Settings, SettingsStore,
 };
+#[cfg(unix)]
 use own_domains_daemon::{DaemonState, IpcServer, RuntimeBackend, RuntimeError};
+#[cfg(unix)]
 use own_domains_protocol::Command;
+#[cfg(unix)]
 use std::{
     sync::{
         Arc,
@@ -13,8 +18,10 @@ use std::{
     thread,
 };
 
+#[cfg(unix)]
 struct FailingReloadRuntime(AtomicUsize);
 
+#[cfg(unix)]
 impl RuntimeBackend for FailingReloadRuntime {
     fn apply(&self, settings: &Settings) -> Result<ApplyResult, RuntimeError> {
         if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -183,6 +190,7 @@ fn offline_status_and_mutation_are_truthful() {
 }
 
 #[test]
+#[cfg(unix)]
 fn live_saved_but_unapplied_mutation_has_distinct_exit_and_output() {
     let state_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -199,9 +207,10 @@ fn live_saved_but_unapplied_mutation_has_distinct_exit_and_output() {
         DomainService::new(SettingsStore::new(&state_dir)),
         Arc::new(FailingReloadRuntime(AtomicUsize::new(0))),
     ));
-    let server = IpcServer::bind(&socket, state).unwrap();
+    let server =
+        IpcServer::bind(&own_domains_protocol::Endpoint::unix(socket.clone()), state).unwrap();
     let runner = thread::spawn(move || server.run().unwrap());
-    let client = Client::connect(&socket).unwrap();
+    let client = Client::connect(&own_domains_protocol::Endpoint::unix(socket.clone())).unwrap();
     client.request(Command::Start).unwrap();
 
     let add = execute(

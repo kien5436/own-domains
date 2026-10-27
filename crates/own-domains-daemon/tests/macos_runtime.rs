@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 use own_domains_core::{ApplyStatus, Diagnostic, DiagnosticStatus, Settings};
 use own_domains_daemon::RuntimeBackend;
 use own_domains_daemon::platform::macos::{
