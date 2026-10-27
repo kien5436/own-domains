@@ -82,7 +82,10 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
     let coredns = staging("OWN_DOMAINS_TEST_COREDNS_EXE");
     let caddy = staging("OWN_DOMAINS_TEST_CADDY_EXE");
     let lan = std::env::var("OWN_DOMAINS_TEST_LAN")
-        .map(|lan| Ipv4Addr::from_str(&lan).expect("OWN_DOMAINS_TEST_LAN must be IPv4"))
+        .map(|lan| {
+            Ipv4Addr::from_str(lan.trim().trim_matches('"'))
+                .unwrap_or_else(|_| panic!("OWN_DOMAINS_TEST_LAN must be plain IPv4, got {lan:?}"))
+        })
         .expect("set OWN_DOMAINS_TEST_LAN to the guest IPv4 (see top of file)");
 
     for _ in 0..2 {
