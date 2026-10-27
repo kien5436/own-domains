@@ -1,5 +1,3 @@
-#![cfg(target_os = "windows")]
-
 //! Exact Windows host artifact rendering (no privileges needed).
 
 use std::{net::Ipv4Addr, path::Path};

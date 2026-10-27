@@ -19,7 +19,14 @@ fn rejects_missing_and_relative_state_paths_without_creating_settings() {
     assert!(DesktopPaths::new(None, None, None).is_err());
     assert!(DesktopPaths::new(Some(Path::new("relative")), None, None).is_err());
     let paths = DesktopPaths::new(Some(&explicit), None, None).unwrap();
+    #[cfg(not(windows))]
     assert_eq!(paths.endpoint, Endpoint::unix(explicit.join("daemon.sock")));
+    #[cfg(windows)]
+    assert!(
+        matches!(paths.endpoint, Endpoint::NamedPipe(_)),
+        "{}",
+        paths.endpoint.display_name()
+    );
     assert!(DesktopPaths::new(Some(&other), Some(Path::new("relative.sock")), None).is_err());
 }
 

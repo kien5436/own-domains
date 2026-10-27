@@ -104,11 +104,46 @@ fn install_shutdown_signals(endpoint: Endpoint) -> std::io::Result<()> {
     Ok(())
 }
 
-// TODO: install a SetConsoleCtrlHandler handler that calls
-// `IpcServer::request_shutdown`. Safe to defer: named pipes leave no
-// filesystem residue, so an abrupt exit still releases the endpoint name,
-// and `own-domains stop` performs the graceful path over the pipe.
-#[cfg(not(unix))]
+// Console events arrive on an OS-owned thread, so the handler only spawns the
+// pipe Stop request and returns: never block the handler itself. Named pipes
+// leave no filesystem residue, so even an abrupt exit releases the name.
+#[cfg(windows)]
+fn install_shutdown_signals(endpoint: Endpoint) -> std::io::Result<()> {
+    use std::sync::OnceLock;
+    use windows::{
+        Win32::{
+            Foundation::{FALSE, TRUE},
+            System::Console::{
+                CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT,
+                CTRL_SHUTDOWN_EVENT, SetConsoleCtrlHandler,
+            },
+        },
+        core::BOOL,
+    };
+
+    static ENDPOINT: OnceLock<Endpoint> = OnceLock::new();
+    let _ = ENDPOINT.set(endpoint);
+
+    unsafe extern "system" fn handle_console_event(event: u32) -> BOOL {
+        match event {
+            CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
+            | CTRL_SHUTDOWN_EVENT => {
+                if let Some(saved) = ENDPOINT.get() {
+                    let owned = saved.clone();
+                    std::thread::spawn(move || IpcServer::request_shutdown(&owned));
+                }
+                TRUE
+            }
+            _ => FALSE,
+        }
+    }
+
+    unsafe { SetConsoleCtrlHandler(Some(handle_console_event), true) }
+        .map_err(|error| std::io::Error::other(error.message()))?;
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
 fn install_shutdown_signals(_endpoint: Endpoint) -> std::io::Result<()> {
     Ok(())
 }

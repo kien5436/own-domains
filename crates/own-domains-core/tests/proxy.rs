@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use own_domains_core::{build_proxy_config, DomainMapping, ProxyConfigOptions, Settings};
+use own_domains_core::{DomainMapping, ProxyConfigOptions, Settings, build_proxy_config};
 
 fn settings() -> Settings {
     Settings {
