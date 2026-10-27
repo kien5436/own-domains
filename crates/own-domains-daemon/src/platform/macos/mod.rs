@@ -13,6 +13,9 @@ pub use crate::platform::{
     SetupRequest, UninstallRequest,
 };
 
+pub use crate::probe::{
+    CaddyAdmin, CaddyAdminClient, DnsReadinessProbe, HttpReadinessProbe, ReadinessProbe,
+};
 pub use config::{
     CandidateConfiguration, ConfigurationError, ConfigurationFiles, ConfigurationStager,
     ConfigurationValidator, DEFAULT_DNS_VALIDATION_PORT, SystemConfigurationFiles,
@@ -30,9 +33,8 @@ pub(crate) use host::{
 };
 pub use paths::{MacOsArchitecture, RuntimePaths};
 pub use process::{
-    CaddyAdmin, CaddyAdminClient, ChildProcess, DnsReadinessProbe, FileProcessRecords,
-    HttpReadinessProbe, ListenerBinding, OwnedProcessRecord, ProcessComponent, ProcessError,
-    ProcessHost, ProcessIdentity, ProcessRecords, ProcessState, ProcessSupervisor, ReadinessProbe,
+    ChildProcess, FileProcessRecords, ListenerBinding, OwnedProcessRecord, ProcessComponent,
+    ProcessError, ProcessHost, ProcessIdentity, ProcessRecords, ProcessState, ProcessSupervisor,
     RetryPolicy, SIGKILL, SIGTERM, SpawnSpec, SystemProcessHost, SystemWaiter, Waiter,
 };
 pub use runtime::{

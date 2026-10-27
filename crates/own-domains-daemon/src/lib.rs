@@ -2,6 +2,11 @@ mod events;
 mod handler;
 mod ipc;
 pub mod platform;
+pub mod probe;
+
+pub use probe::{
+    CaddyAdmin, CaddyAdminClient, DnsReadinessProbe, HttpReadinessProbe, ReadinessProbe,
+};
 mod process_lock;
 mod runtime;
 mod setup_server;
