@@ -5,5 +5,6 @@
 //! only in setup/uninstall.
 
 mod config;
+pub mod process;
 
 pub use config::{windows_dns_options, windows_proxy_options};
