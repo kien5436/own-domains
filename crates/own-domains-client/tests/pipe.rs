@@ -24,6 +24,15 @@ fn setup() -> (Endpoint, Arc<DaemonState>) {
 }
 
 #[test]
+fn pipe_dacl_grants_only_the_current_user() {
+    let (endpoint, state) = setup();
+    let _server = IpcServer::bind(&endpoint, state).unwrap();
+    let actual = own_domains_protocol::pipe::pipe_security_sddl(&endpoint.display_name()).unwrap();
+    let sid = own_domains_protocol::pipe::current_user_sid().unwrap();
+    assert_eq!(actual, format!("O:{sid}G:{sid}D:P(A;;GA;;;{sid})"));
+}
+
+#[test]
 fn second_bind_fails_while_the_first_owns_the_name() {
     let (endpoint, state) = setup();
     let _first = IpcServer::bind(&endpoint, state.clone()).unwrap();

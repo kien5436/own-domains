@@ -244,6 +244,59 @@ impl PipeStream {
     }
 }
 
+/// Security descriptor of a live pipe as an SDDL string.
+///
+/// Reads back what `CreateNamedPipeW` installed, so the DACL audit asserts on
+/// the kernel object itself rather than on the string that was requested.
+pub fn pipe_security_sddl(full_name: &str) -> Result<String, String> {
+    use windows::Win32::{
+        Foundation::{ERROR_SUCCESS, HLOCAL, LocalFree},
+        Security::{
+            Authorization::{
+                ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
+                SDDL_REVISION_1, SE_KERNEL_OBJECT,
+            },
+            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            PSECURITY_DESCRIPTOR,
+        },
+    };
+
+    let wide: Vec<u16> = full_name.encode_utf16().chain([0]).collect();
+    let info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    let mut descriptor = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_KERNEL_OBJECT,
+            info,
+            None,
+            None,
+            None,
+            None,
+            &mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(format!("pipe security query failed: {status:?}"));
+    }
+    let text = unsafe {
+        let mut out = PWSTR::null();
+        let result = ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor,
+            SDDL_REVISION_1,
+            info,
+            &mut out,
+            None,
+        );
+        LocalFree(Some(HLOCAL(descriptor.0 as _)));
+        result.map_err(|error| format!("pipe SDDL conversion failed: {error}"))?;
+        let text = String::from_utf16_lossy(out.as_wide());
+        LocalFree(Some(HLOCAL(out.as_ptr() as _)));
+        text
+    };
+    Ok(text)
+}
+
 /// Whether a pipe server currently owns `full_name` (`\\.\pipe\...`).
 ///
 /// `WaitNamedPipeW` with a zero timeout never blocks: success and
