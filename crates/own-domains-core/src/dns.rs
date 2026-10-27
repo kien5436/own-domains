@@ -6,6 +6,7 @@ pub struct DnsConfigOptions {
     pub listen_addresses: Vec<Ipv4Addr>,
     pub port: u16,
     pub upstream_port: u16,
+    pub ttl_seconds: u32,
 }
 
 impl DnsConfigOptions {
@@ -21,6 +22,7 @@ impl DnsConfigOptions {
             listen_addresses: vec![Ipv4Addr::LOCALHOST, lan],
             port: 5354,
             upstream_port: 53,
+            ttl_seconds: 60,
         })
     }
 }
@@ -56,7 +58,8 @@ pub fn build_corefile(settings: &Settings, options: &DnsConfigOptions) -> CoreRe
         .collect::<Vec<_>>()
         .join(" ");
     Ok(format!(
-        "own:{port} {{\n    bind {listeners}\n    template IN A {{\n        match ^(?:[a-z0-9-]+\\.)+own\\.$\n        answer \"{{{{ .Name }}}} 60 IN A {lan}\"\n    }}\n    template IN AAAA {{\n        rcode NOERROR\n    }}\n}}\n.:{port} {{\n    bind {listeners}\n    forward . {upstreams}\n}}\n",
-        port = options.port
+        "own:{port} {{\n    bind {listeners}\n    template IN A {{\n        match ^(?:[a-z0-9-]+\\.)+own\\.$\n        answer \"{{{{ .Name }}}} {ttl} IN A {lan}\"\n    }}\n    template IN AAAA {{\n        rcode NOERROR\n    }}\n}}\n.:{port} {{\n    bind {listeners}\n    forward . {upstreams}\n}}\n",
+        port = options.port,
+        ttl = options.ttl_seconds,
     ))
 }

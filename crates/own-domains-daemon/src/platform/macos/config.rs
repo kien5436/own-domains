@@ -91,6 +91,7 @@ impl<'a> ConfigurationStager<'a> {
             listen_addresses: vec![Ipv4Addr::LOCALHOST],
             port: self.validation_port,
             upstream_port: 53,
+            ttl_seconds: 60,
         };
         let validation_corefile = build_corefile(settings, &validation_options)
             .map_err(|error| ConfigurationError::Validation(error.to_string()))?;

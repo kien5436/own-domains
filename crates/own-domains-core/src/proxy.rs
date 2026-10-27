@@ -10,6 +10,10 @@ pub struct ProxyConfigOptions {
     pub http_port: u16,
     pub https_port: u16,
     pub setup_port: u16,
+    /// Advertised server protocols. `None` omits the field (Caddy defaults,
+    /// which include HTTP/3); Windows sets `Some(["h1", "h2"])` so Caddy
+    /// never opens a UDP 443 listener.
+    pub protocols: Option<Vec<String>>,
 }
 
 impl ProxyConfigOptions {
@@ -35,6 +39,7 @@ impl ProxyConfigOptions {
             http_port: 8080,
             https_port: 8443,
             setup_port: 4781,
+            protocols: None,
         })
     }
 }
@@ -59,12 +64,31 @@ pub fn build_proxy_config(settings: &Settings, options: &ProxyConfigOptions) -> 
         .map(|mapping| proxy_route(&[&mapping.hostname], mapping.upstream_port))
         .collect();
     https_routes.push(not_found());
+    let mut http_server = serde_json::Map::new();
+    http_server.insert(
+        "listen".into(),
+        listeners(options, options.http_port).into(),
+    );
+    http_server.insert("routes".into(), http_routes.into());
+    let mut https_server = serde_json::Map::new();
+    https_server.insert(
+        "listen".into(),
+        listeners(options, options.https_port).into(),
+    );
+    https_server.insert("routes".into(), https_routes.into());
+    https_server.insert("tls_connection_policies".into(), json!([{}]));
+    https_server.insert("automatic_https".into(), json!({"disable_redirects": true}));
+    if let Some(protocols) = &options.protocols {
+        http_server.insert("protocols".into(), protocols.clone().into());
+        https_server.insert("protocols".into(), protocols.clone().into());
+    }
+    let mut servers = serde_json::Map::new();
+    servers.insert("http".into(), Value::Object(http_server));
+    servers.insert("https".into(), Value::Object(https_server));
     Ok(json!({
         "admin":{"listen":options.admin_listen},
-        "apps":{"http":{"http_port":options.http_port,"https_port":options.https_port,"servers":{
-            "http":{"listen":listeners(options, options.http_port),"routes":http_routes},
-            "https":{"listen":listeners(options, options.https_port),"routes":https_routes,"tls_connection_policies":[{}],"automatic_https":{"disable_redirects":true}}
-        }},"tls":{"automation":{"policies":tls.iter().map(|mapping| json!({"subjects":[mapping.hostname],"issuers":[{"module":"internal"}]})).collect::<Vec<_>>()}}}
+        "apps":{"http":{"http_port":options.http_port,"https_port":options.https_port,"servers":servers},
+        "tls":{"automation":{"policies":tls.iter().map(|mapping| json!({"subjects":[mapping.hostname],"issuers":[{"module":"internal"}]})).collect::<Vec<_>>()}}}
     }))
 }
 

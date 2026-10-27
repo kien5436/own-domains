@@ -3,6 +3,9 @@ mod host;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 use std::{path::Path, path::PathBuf, sync::Arc};
 
 pub use host::{

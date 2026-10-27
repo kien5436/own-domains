@@ -62,3 +62,18 @@ fn builds_exact_http_https_and_setup_routes_without_management_exposure() {
     assert!(text.contains("127.0.0.1:8080"));
     assert!(text.contains("127.0.0.1:8443"));
 }
+
+#[test]
+fn protocols_render_only_when_set() {
+    let settings = settings();
+    let base =
+        ProxyConfigOptions::for_runtime(&settings, Path::new("/tmp/caddy-admin.sock")).unwrap();
+    let plain = serde_json::to_string(&build_proxy_config(&settings, &base).unwrap()).unwrap();
+    assert!(!plain.contains("protocols"));
+    let options = ProxyConfigOptions {
+        protocols: Some(vec!["h1".into(), "h2".into()]),
+        ..base
+    };
+    let text = serde_json::to_string(&build_proxy_config(&settings, &options).unwrap()).unwrap();
+    assert!(text.contains("\"protocols\":[\"h1\",\"h2\"]"));
+}
