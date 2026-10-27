@@ -180,13 +180,8 @@ pub trait CaddyAdmin: Send + Sync {
 }
 
 pub struct CaddyAdminClient {
-    // Unread on Windows until the Winsock AF_UNIX request path lands
-    // (Windows backend plan, Task 2); the Unix transport reads all three.
-    #[cfg_attr(target_os = "windows", allow(dead_code))]
     socket: PathBuf,
-    #[cfg_attr(target_os = "windows", allow(dead_code))]
     timeout: Duration,
-    #[cfg_attr(target_os = "windows", allow(dead_code))]
     max_response_bytes: usize,
 }
 
@@ -232,35 +227,36 @@ impl CaddyAdminClient {
         stream
             .set_write_timeout(Some(self.timeout))
             .map_err(|error| format!("unable to set the Caddy admin timeout: {error}"))?;
-        let mut request =
-            format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
-        if let Some(content_type) = content_type {
-            request.push_str(&format!("Content-Type: {content_type}\r\n"));
-        }
-        if let Some(body) = body {
-            request.push_str(&format!("Content-Length: {}\r\n", body.len()));
-        }
-        request.push_str("\r\n");
-        stream
-            .write_all(request.as_bytes())
-            .map_err(|error| format!("Caddy admin request failed: {error}"))?;
-        if let Some(body) = body {
-            stream
-                .write_all(body)
-                .map_err(|error| format!("Caddy admin request failed: {error}"))?;
-        }
-        let (status, response) = read_http_response(&mut stream, self.max_response_bytes)?;
-        if !(200..300).contains(&status) {
-            let detail = String::from_utf8_lossy(&response)
-                .chars()
-                .take(240)
-                .collect::<String>();
-            return Err(format!("Caddy admin returned status {status}: {detail}"));
-        }
-        Ok(response)
+        send_request(
+            &mut stream,
+            method,
+            path,
+            body,
+            content_type,
+            self.max_response_bytes,
+        )
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&[u8]>,
+        content_type: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
+        let mut stream = admin_socket::connect_admin(&self.socket, self.timeout)?;
+        send_request(
+            &mut stream,
+            method,
+            path,
+            body,
+            content_type,
+            self.max_response_bytes,
+        )
+    }
+
+    #[cfg(not(any(unix, windows)))]
     fn request(
         &self,
         _method: &str,
@@ -270,6 +266,44 @@ impl CaddyAdminClient {
     ) -> Result<Vec<u8>, String> {
         Err("Caddy admin Unix sockets are unsupported on this platform".into())
     }
+}
+
+/// One HTTP/1.1 exchange over an already-connected byte stream.
+#[allow(clippy::too_many_arguments)]
+fn send_request<S: Read + Write>(
+    stream: &mut S,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+    content_type: Option<&str>,
+    max_response_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    let mut request =
+        format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+    if let Some(content_type) = content_type {
+        request.push_str(&format!("Content-Type: {content_type}\r\n"));
+    }
+    if let Some(body) = body {
+        request.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
+    request.push_str("\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| format!("Caddy admin request failed: {error}"))?;
+    if let Some(body) = body {
+        stream
+            .write_all(body)
+            .map_err(|error| format!("Caddy admin request failed: {error}"))?;
+    }
+    let (status, response) = read_http_response(&mut *stream, max_response_bytes)?;
+    if !(200..300).contains(&status) {
+        let detail = String::from_utf8_lossy(&response)
+            .chars()
+            .take(240)
+            .collect::<String>();
+        return Err(format!("Caddy admin returned status {status}: {detail}"));
+    }
+    Ok(response)
 }
 
 impl CaddyAdmin for CaddyAdminClient {
@@ -431,4 +465,141 @@ fn read_http_response(
         }
     }
     Ok((status, body))
+}
+
+/// Windows AF_UNIX transport for the Caddy admin client.
+///
+/// The `windows` crate does not ship `sockaddr_un`, so it is defined here
+/// per the OS layout. Timeouts are socket-level; no overlapped I/O needed.
+#[cfg(windows)]
+mod admin_socket {
+    use std::{
+        io::{self, Read, Write},
+        path::Path,
+        sync::OnceLock,
+        time::Duration,
+    };
+    use windows::{
+        Win32::Networking::WinSock::{
+            AF_UNIX, SEND_RECV_FLAGS, SO_RCVTIMEO, SO_SNDTIMEO, SOCK_STREAM, SOCKADDR, SOCKET,
+            SOL_SOCKET, WSADATA, WSAStartup, closesocket, connect, recv, send, setsockopt,
+            socket as winsock_socket,
+        },
+        core::Error as WinError,
+    };
+
+    /// `sockaddr_un` as the OS lays it out.
+    #[repr(C)]
+    struct SockAddrUn {
+        sun_family: u16,
+        sun_path: [u8; 108],
+    }
+
+    fn ensure_wsa() -> Result<(), String> {
+        static STARTED: OnceLock<Result<(), String>> = OnceLock::new();
+        STARTED
+            .get_or_init(|| unsafe {
+                let mut data = std::mem::zeroed::<WSADATA>();
+                if WSAStartup(0x202, &mut data) == 0 {
+                    Ok(())
+                } else {
+                    Err(format!("WSAStartup failed: {}", WinError::from_thread()))
+                }
+            })
+            .as_ref()
+            .map(|_| ())
+            .map_err(Clone::clone)
+    }
+
+    pub(super) struct WsaStream {
+        handle: SOCKET,
+    }
+
+    impl Drop for WsaStream {
+        fn drop(&mut self) {
+            unsafe {
+                closesocket(self.handle);
+            }
+        }
+    }
+
+    impl Read for WsaStream {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            let done = unsafe { recv(self.handle, buf, SEND_RECV_FLAGS(0)) };
+            if done > 0 {
+                Ok(done as usize)
+            } else if done == 0 {
+                Ok(0)
+            } else {
+                Err(WinError::from_thread().into())
+            }
+        }
+    }
+
+    impl Write for WsaStream {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            let done = unsafe { send(self.handle, buf, SEND_RECV_FLAGS(0)) };
+            if done > 0 {
+                Ok(done as usize)
+            } else {
+                Err(WinError::from_thread().into())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    pub(super) fn connect_admin(socket: &Path, timeout: Duration) -> Result<WsaStream, String> {
+        ensure_wsa()?;
+        let bytes = socket.as_os_str().as_encoded_bytes();
+        if bytes.len() + 1 >= 108 {
+            return Err("Caddy admin socket path is too long for AF_UNIX".into());
+        }
+        let mut addr = SockAddrUn {
+            sun_family: AF_UNIX,
+            sun_path: [0; 108],
+        };
+        addr.sun_path[..bytes.len()].copy_from_slice(bytes);
+        let handle = unsafe { winsock_socket(AF_UNIX as i32, SOCK_STREAM, 0) }
+            .map_err(|error| format!("unable to create admin socket: {error}"))?;
+        let connected = unsafe {
+            connect(
+                handle,
+                &addr as *const SockAddrUn as *const SOCKADDR,
+                (2 + bytes.len() + 1) as i32,
+            )
+        };
+        if connected != 0 {
+            unsafe {
+                closesocket(handle);
+            }
+            return Err(format!(
+                "unable to connect to the Caddy admin socket: {}",
+                WinError::from_thread()
+            ));
+        }
+        let millis = timeout.as_millis().min(u32::MAX as u128) as u32;
+        for option in [SO_RCVTIMEO, SO_SNDTIMEO] {
+            let applied =
+                unsafe { setsockopt(handle, SOL_SOCKET, option, Some(&millis.to_ne_bytes())) };
+            if applied != 0 {
+                unsafe {
+                    closesocket(handle);
+                }
+                return Err(format!(
+                    "unable to set the Caddy admin timeout: {}",
+                    WinError::from_thread()
+                ));
+            }
+        }
+        Ok(WsaStream { handle })
+    }
 }
