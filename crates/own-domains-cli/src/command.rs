@@ -1,4 +1,5 @@
 use crate::platform::host_installer;
+#[cfg(target_os = "macos")]
 use crate::privilege::setup_user;
 use clap::{Parser, Subcommand};
 use own_domains_client::{Client, ClientError, LifecycleError, connect_or_launch, stop_and_wait};
@@ -212,13 +213,19 @@ fn execute_setup(
     lan_address: &str,
     interface: &str,
 ) -> CommandOutput {
-    if !cfg!(target_os = "macos") {
+    if !cfg!(target_os = "macos") && !cfg!(target_os = "windows") {
         return CommandOutput::error(3, "macOS host setup is unsupported on this platform");
     }
+    #[cfg(target_os = "windows")]
+    if apply && !crate::platform::windows::is_elevated() {
+        return CommandOutput::error(2, "setup --apply must run from an elevated prompt");
+    }
+    #[cfg(target_os = "macos")]
     let (_, identity) = match setup_user(apply) {
         Ok(user) => user,
         Err(error) => return CommandOutput::error(2, error),
     };
+    #[cfg(target_os = "macos")]
     if apply && identity.is_none() {
         return CommandOutput::error(2, "setup --apply must run as root through sudo");
     }
@@ -241,16 +248,22 @@ fn execute_setup(
 }
 
 fn execute_uninstall(apply: bool, purge: bool, state_directory: &Path) -> CommandOutput {
-    if !cfg!(target_os = "macos") {
+    if !cfg!(target_os = "macos") && !cfg!(target_os = "windows") {
         return CommandOutput::error(3, "macOS host uninstall is unsupported on this platform");
     }
     if purge && !apply {
         return CommandOutput::error(2, "uninstall --purge requires --apply");
     }
+    #[cfg(target_os = "windows")]
+    if apply && !crate::platform::windows::is_elevated() {
+        return CommandOutput::error(2, "uninstall --apply must run from an elevated prompt");
+    }
+    #[cfg(target_os = "macos")]
     let (_, identity) = match setup_user(apply) {
         Ok(user) => user,
         Err(error) => return CommandOutput::error(2, error),
     };
+    #[cfg(target_os = "macos")]
     if apply && identity.is_none() {
         return CommandOutput::error(2, "uninstall --apply must run as root through sudo");
     }

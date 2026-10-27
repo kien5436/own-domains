@@ -10,6 +10,7 @@ mod config;
 pub(crate) mod factory;
 #[cfg(windows)]
 pub mod process;
+pub mod setup;
 
 #[cfg(target_os = "windows")]
 pub(crate) use factory::runtime_backend;

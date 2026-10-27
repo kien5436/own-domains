@@ -1,4 +1,4 @@
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 use std::ffi::CString;
 use std::path::PathBuf;
 
@@ -48,7 +48,7 @@ pub(crate) struct UserRecord {
     pub(crate) home: PathBuf,
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 pub(crate) fn user_by_uid(user_id: u32) -> Result<UserRecord, String> {
     let record = unsafe { libc::getpwuid(user_id) };
     if record.is_null() {
@@ -70,7 +70,7 @@ pub(crate) fn user_by_uid(user_id: u32) -> Result<UserRecord, String> {
     })
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn user_by_name(user_name: &str) -> Result<UserRecord, String> {
     let name = CString::new(user_name).map_err(|_| "user name contains a NUL byte".to_string())?;
     let record = unsafe { libc::getpwnam(name.as_ptr()) };
@@ -89,7 +89,7 @@ fn user_by_name(user_name: &str) -> Result<UserRecord, String> {
     })
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 pub(crate) fn setup_user(apply: bool) -> Result<(UserRecord, Option<PrivilegedIdentity>), String> {
     let identity = validate_privileged_setup_identity(
         apply,
@@ -110,17 +110,4 @@ pub(crate) fn setup_user(apply: bool) -> Result<(UserRecord, Option<PrivilegedId
         return Ok((user_by_name(&name)?, None));
     }
     Ok((user_by_uid(unsafe { libc::geteuid() })?, None))
-}
-
-#[cfg(not(unix))]
-#[allow(dead_code)]
-pub(crate) fn user_by_uid(user_id: u32) -> Result<UserRecord, String> {
-    Err(format!(
-        "unable to resolve user id {user_id} on this platform"
-    ))
-}
-
-#[cfg(not(unix))]
-pub(crate) fn setup_user(_apply: bool) -> Result<(UserRecord, Option<PrivilegedIdentity>), String> {
-    Err("user lookup is not implemented yet on Windows".to_string())
 }

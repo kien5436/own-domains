@@ -1,8 +1,11 @@
-#[cfg(any(not(target_os = "macos"), test))]
+#[cfg(any(not(any(target_os = "macos", target_os = "windows")), test))]
 mod unsupported;
 
 #[cfg(target_os = "macos")]
 mod macos;
+
+#[cfg(target_os = "windows")]
+pub(crate) mod windows;
 
 use own_domains_daemon::platform::HostInstaller;
 
@@ -11,7 +14,11 @@ pub fn host_installer() -> Box<dyn HostInstaller> {
     {
         Box::new(macos::MacOsHostInstaller)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        Box::new(own_domains_daemon::platform::windows::setup::WindowsHostInstaller::new())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Box::new(unsupported::UnsupportedHostInstaller)
     }
@@ -41,5 +48,19 @@ mod tests {
             })
             .unwrap_err();
         assert!(uninstall.message.contains("unsupported"));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn windows_uses_the_live_installer() {
+        let installer = super::host_installer();
+        let preview = installer
+            .preview_setup(&SetupRequest {
+                state_directory: std::path::PathBuf::from(r"C:\od-state"),
+                lan_address: "192.168.1.20".into(),
+                interface: "Ethernet".into(),
+            })
+            .unwrap();
+        assert_eq!(preview.actions.len(), 3);
     }
 }
