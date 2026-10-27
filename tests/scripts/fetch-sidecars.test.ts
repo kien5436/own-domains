@@ -2,16 +2,18 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gzipSync } from 'node:zlib';
+import { deflateRawSync, gzipSync } from 'node:zlib';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   type Architecture,
+  extractZipMember,
   fetchBytesWithRedirects,
   fetchSidecars,
   type HttpResponse,
   parseArchitectures,
+  parseManifest,
   type SidecarBuildManifest,
   verifyChecksumSignature,
   verifySidecars,
@@ -358,5 +360,182 @@ describe('sidecar downloader', () => {
         architectures: ['arm64'] as Architecture[],
       }),
     ).rejects.toThrow(/digest|hash/i);
+  });
+});
+
+describe('windows release manifest validation', () => {
+  const mutableFor = (target: SidecarBuildManifest) => target as unknown as {
+    coredns: { windowsReleases: unknown[] };
+    caddy: { windowsReleases: unknown[] };
+  };
+
+  const windowsRelease = (overrides: Record<string, unknown> = {}) => ({
+    architecture: 'amd64',
+    target: 'x86_64-pc-windows-msvc',
+    url: 'https://github.com/example/sidecars/releases/download/v1/core-win64.zip',
+    archiveMember: 'coredns.exe',
+    checksum: {
+      algorithm: 'sha256',
+      url: 'https://github.com/example/sidecars/releases/download/v1/core-win64.zip.sha256',
+      value: 'a'.repeat(64),
+    },
+    executableSha256: 'b'.repeat(64),
+    ...overrides,
+  });
+
+  const withWindows = (mutate: (target: SidecarBuildManifest) => void) => {
+    const { manifest } = fixture();
+
+    mutate(manifest);
+
+    return manifest;
+  };
+
+  it('accepts sparse windows releases alongside darwin ones', () => {
+    const manifest = withWindows((target) => {
+      mutableFor(target).coredns.windowsReleases = [windowsRelease()];
+      mutableFor(target).caddy.windowsReleases = [
+        windowsRelease(),
+        windowsRelease({
+          architecture: 'arm64',
+          target: 'aarch64-pc-windows-msvc',
+          url: 'https://github.com/example/sidecars/releases/download/v1/core-winarm64.zip',
+        }),
+      ];
+    });
+
+    expect(() => parseManifest(manifest)).not.toThrow();
+  });
+
+  it('accepts manifests without any windows releases', () => {
+    const { manifest } = fixture();
+
+    expect(() => parseManifest(manifest)).not.toThrow();
+  });
+
+  it.each([
+    ['unknown architecture', { architecture: 'mips' }],
+    ['unknown windows target', { target: 'x86_64-unknown-linux-gnu' }],
+    ['darwin target in a windows release', { target: 'aarch64-apple-darwin' }],
+    ['bad archive digest', { checksum: { algorithm: 'sha256', url: 'https://github.com/example/x.sha256', value: 'zz' } }],
+    ['non-github url', { url: 'https://example.com/core-win64.zip' }],
+    ['directory member', { archiveMember: 'bin/coredns.exe' }],
+  ])('rejects windows release with %s', (label, overrides) => {
+    const manifest = withWindows((target) => {
+
+      mutableFor(target).coredns.windowsReleases = [windowsRelease(overrides)];
+    });
+
+    expect(() => parseManifest(manifest)).toThrow();
+  });
+
+  it('rejects duplicate windows architectures for one sidecar', () => {
+    const manifest = withWindows((target) => {
+
+      mutableFor(target).coredns.windowsReleases = [windowsRelease(), windowsRelease()];
+    });
+
+    expect(() => parseManifest(manifest)).toThrow(/duplicate/i);
+  });
+});
+
+describe('zip member extraction', () => {
+  const crcTable = (() => {
+    const table = new Uint32Array(256);
+
+    for (let index = 0; 256 > index; index += 1) {
+      let value = index;
+
+      for (let bit = 0; 8 > bit; bit += 1) value = 0 === (value & 1) ? value >>> 1 : (value >>> 1) ^ 0xedb88320;
+      table[index] = value >>> 0;
+    }
+
+    return table;
+  })();
+
+  const tableLookup = (byte: number, value: number): number =>
+    ((value >>> 8) ^ crcTable[(value ^ byte) & 0xff]) >>> 0;
+
+  const crc32 = (data: Buffer): number => {
+    let value = 0xffffffff;
+
+    for (const byte of data) value = tableLookup(byte, value);
+
+    return (value ^ 0xffffffff) >>> 0;
+  };
+
+  const zipArchive = (entries: { name: string; content: string; method?: 'stored' | 'deflated' }[]): Buffer => {
+    const chunks: Buffer[] = [];
+    const central: Buffer[] = [];
+    let offset = 0;
+
+    for (const entry of entries) {
+      const raw = Buffer.from(entry.content);
+      const data = 'deflated' === (entry.method ?? 'stored') ? deflateRawSync(raw) : raw;
+      const method = 'deflated' === (entry.method ?? 'stored') ? 8 : 0;
+      const name = Buffer.from(entry.name);
+      const local = Buffer.alloc(30);
+
+      local.writeUInt32LE(0x04034b50, 0);
+      local.writeUInt16LE(20, 4);
+      local.writeUInt16LE(8 === method ? 0x0800 : 0, 6);
+      local.writeUInt16LE(method, 8);
+      local.writeUInt32LE(crc32(raw), 14);
+      local.writeUInt32LE(data.length, 18);
+      local.writeUInt32LE(raw.length, 22);
+      local.writeUInt16LE(name.length, 26);
+      local.writeUInt16LE(0, 28);
+      chunks.push(local, name, data);
+
+      const header = Buffer.alloc(46);
+
+      header.writeUInt32LE(0x02014b50, 0);
+      header.writeUInt16LE(8 === method ? 0x0800 : 0, 8);
+      header.writeUInt16LE(method, 10);
+      header.writeUInt32LE(crc32(raw), 16);
+      header.writeUInt32LE(data.length, 20);
+      header.writeUInt32LE(raw.length, 24);
+      header.writeUInt16LE(name.length, 28);
+      header.writeUInt32LE(offset, 42);
+      central.push(header, name);
+      offset += local.length + name.length + data.length;
+    }
+
+    const centralStart = offset;
+    const centralDirectory = Buffer.concat(central);
+    const end = Buffer.alloc(22);
+
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(entries.length, 8);
+    end.writeUInt16LE(entries.length, 10);
+    end.writeUInt32LE(centralDirectory.length, 12);
+    end.writeUInt32LE(centralStart, 16);
+
+    return Buffer.concat([...chunks, centralDirectory, end]);
+  };
+
+  it('round-trips stored and deflated members', () => {
+    const archive = zipArchive([
+      { name: 'coredns.exe', content: 'core-binary', method: 'stored' },
+      { name: 'caddy.exe', content: 'caddy-binary'.repeat(100), method: 'deflated' },
+    ]);
+
+    expect(extractZipMember(archive, 'coredns.exe').toString()).toBe('core-binary');
+    expect(extractZipMember(archive, 'caddy.exe').toString()).toBe('caddy-binary'.repeat(100));
+  });
+
+  it('rejects traversal, absolute, and missing members', () => {
+    const archive = zipArchive([{ name: 'coredns.exe', content: 'core-binary' }]);
+
+    expect(() => extractZipMember(archive, '../coredns.exe')).toThrow(/member/i);
+    expect(() => extractZipMember(archive, '/abs/coredns.exe')).toThrow(/member/i);
+    expect(() => extractZipMember(archive, 'missing.exe')).toThrow(/missing\.exe/);
+  });
+
+  it('rejects truncated archives and unsupported methods', () => {
+    const archive = zipArchive([{ name: 'coredns.exe', content: 'core-binary' }]);
+
+    expect(() => extractZipMember(archive.subarray(0, 20), 'coredns.exe')).toThrow();
+    expect(() => extractZipMember(Buffer.from('not a zip'), 'coredns.exe')).toThrow();
   });
 });

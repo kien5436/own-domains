@@ -14,7 +14,7 @@ import {
 } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gunzipSync } from 'node:zlib';
+import { gunzipSync, inflateRawSync } from 'node:zlib';
 
 export type Architecture = 'arm64' | 'amd64';
 
@@ -47,10 +47,20 @@ export interface SignatureConfig {
   certificateIdentity: string;
 }
 
+export interface WindowsRelease {
+  architecture: string;
+  target: string;
+  url: string;
+  archiveMember: string;
+  checksum: Checksum;
+  executableSha256: string;
+}
+
 export interface SidecarDefinition {
   version: string;
   signature?: SignatureConfig;
   releases: Record<Architecture, SidecarRelease>;
+  windowsReleases?: WindowsRelease[];
 }
 
 export interface SidecarBuildManifest {
@@ -93,6 +103,11 @@ export interface VerifySidecarsOptions {
 const TARGETS: Record<Architecture, string> = {
   arm64: 'aarch64-apple-darwin',
   amd64: 'x86_64-apple-darwin',
+};
+
+const WINDOWS_TARGETS: Record<Architecture, string> = {
+  arm64: 'aarch64-pc-windows-msvc',
+  amd64: 'x86_64-pc-windows-msvc',
 };
 
 const ARCHITECTURES: Architecture[] = ['arm64', 'amd64'];
@@ -193,7 +208,43 @@ function requireHex(value: string, algorithm: 'sha256' | 'sha512', label: string
   return value;
 }
 
-function parseManifest(raw: unknown): SidecarBuildManifest {
+function validateRelease(
+  name: string,
+  label: string,
+  release: SidecarRelease | WindowsRelease,
+  expectedTarget: string,
+): void {
+  if (release.target !== expectedTarget)
+    throw new Error(`${name} ${label} target must be ${expectedTarget}`);
+
+  validateReleaseUrl(release.url);
+  validateReleaseUrl(release.checksum.url);
+  requireHex(release.checksum.value, release.checksum.algorithm, `${name} ${label} archive digest`);
+  requireHex(release.executableSha256, 'sha256', `${name} ${label} executable digest`);
+
+  if (!release.archiveMember || basename(release.archiveMember) !== release.archiveMember)
+    throw new Error(`${name} ${label} archiveMember must be a plain member name`);
+}
+
+function validateWindowsReleases(name: string, releases: WindowsRelease[] | undefined): void {
+  if (undefined === releases) return;
+  if (!Array.isArray(releases)) throw new Error(`${name} windowsReleases must be an array`);
+
+  const seen = new Set<string>();
+
+  for (const release of releases) {
+    const architecture = (release as WindowsRelease)?.architecture;
+
+    if (!ARCHITECTURES.includes(architecture as Architecture))
+      throw new Error(`${name} windows release has unknown architecture: ${architecture}`);
+
+    if (seen.has(architecture)) throw new Error(`${name} windows release duplicates ${architecture}`);
+    seen.add(architecture);
+    validateRelease(name, `windows/${architecture}`, release, WINDOWS_TARGETS[architecture as Architecture]);
+  }
+}
+
+export function parseManifest(raw: unknown): SidecarBuildManifest {
   const manifest = raw as SidecarBuildManifest;
 
   if (1 !== manifest?.schemaVersion) throw new Error('sidecar manifest schemaVersion must be 1');
@@ -209,18 +260,10 @@ function parseManifest(raw: unknown): SidecarBuildManifest {
 
       if (!release) throw new Error(`${name} ${architecture} release is required`);
 
-      if (release.target !== TARGETS[architecture])
-        throw new Error(`${name} ${architecture} target must be ${TARGETS[architecture]}`);
-
-      validateReleaseUrl(release.url);
-      validateReleaseUrl(release.checksum.url);
-      requireHex(release.checksum.value, release.checksum.algorithm, `${name} ${architecture} archive digest`);
-      requireHex(release.executableSha256, 'sha256', `${name} ${architecture} executable digest`);
-
-      if (!release.archiveMember || basename(release.archiveMember) !== release.archiveMember)
-        throw new Error(`${name} ${architecture} archiveMember must be a plain member name`);
-
+      validateRelease(name, architecture, release, TARGETS[architecture]);
     }
+
+    validateWindowsReleases(name, sidecar.windowsReleases);
 
     if (sidecar.signature) {
       validateReleaseUrl(sidecar.signature.checksumUrl);
@@ -312,6 +355,94 @@ function readTarSize(header: Buffer): number {
   if (!/^[0-7]+$/.test(value)) throw new Error('archive contains an invalid file size');
 
   return Number.parseInt(value, 8);
+}
+
+export function extractZipMember(archive: Buffer, member: string): Buffer {
+  if (!member || basename(member) !== member)
+    throw new Error(`archive member must be a plain member name: ${member}`);
+
+  let endOffset = -1;
+
+  for (let offset = archive.length - 22; offset >= Math.max(0, archive.length - 65558); offset -= 1) {
+    if (4 > archive.length - offset) continue;
+
+    if (0x06054b50 === archive.readUInt32LE(offset)) {
+      endOffset = offset;
+
+      break;
+    }
+  }
+
+  if (0 > endOffset) throw new Error('archive is not a valid zip file');
+
+  const entryCount = archive.readUInt16LE(endOffset + 10);
+  const centralSize = archive.readUInt32LE(endOffset + 12);
+  const centralOffset = archive.readUInt32LE(endOffset + 16);
+
+  if (centralOffset + centralSize > archive.length)
+    throw new Error('archive central directory is truncated');
+
+  let cursor = centralOffset;
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (cursor + 46 > archive.length || 0x02014b50 !== archive.readUInt32LE(cursor))
+      throw new Error('archive central directory entry is truncated');
+
+    const flags = archive.readUInt16LE(cursor + 8);
+    const method = archive.readUInt16LE(cursor + 10);
+    const compressedSize = archive.readUInt32LE(cursor + 20);
+    const uncompressedSize = archive.readUInt32LE(cursor + 24);
+    const nameLength = archive.readUInt16LE(cursor + 28);
+    const extraLength = archive.readUInt16LE(cursor + 30);
+    const commentLength = archive.readUInt16LE(cursor + 32);
+    const headerOffset = archive.readUInt32LE(cursor + 42);
+    const name = archive.subarray(cursor + 46, cursor + 46 + nameLength).toString('utf8');
+
+    cursor += 46 + nameLength + extraLength + commentLength;
+
+    if (name !== member) continue;
+    if (0 !== (flags & 0x1)) throw new Error(`archive member ${member} is encrypted`);
+    if (uncompressedSize > MAX_EXECUTABLE_BYTES)
+      throw new Error(`archive member ${member} exceeds the executable size limit`);
+
+    if (headerOffset + 30 > archive.length || 0x04034b50 !== archive.readUInt32LE(headerOffset))
+      throw new Error(`archive member ${member} header is truncated`);
+
+    const localNameLength = archive.readUInt16LE(headerOffset + 26);
+    const localExtraLength = archive.readUInt16LE(headerOffset + 28);
+    const dataStart = headerOffset + 30 + localNameLength + localExtraLength;
+
+    if (dataStart + compressedSize > archive.length)
+      throw new Error(`archive member ${member} is truncated`);
+
+    const data = archive.subarray(dataStart, dataStart + compressedSize);
+
+    if (0 === method) {
+      if (data.length !== uncompressedSize) throw new Error(`archive member ${member} is truncated`);
+
+      return Buffer.from(data);
+    }
+
+    if (8 === method) {
+      let inflated: Buffer;
+
+      try {
+        inflated = inflateRawSync(data, { maxOutputLength: MAX_ARCHIVE_BYTES });
+      }
+      catch (error) {
+        throw new Error(`archive member ${member} is not valid deflated data`, { cause: error });
+      }
+
+      if (inflated.length !== uncompressedSize)
+        throw new Error(`archive member ${member} size mismatch`);
+
+      return inflated;
+    }
+
+    throw new Error(`archive member ${member} uses unsupported compression method ${method}`);
+  }
+
+  throw new Error(`archive does not contain ${member}`);
 }
 
 export function extractArchiveMember(archive: Buffer, member: string): Buffer {
