@@ -375,8 +375,10 @@ impl IpcServer {
                     return Err(error);
                 }
             };
-            let mut overlapped = OVERLAPPED::default();
-            overlapped.hEvent = event;
+            let mut overlapped = OVERLAPPED {
+                hEvent: event,
+                ..Default::default()
+            };
             let mut connected = false;
             unsafe {
                 let _ = ResetEvent(event);

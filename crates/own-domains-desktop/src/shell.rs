@@ -285,7 +285,10 @@ fn configuration() -> Result<(DesktopPaths, PathBuf), String> {
         Some(path) => PathBuf::from(path),
         None => std::env::current_exe()
             .map_err(|error| error.to_string())?
-            .with_file_name("own-domains-daemon"),
+            .with_file_name(format!(
+                "own-domains-daemon{}",
+                std::env::consts::EXE_SUFFIX
+            )),
     };
     if !executable.is_absolute() {
         return Err("OWN_DOMAINS_DAEMON must be an absolute path".into());

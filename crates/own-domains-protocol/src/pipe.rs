@@ -8,13 +8,17 @@
 use std::{
     io::{self, Read, Write},
     path::Path,
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
 };
 use windows::{
     Win32::{
         Foundation::{
-            CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, HANDLE, HLOCAL, LPARAM, LocalFree,
-            WAIT_OBJECT_0, WAIT_TIMEOUT,
+            CloseHandle, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, HANDLE, HLOCAL,
+            LPARAM, LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
         },
         Security::{
             Authorization::ConvertSidToStringSidW, GetTokenInformation, TOKEN_QUERY, TOKEN_USER,
@@ -79,6 +83,7 @@ pub struct PipeStream {
     handle: HANDLE,
     event: HANDLE,
     timeout_ms: u32,
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 // The handles are owned kernel objects, valid in every thread of the process.
@@ -93,6 +98,7 @@ impl PipeStream {
             handle,
             event,
             timeout_ms: timeout.as_millis().min(u32::MAX as u128) as u32,
+            cancel: None,
         })
     }
 
@@ -117,8 +123,10 @@ impl Read for PipeStream {
         }
         unsafe {
             ResetEvent(self.event).map_err(win_error)?;
-            let mut overlapped = OVERLAPPED::default();
-            overlapped.hEvent = self.event;
+            let mut overlapped = OVERLAPPED {
+                hEvent: self.event,
+                ..Default::default()
+            };
             let mut done = 0u32;
             match ReadFile(
                 self.handle,
@@ -128,26 +136,12 @@ impl Read for PipeStream {
             ) {
                 Ok(()) => Ok(done as usize),
                 Err(error) if error.code() == HRESULT::from_win32(ERROR_IO_PENDING.0) => {
-                    let waited = WaitForSingleObject(self.event, self.timeout_ms);
-                    if waited == WAIT_OBJECT_0 {
-                        GetOverlappedResult(self.handle, &overlapped, &mut done, false)
-                            .map_err(win_error)?;
-                        Ok(done as usize)
-                    } else if waited == WAIT_TIMEOUT {
-                        let _ = CancelIoEx(self.handle, Some(&overlapped));
-                        let _ = GetOverlappedResult(self.handle, &overlapped, &mut done, true);
-                        Err(io::Error::new(
-                            io::ErrorKind::TimedOut,
-                            "pipe read timed out",
-                        ))
-                    } else {
-                        let _ = CancelIoEx(self.handle, Some(&overlapped));
-                        Err(io::Error::new(
-                            io::ErrorKind::ConnectionAborted,
-                            "pipe wait failed",
-                        ))
-                    }
+                    self.complete(&overlapped, &mut done)?;
+                    Ok(done as usize)
                 }
+                Err(error) if error.code() == HRESULT::from_win32(ERROR_BROKEN_PIPE.0) => Err(
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "peer disconnected"),
+                ),
                 Err(error) => Err(win_error(error)),
             }
         }
@@ -161,8 +155,10 @@ impl Write for PipeStream {
         }
         unsafe {
             ResetEvent(self.event).map_err(win_error)?;
-            let mut overlapped = OVERLAPPED::default();
-            overlapped.hEvent = self.event;
+            let mut overlapped = OVERLAPPED {
+                hEvent: self.event,
+                ..Default::default()
+            };
             let mut done = 0u32;
             match WriteFile(
                 self.handle,
@@ -172,26 +168,12 @@ impl Write for PipeStream {
             ) {
                 Ok(()) => Ok(done as usize),
                 Err(error) if error.code() == HRESULT::from_win32(ERROR_IO_PENDING.0) => {
-                    let waited = WaitForSingleObject(self.event, self.timeout_ms);
-                    if waited == WAIT_OBJECT_0 {
-                        GetOverlappedResult(self.handle, &overlapped, &mut done, false)
-                            .map_err(win_error)?;
-                        Ok(done as usize)
-                    } else if waited == WAIT_TIMEOUT {
-                        let _ = CancelIoEx(self.handle, Some(&overlapped));
-                        let _ = GetOverlappedResult(self.handle, &overlapped, &mut done, true);
-                        Err(io::Error::new(
-                            io::ErrorKind::TimedOut,
-                            "pipe write timed out",
-                        ))
-                    } else {
-                        let _ = CancelIoEx(self.handle, Some(&overlapped));
-                        Err(io::Error::new(
-                            io::ErrorKind::ConnectionAborted,
-                            "pipe wait failed",
-                        ))
-                    }
+                    self.complete(&overlapped, &mut done)?;
+                    Ok(done as usize)
                 }
+                Err(error) if error.code() == HRESULT::from_win32(ERROR_BROKEN_PIPE.0) => Err(
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "peer disconnected"),
+                ),
                 Err(error) => Err(win_error(error)),
             }
         }
@@ -199,6 +181,66 @@ impl Write for PipeStream {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+impl PipeStream {
+    /// Signal this stream's in-flight read to stop at the next 50 ms slice.
+    pub fn set_cancel(&mut self, cancel: Arc<AtomicBool>) {
+        self.cancel = Some(cancel);
+    }
+
+    /// Wait for a pending overlapped operation, polling a cancellation flag.
+    ///
+    /// `CancelIoEx(handle, NULL)` only cancels the calling thread's I/O, so a
+    /// cross-thread cancel cannot name the in-flight operation. Instead the
+    /// waiter slices at 50 ms and checks the shared flag; cancellation lands
+    /// within one slice with no handle juggling.
+    fn complete(&self, overlapped: &OVERLAPPED, done: &mut u32) -> io::Result<()> {
+        let deadline = Instant::now() + Duration::from_millis(self.timeout_ms as u64);
+        loop {
+            if self
+                .cancel
+                .as_ref()
+                .is_some_and(|cancel| cancel.load(Ordering::Acquire))
+            {
+                unsafe {
+                    let _ = CancelIoEx(self.handle, Some(overlapped));
+                    let _ = GetOverlappedResult(self.handle, overlapped, done, true);
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "pipe operation cancelled",
+                ));
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                unsafe {
+                    let _ = CancelIoEx(self.handle, Some(overlapped));
+                    let _ = GetOverlappedResult(self.handle, overlapped, done, true);
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "pipe operation timed out",
+                ));
+            }
+            let slice = remaining.as_millis().min(50) as u32;
+            let waited = unsafe { WaitForSingleObject(self.event, slice) };
+            if waited == WAIT_OBJECT_0 {
+                unsafe {
+                    GetOverlappedResult(self.handle, overlapped, done, false).map_err(win_error)?;
+                }
+                return Ok(());
+            } else if waited != WAIT_TIMEOUT {
+                unsafe {
+                    let _ = CancelIoEx(self.handle, Some(overlapped));
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "pipe wait failed",
+                ));
+            }
+        }
     }
 }
 

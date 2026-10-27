@@ -25,6 +25,7 @@ impl From<ClientError> for BridgeError {
                 supported,
                 received,
             },
+            ClientError::UntrustedDaemon { message } => Self::Transport { message },
             ClientError::Protocol(error) => Self::Protocol { error },
             ClientError::InvalidMessage(error) => Self::InvalidMessage {
                 message: error.to_string(),
