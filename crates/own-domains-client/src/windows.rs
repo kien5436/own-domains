@@ -105,12 +105,16 @@ fn strip_long_prefix(path: &str) -> &str {
 
 /// Open server process handle. Dropping closes it; while alive the PID cannot
 /// be recycled into a different process underneath this connection.
-struct ServerGuard(HANDLE);
+/// `None` when the server is our own process (in-process test or embedding),
+/// where no pin is needed.
+struct ServerGuard(Option<HANDLE>);
 
 impl Drop for ServerGuard {
     fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.0);
+        if let Some(handle) = self.0 {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
         }
     }
 }
@@ -176,6 +180,12 @@ fn verify_server(pipe: HANDLE, timeout: Duration) -> Result<ServerGuard, ClientE
     let mut pid = 0u32;
     unsafe { GetNamedPipeServerProcessId(pipe, &mut pid) }
         .map_err(|error| untrusted(format!("cannot identify pipe server: {error}")))?;
+    if pid == unsafe { GetCurrentProcessId() } {
+        // The server is our own process (in-process test server or embedded
+        // daemon). The kernel reported the PID, so image, user, and session
+        // are trivially ours; a squatting server always has a foreign PID.
+        return Ok(ServerGuard(None));
+    }
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
         .map_err(|error| untrusted(format!("cannot open pipe server {pid}: {error}")))?;
 
@@ -298,7 +308,7 @@ fn verify_server(pipe: HANDLE, timeout: Duration) -> Result<ServerGuard, ClientE
         return Err(untrusted("pipe server is in a different session".into()));
     }
 
-    Ok(ServerGuard(process))
+    Ok(ServerGuard(Some(process)))
 }
 
 #[derive(Clone)]
