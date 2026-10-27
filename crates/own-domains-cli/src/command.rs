@@ -85,7 +85,8 @@ pub enum CliCommand {
         apply: bool,
         #[arg(long)]
         lan_address: String,
-        #[arg(long)]
+        #[cfg_attr(target_os = "macos", arg(long))]
+        #[cfg_attr(not(target_os = "macos"), arg(long, default_value = ""))]
         interface: String,
     },
     Uninstall {
