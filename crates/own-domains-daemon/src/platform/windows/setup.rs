@@ -165,7 +165,10 @@ impl WindowsHostInstaller {
             .filter(|name| !name.is_empty())
             .ok_or_else(|| "NRPT receipt has no name".to_string())?;
         if self.nrpt_rule_names()?.iter().any(|known| known == name) {
-            self.powershell(&format!("Remove-DnsClientNrptRule -Name {name} -Force"))?;
+            // Names arrive brace-wrapped (`{guid}`), which PowerShell would
+            // parse as a script block unquoted.
+            let quoted = format!("'{}'", name.replace('\'', "''"));
+            self.powershell(&format!("Remove-DnsClientNrptRule -Name {quoted} -Force"))?;
         }
         Ok(())
     }

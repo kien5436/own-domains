@@ -368,7 +368,7 @@ fn nrpt_add_failure_aborts_without_receipt() {
 fn nrpt_remove_uses_receipt_name_and_skips_when_absent() {
     let harness = nrpt_harness(|_, args| {
         if args.iter().any(|arg| arg.contains("Get-DnsClientNrptRule")) {
-            Ok("RULE-NAME-9\nOTHER-RULE\n".into())
+            Ok("{RULE-NAME-9}\nOTHER-RULE\n".into())
         } else {
             Ok(String::new())
         }
@@ -376,7 +376,7 @@ fn nrpt_remove_uses_receipt_name_and_skips_when_absent() {
     std::fs::create_dir_all(harness.state.join("applied")).unwrap();
     std::fs::write(
         harness.state.join("applied").join("nrpt.json"),
-        r#"{"namespace":".own","nameservers":["127.0.0.1"],"name":"RULE-NAME-9"}"#,
+        r#"{"namespace":".own","nameservers":["127.0.0.1"],"name":"{RULE-NAME-9}"}"#,
     )
     .unwrap();
     harness
@@ -388,9 +388,9 @@ fn nrpt_remove_uses_receipt_name_and_skips_when_absent() {
         .unwrap();
     let commands = powershell_commands(&harness);
     assert!(
-        commands
-            .iter()
-            .any(|command| command.contains("Remove-DnsClientNrptRule -Name RULE-NAME-9 -Force")),
+        commands.iter().any(
+            |command| command.contains("Remove-DnsClientNrptRule -Name '{RULE-NAME-9}' -Force")
+        ),
         "{commands:?}"
     );
 
@@ -399,7 +399,7 @@ fn nrpt_remove_uses_receipt_name_and_skips_when_absent() {
     std::fs::create_dir_all(idle.state.join("applied")).unwrap();
     std::fs::write(
         idle.state.join("applied").join("nrpt.json"),
-        r#"{"namespace":".own","nameservers":["127.0.0.1"],"name":"RULE-NAME-9"}"#,
+        r#"{"namespace":".own","nameservers":["127.0.0.1"],"name":"{RULE-NAME-9}"}"#,
     )
     .unwrap();
     idle.installer
