@@ -71,7 +71,8 @@ impl DesktopPaths {
                 }
                 Endpoint::unix(path.to_path_buf())
             }
-            (None, None) => Endpoint::default_for_state_dir(&state_dir),
+            (None, None) => Endpoint::default_for_state_dir(&state_dir)
+                .map_err(|message| BridgeError::InvalidMessage { message })?,
         };
         Ok(Self {
             state_dir,

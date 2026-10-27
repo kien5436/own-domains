@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (Some(_), Some(_)) => return Err("use either --socket or --pipe".into()),
         (_, Some(name)) => Endpoint::named_pipe(name)?,
         (Some(path), None) => Endpoint::unix(path),
-        (None, None) => Endpoint::default_for_state_dir(&state_dir),
+        (None, None) => Endpoint::default_for_state_dir(&state_dir)?,
     };
     let _lock = ProcessLock::acquire(&state_dir)?;
     let runtime = own_domains_daemon::platform::runtime_backend(

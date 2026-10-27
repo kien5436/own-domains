@@ -137,7 +137,10 @@ pub fn execute(cli: Cli) -> CommandOutput {
             Err(message) => return CommandOutput::error(2, message),
         },
         (Some(path), None) => Endpoint::unix(path.clone()),
-        (None, None) => Endpoint::default_for_state_dir(&cli.state_dir),
+        (None, None) => match Endpoint::default_for_state_dir(&cli.state_dir) {
+            Ok(endpoint) => endpoint,
+            Err(message) => return CommandOutput::error(2, message),
+        },
     };
     let client_timeout = if matches!(cli.command, CliCommand::Start) {
         Duration::from_secs(30)
