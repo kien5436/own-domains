@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::path::PathBuf;
 
-use own_domains_core::{DomainMapping, ProxyConfigOptions, Settings, build_proxy_config};
+use own_domains_core::{build_proxy_config, DomainMapping, ProxyConfigOptions, Settings};
 
 fn settings() -> Settings {
     Settings {
@@ -35,11 +35,8 @@ fn settings() -> Settings {
 #[test]
 fn builds_exact_http_https_and_setup_routes_without_management_exposure() {
     let settings = settings();
-    let options = ProxyConfigOptions::for_runtime(
-        &settings,
-        Path::new("/Users/kien/Library/Application Support/OwnDomains/runtime/caddy-admin.sock"),
-    )
-    .unwrap();
+    let admin: PathBuf = std::env::temp_dir().join("od-proxy-admin.sock");
+    let options = ProxyConfigOptions::for_runtime(&settings, &admin).unwrap();
     let config = build_proxy_config(&settings, &options).unwrap();
     let text = serde_json::to_string(&config).unwrap();
 
@@ -57,7 +54,7 @@ fn builds_exact_http_https_and_setup_routes_without_management_exposure() {
     assert!(!text.contains("4780"));
     assert_eq!(
         config["admin"]["listen"],
-        "unix//Users/kien/Library/Application Support/OwnDomains/runtime/caddy-admin.sock"
+        serde_json::Value::from(format!("unix/{}", admin.display()))
     );
     assert!(text.contains("127.0.0.1:8080"));
     assert!(text.contains("127.0.0.1:8443"));
@@ -66,8 +63,11 @@ fn builds_exact_http_https_and_setup_routes_without_management_exposure() {
 #[test]
 fn protocols_render_only_when_set() {
     let settings = settings();
-    let base =
-        ProxyConfigOptions::for_runtime(&settings, Path::new("/tmp/caddy-admin.sock")).unwrap();
+    let base = ProxyConfigOptions::for_runtime(
+        &settings,
+        &std::env::temp_dir().join("od-proxy-admin2.sock"),
+    )
+    .unwrap();
     let plain = serde_json::to_string(&build_proxy_config(&settings, &base).unwrap()).unwrap();
     assert!(!plain.contains("protocols"));
     let options = ProxyConfigOptions {

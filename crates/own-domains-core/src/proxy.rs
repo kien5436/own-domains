@@ -18,7 +18,13 @@ pub struct ProxyConfigOptions {
 
 impl ProxyConfigOptions {
     pub fn for_settings(settings: &Settings) -> CoreResult<Self> {
-        Self::for_runtime(settings, Path::new("/tmp/own-domains-caddy-admin.sock"))
+        // Portable default: the Unix-only `/tmp` path is not absolute on
+        // Windows. Production code passes an explicit socket to
+        // `for_runtime`; this default exists for tests and offline previews.
+        Self::for_runtime(
+            settings,
+            &std::env::temp_dir().join("own-domains-caddy-admin.sock"),
+        )
     }
 
     pub fn for_runtime(settings: &Settings, admin_socket: &Path) -> CoreResult<Self> {
