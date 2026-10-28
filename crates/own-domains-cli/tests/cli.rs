@@ -104,9 +104,13 @@ fn parses_complete_command_surface() {
 fn parser_rejects_missing_values_and_unknown_flags() {
     assert!(Cli::try_parse_from(["own-domains", "add", "shop.own", "--port", "3000"]).is_err());
     assert!(Cli::try_parse_from(["own-domains", "list", "--unknown"]).is_err());
+    // `--interface` is required on macOS but optional elsewhere (see command.rs).
+    #[cfg(target_os = "macos")]
     assert!(
         Cli::try_parse_from(["own-domains", "setup", "--lan-address", "192.168.1.20"]).is_err()
     );
+    #[cfg(not(target_os = "macos"))]
+    assert!(Cli::try_parse_from(["own-domains", "setup", "--lan-address", "192.168.1.20"]).is_ok());
     assert!(Cli::try_parse_from(["own-domains", "setup", "--interface", "en0"]).is_err());
     assert!(Cli::try_parse_from(["own-domains", "uninstall", "--unknown"]).is_err());
 }
@@ -129,7 +133,7 @@ fn privileged_setup_identity_requires_root_and_a_valid_sudo_target() {
     );
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[test]
 fn setup_and_uninstall_report_unsupported_platform_before_host_changes() {
     let setup = execute(

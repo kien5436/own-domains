@@ -541,7 +541,7 @@ describe('zip member extraction', () => {
 });
 
 describe('windows platform fetch', () => {
-  const windowsManifest = (): SidecarBuildManifest => {
+  const windowsManifest = (): { manifest: SidecarBuildManifest; coreZip: Buffer; caddyZip: Buffer } => {
     const { manifest } = fixture();
     const mutable = manifest as unknown as {
       coredns: { windowsReleases: unknown[] };
