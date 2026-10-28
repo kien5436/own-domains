@@ -280,3 +280,15 @@ platform-default state dir, and the GUI falls back to the same default
 instead of exiting 2 when launched without `--state-dir` — bare
 double-click starts the app with its window and auto-spawns the daemon.
 Explicit `--state-dir` and `OWN_DOMAINS_STATE_DIR` still override.
+
+Post-matrix TLS fix (verified on the same host): `setup --apply` minted
+an unrelated self-signed `CN=OwnDomains Local CA` while Caddy served
+from its own internal CA, so HTTPS never validated (the browser was
+right to refuse). Now the runtime proxy and setup share a state-dir
+`file_system` storage root; setup generates Caddy's CA with the staged
+binary, installs the root plus its intermediate into the per-user
+stores, and uninstall removes both. Legacy v1 receipts migrate
+automatically with best-effort cleanup. Verified: `curl` serves the
+site, the served leaf chains to the setup-trusted state CA on hardware,
+`stop` closes all ports, `uninstall --purge` leaves no certs, rules, or
+state behind.

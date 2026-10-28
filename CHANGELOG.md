@@ -17,6 +17,7 @@ First beta with Windows host support (Windows 10/11, x64), alongside the native 
 - Setup persists the selected LAN address so a later start serves it without further privileged steps.
 - Uninstall removes the installed CA certificate instead of leaving it trusted.
 - The desktop app starts with the platform default settings directory, so a bare launch opens the window instead of exiting.
+- Windows HTTPS now serves from a Caddy CA that setup generates in the state dir and trusts (root plus intermediate), replacing the unrelated self-signed cert; legacy trust receipts migrate automatically.
 
 ### Known limitations
 
