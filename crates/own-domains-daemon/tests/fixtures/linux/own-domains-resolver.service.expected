@@ -1,0 +1,28 @@
+[Unit]
+Description=Own Domains split DNS for .own
+After=systemd-resolved.service
+Wants=systemd-resolved.service
+PartOf=systemd-resolved.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+ExecStart=-/usr/sbin/ip link add own-domains0 type dummy
+ExecStart=/usr/sbin/ip link set own-domains0 up
+ExecStart=/usr/bin/resolvectl dns own-domains0 127.0.0.1:5354
+ExecStart=/usr/bin/resolvectl domain own-domains0 "~own"
+ExecStart=/usr/bin/resolvectl dnssec own-domains0 no
+ExecStart=/usr/bin/resolvectl dnsovertls own-domains0 no
+ExecStart=/usr/bin/resolvectl default-route own-domains0 no
+ExecStop=-/usr/bin/resolvectl revert own-domains0
+ExecStop=-/usr/sbin/ip link delete own-domains0
+
+[Install]
+WantedBy=multi-user.target
