@@ -4,9 +4,15 @@
 //! Caddy binds 80/443 directly with HTTP/3 disabled so it never opens a UDP
 //! 443 listener. Listeners are loopback plus the selected LAN address only.
 
-use std::{net::Ipv4Addr, path::Path};
+use std::net::Ipv4Addr;
 
 use own_domains_core::{CoreError, CoreResult, DnsConfigOptions, ProxyConfigOptions, Settings};
+
+/// Loopback-only Caddy admin endpoint. Caddy on Windows cannot serve its
+/// admin API over a Unix socket (the process dies during startup with no log
+/// or exit code), so the admin listener is loopback TCP by plan. Binding
+/// 127.0.0.1 keeps it unreachable from LAN interfaces by construction.
+pub const CADDY_ADMIN_PORT: u16 = 2019;
 
 pub fn windows_dns_options(settings: &Settings) -> CoreResult<DnsConfigOptions> {
     let lan = lan_address(settings)?;
@@ -20,16 +26,11 @@ pub fn windows_dns_options(settings: &Settings) -> CoreResult<DnsConfigOptions> 
 
 pub fn windows_proxy_options(
     settings: &Settings,
-    admin_socket: &Path,
+    admin_port: u16,
 ) -> CoreResult<ProxyConfigOptions> {
-    if !admin_socket.is_absolute() {
-        return Err(CoreError::Validation {
-            message: "Caddy admin socket must be absolute".into(),
-        });
-    }
     let lan = lan_address(settings)?;
     Ok(ProxyConfigOptions {
-        admin_listen: format!("unix/{}", admin_socket.display()),
+        admin_listen: format!("127.0.0.1:{admin_port}"),
         listen_addresses: vec![Ipv4Addr::LOCALHOST, lan],
         http_port: 80,
         https_port: 443,

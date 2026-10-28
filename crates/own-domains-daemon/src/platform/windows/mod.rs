@@ -22,4 +22,4 @@ pub use backend::{
     SystemReadiness, SystemSetup, WindowsAdapters, WindowsPaths, WindowsRuntimeBackend,
     resolve_paths,
 };
-pub use config::{windows_dns_options, windows_proxy_options};
+pub use config::{CADDY_ADMIN_PORT, windows_dns_options, windows_proxy_options};

@@ -2,7 +2,8 @@
 //!
 //! DNS/HTTP readiness checks and the Caddy admin client work over any
 //! byte stream, so macOS, Linux, and Windows share them. Only the Caddy
-//! admin socket opening is platform-specific.
+//! admin endpoint differs: a Unix socket on macOS/Linux, loopback-only TCP
+//! on Windows (Caddy on Windows cannot serve admin over AF_UNIX).
 
 use serde_json::Value;
 use std::{
@@ -180,9 +181,21 @@ pub trait CaddyAdmin: Send + Sync {
 }
 
 pub struct CaddyAdminClient {
-    socket: PathBuf,
+    endpoint: AdminEndpoint,
     timeout: Duration,
     max_response_bytes: usize,
+}
+
+/// Unix sockets serve macOS/Linux; Windows uses loopback TCP (Caddy on
+/// Windows cannot serve admin over AF_UNIX). Each side of the split is dead
+/// code on the other platform by construction.
+#[allow(dead_code)]
+enum AdminEndpoint {
+    /// macOS/Linux: permission-restricted Unix socket in the state dir.
+    Unix(PathBuf),
+    /// Windows: loopback-only TCP (Caddy on Windows cannot serve its admin
+    /// API over AF_UNIX).
+    Tcp(SocketAddr),
 }
 
 impl CaddyAdminClient {
@@ -192,7 +205,18 @@ impl CaddyAdminClient {
             return Err("Caddy admin socket must be absolute".into());
         }
         Ok(Self {
-            socket,
+            endpoint: AdminEndpoint::Unix(socket),
+            timeout: Duration::from_secs(2),
+            max_response_bytes: MAX_HTTP_BODY_BYTES,
+        })
+    }
+
+    pub fn new_tcp(address: SocketAddr) -> Result<Self, String> {
+        if !address.ip().is_loopback() {
+            return Err("Caddy admin TCP endpoint must be loopback-only".into());
+        }
+        Ok(Self {
+            endpoint: AdminEndpoint::Tcp(address),
             timeout: Duration::from_secs(2),
             max_response_bytes: MAX_HTTP_BODY_BYTES,
         })
@@ -219,7 +243,10 @@ impl CaddyAdminClient {
     ) -> Result<Vec<u8>, String> {
         use std::os::unix::net::UnixStream;
 
-        let mut stream = UnixStream::connect(&self.socket)
+        let AdminEndpoint::Unix(socket) = &self.endpoint else {
+            return Err("Caddy admin TCP endpoint is unsupported on this platform".into());
+        };
+        let mut stream = UnixStream::connect(socket)
             .map_err(|error| format!("unable to connect to the Caddy admin socket: {error}"))?;
         stream
             .set_read_timeout(Some(self.timeout))
@@ -231,6 +258,7 @@ impl CaddyAdminClient {
             &mut stream,
             method,
             path,
+            "localhost",
             body,
             content_type,
             self.max_response_bytes,
@@ -245,11 +273,22 @@ impl CaddyAdminClient {
         body: Option<&[u8]>,
         content_type: Option<&str>,
     ) -> Result<Vec<u8>, String> {
-        let mut stream = admin_socket::connect_admin(&self.socket, self.timeout)?;
+        let AdminEndpoint::Tcp(address) = &self.endpoint else {
+            return Err("Caddy admin Unix socket is unsupported on Windows".into());
+        };
+        let mut stream = TcpStream::connect_timeout(address, self.timeout)
+            .map_err(|error| format!("unable to connect to the Caddy admin endpoint: {error}"))?;
+        stream
+            .set_read_timeout(Some(self.timeout))
+            .map_err(|error| format!("unable to set the Caddy admin timeout: {error}"))?;
+        stream
+            .set_write_timeout(Some(self.timeout))
+            .map_err(|error| format!("unable to set the Caddy admin timeout: {error}"))?;
         send_request(
             &mut stream,
             method,
             path,
+            &address.to_string(),
             body,
             content_type,
             self.max_response_bytes,
@@ -274,12 +313,12 @@ fn send_request<S: Read + Write>(
     stream: &mut S,
     method: &str,
     path: &str,
+    host: &str,
     body: Option<&[u8]>,
     content_type: Option<&str>,
     max_response_bytes: usize,
 ) -> Result<Vec<u8>, String> {
-    let mut request =
-        format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
     if let Some(content_type) = content_type {
         request.push_str(&format!("Content-Type: {content_type}\r\n"));
     }
@@ -472,6 +511,7 @@ fn read_http_response(
 /// The `windows` crate does not ship `sockaddr_un`, so it is defined here
 /// per the OS layout. Timeouts are socket-level; no overlapped I/O needed.
 #[cfg(windows)]
+#[cfg(unix)]
 mod admin_socket {
     use std::{
         io::{self, Read, Write},
@@ -482,8 +522,8 @@ mod admin_socket {
     use windows::{
         Win32::Networking::WinSock::{
             AF_UNIX, SEND_RECV_FLAGS, SO_RCVTIMEO, SO_SNDTIMEO, SOCK_STREAM, SOCKADDR, SOCKET,
-            SOL_SOCKET, WSADATA, WSAStartup, closesocket, connect, recv, send, setsockopt,
-            socket as winsock_socket,
+            SOL_SOCKET, WSADATA, WSAGetLastError, WSAStartup, closesocket, connect, recv, send,
+            setsockopt, socket as winsock_socket,
         },
         core::Error as WinError,
     };
@@ -570,20 +610,23 @@ mod admin_socket {
         addr.sun_path[..bytes.len()].copy_from_slice(bytes);
         let handle = unsafe { winsock_socket(AF_UNIX as i32, SOCK_STREAM, 0) }
             .map_err(|error| format!("unable to create admin socket: {error}"))?;
+        // WinSock requires the full SOCKADDR_UN length here; the exact-length
+        // form accepted on POSIX fails the connect on Windows.
         let connected = unsafe {
             connect(
                 handle,
                 &addr as *const SockAddrUn as *const SOCKADDR,
-                (2 + bytes.len() + 1) as i32,
+                std::mem::size_of::<SockAddrUn>() as i32,
             )
         };
         if connected != 0 {
+            let code = unsafe { WSAGetLastError() };
             unsafe {
                 closesocket(handle);
             }
             return Err(format!(
-                "unable to connect to the Caddy admin socket: {}",
-                WinError::from_thread()
+                "unable to connect to the Caddy admin socket: Winsock error {}",
+                code.0
             ));
         }
         let millis = timeout.as_millis().min(u32::MAX as u128) as u32;

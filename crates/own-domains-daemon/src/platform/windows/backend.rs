@@ -19,7 +19,7 @@ use own_domains_core::{
 };
 use own_domains_protocol::RuntimeStatus;
 
-use super::config::{windows_dns_options, windows_proxy_options};
+use super::config::{CADDY_ADMIN_PORT, windows_dns_options, windows_proxy_options};
 #[cfg(windows)]
 use super::process::WindowsChild;
 use crate::probe::{
@@ -30,7 +30,7 @@ pub struct WindowsPaths {
     pub runtime_directory: PathBuf,
     pub coredns_exe: PathBuf,
     pub caddy_exe: PathBuf,
-    pub admin_socket: PathBuf,
+    pub admin_port: u16,
 }
 
 /// Resolve backend file locations from launch inputs. Pure lexical paths:
@@ -102,7 +102,7 @@ pub fn resolve_paths(
     };
     let runtime_directory = state_dir.join("runtime");
     Ok(WindowsPaths {
-        admin_socket: runtime_directory.join("caddy-admin.sock"),
+        admin_port: CADDY_ADMIN_PORT,
         coredns_exe: sidecars.join(coredns_name),
         caddy_exe: sidecars.join(caddy_name),
         runtime_directory,
@@ -191,7 +191,7 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
         let dns = windows_dns_options(settings).map_err(failure)?;
         let corefile = build_corefile(settings, &dns).map_err(failure)?;
         let corefile_path = self.write_text("Corefile", &corefile)?;
-        let proxy = windows_proxy_options(settings, &self.paths.admin_socket).map_err(failure)?;
+        let proxy = windows_proxy_options(settings, self.paths.admin_port).map_err(failure)?;
         let config = build_proxy_config(settings, &proxy).map_err(failure)?;
         let config_text =
             serde_json::to_string_pretty(&config).map_err(|error| failure(error.to_string()))?;

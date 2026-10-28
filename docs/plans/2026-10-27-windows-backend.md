@@ -51,9 +51,9 @@ Files:
 - modify `crates/own-domains-daemon/tests/windows_backend.rs` (new)
 
 Steps:
-1. Write test: start a real Caddy (Gate F download pattern, test config with `unix/caddy-admin.sock`) and assert `CaddyAdminClient::load` switches the served body and `is_ready` passes afterwards.
+1. Write test: start a real Caddy (Gate F download pattern, test config with loopback-TCP admin `127.0.0.1:2019`) and assert `CaddyAdminClient::load` switches the served body and `is_ready` passes afterwards.
 2. Run `cargo test -p own-domains-daemon --test windows_backend` on Windows; confirm it fails (admin request is stubbed).
-3. Implement: AF_UNIX `connect` + HTTP/1.1 request/response over Winsock in the `#[cfg(windows)]` request path, reusing `read_http_response`.
+3. Implement: TCP `connect_timeout` + HTTP/1.1 request/response over `TcpStream` in the `#[cfg(windows)]` request path, reusing `read_http_response`. (An earlier AF_UNIX attempt failed on real hardware: POSIX exact-length `addrlen` is refused with WSAECONNREFUSED, and Caddy itself dies silently on backslash `unix/` admin paths.)
 4. Run the test on the VM; confirm it passes.
 5. Run the verification commands; confirm nothing regressed.
 

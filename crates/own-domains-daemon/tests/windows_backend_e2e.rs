@@ -20,6 +20,7 @@
 //!   cargo test -p own-domains-daemon --test windows_backend
 
 use own_domains_core::{DomainMapping, Settings};
+use own_domains_daemon::platform::windows::CADDY_ADMIN_PORT;
 use own_domains_daemon::platform::windows::backend::{
     BackendReadiness, SystemProcessHost, SystemReadiness, SystemSetup, WindowsAdapters,
     WindowsPaths, WindowsRuntimeBackend,
@@ -29,7 +30,7 @@ use own_domains_daemon::{RuntimeBackend, probe::CaddyAdminClient};
 use own_domains_protocol::RuntimeStatus;
 use std::{
     io::{Read, Write},
-    net::{Ipv4Addr, TcpStream},
+    net::{Ipv4Addr, SocketAddr, TcpStream},
     path::PathBuf,
     str::FromStr,
     time::Duration,
@@ -121,14 +122,16 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
         });
 
         let settings = settings(lan, upstream_port);
-        let admin = CaddyAdminClient::new(runtime.join("caddy-admin.sock")).unwrap();
+        let admin =
+            CaddyAdminClient::new_tcp(SocketAddr::from((Ipv4Addr::LOCALHOST, CADDY_ADMIN_PORT)))
+                .unwrap();
         let setup = SystemSetup::new();
         let backend = WindowsRuntimeBackend::with_adapters(
             WindowsPaths {
                 runtime_directory: runtime.clone(),
                 coredns_exe: coredns.clone(),
                 caddy_exe: caddy.clone(),
-                admin_socket: runtime.join("caddy-admin.sock"),
+                admin_port: CADDY_ADMIN_PORT,
             },
             WindowsAdapters {
                 process_host: &SystemProcessHost,
@@ -141,6 +144,16 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
         let applied = backend.apply(&settings).unwrap();
         assert_eq!(applied.applied_revision, 1);
         assert!(matches!(backend.inspect().unwrap(), RuntimeStatus::Running));
+
+        // Admin stays loopback-only: unreachable on the LAN address.
+        assert!(
+            TcpStream::connect_timeout(
+                &SocketAddr::from((lan, CADDY_ADMIN_PORT)),
+                Duration::from_secs(2),
+            )
+            .is_err(),
+            "Caddy admin must not be reachable on the LAN address"
+        );
 
         // DNS serves the LAN address for .own names.
         own_domains_daemon::platform::windows::backend::SystemReadiness

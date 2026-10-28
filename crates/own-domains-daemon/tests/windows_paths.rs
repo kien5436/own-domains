@@ -3,7 +3,7 @@
 //! Pure function of its inputs: no process environment, no filesystem writes.
 //! All roots derive from the temp dir so they are absolute on every OS.
 
-use own_domains_daemon::platform::windows::backend::resolve_paths;
+use own_domains_daemon::platform::windows::{CADDY_ADMIN_PORT, backend::resolve_paths};
 use std::path::Path;
 
 fn base() -> std::path::PathBuf {
@@ -20,13 +20,7 @@ fn relative_state_dir_resolves_against_current_dir() {
     );
     assert_eq!(paths.coredns_exe, base.join("exe").join("coredns.exe"));
     assert_eq!(paths.caddy_exe, base.join("exe").join("caddy.exe"));
-    assert_eq!(
-        paths.admin_socket,
-        base.join("od-state")
-            .join("runtime")
-            .join("caddy-admin.sock")
-    );
-    assert!(paths.admin_socket.is_absolute());
+    assert_eq!(paths.admin_port, CADDY_ADMIN_PORT);
 }
 
 #[test]

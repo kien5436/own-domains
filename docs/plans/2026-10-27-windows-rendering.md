@@ -65,7 +65,7 @@ Files:
 - create `crates/own-domains-daemon/tests/windows_config.rs`
 
 Steps:
-1. Write test: for LAN `192.168.1.20` and upstreams `["1.1.1.1"]`, the Windows Corefile binds `127.0.0.1:53` and the LAN on `53`, TTL 0, upstream port 53; the Caddy JSON binds `127.0.0.1:80`/LAN `:80` and `:443`, `protocols` h1/h2, admin `unix/<runtime>/caddy-admin.sock`, no wildcard or UDP listeners.
+1. Write test: for LAN `192.168.1.20` and upstreams `["1.1.1.1"]`, the Windows Corefile binds `127.0.0.1:53` and the LAN on `53`, TTL 0, upstream port 53; the Caddy JSON binds `127.0.0.1:80`/LAN `:80` and `:443`, `protocols` h1/h2, admin `127.0.0.1:2019` loopback TCP (Caddy on Windows cannot serve admin over AF_UNIX — verified on x64 hardware: the process dies silently with a backslash `unix/` path), no wildcard or UDP listeners.
 2. Run `cargo test -p own-domains-daemon --test windows_config`; confirm it fails (module missing).
 3. Implement: register `#[cfg(target_os = "windows")] pub mod windows`; constructors `windows_dns_options` / `windows_proxy_options` plus render wrappers in `platform/windows/config.rs`.
 4. Run the test; confirm it passes.

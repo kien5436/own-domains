@@ -1,11 +1,12 @@
 //! Windows runtime backend skeleton, tested without real sidecars.
 //!
 //! Fake adapters record every effect; real DNS/HTTP/Caddy behavior is covered
-//! on the VM by `windows_backend.rs`.
+//! on the VM by `windows_backend_e2e.rs`.
 
 use own_domains_core::{ApplyStatus, DomainMapping, Settings};
 use own_domains_daemon::{
     RuntimeBackend,
+    platform::windows::CADDY_ADMIN_PORT,
     platform::windows::backend::{
         BackendAdmin, BackendChild, BackendProcessHost, BackendReadiness, BackendSetup,
         WindowsAdapters, WindowsPaths, WindowsRuntimeBackend,
@@ -114,7 +115,7 @@ fn backend(state: &BackendHarness) -> WindowsRuntimeBackend<'_> {
             runtime_directory: state.directory.clone(),
             coredns_exe: PathBuf::from("coredns-test.exe"),
             caddy_exe: PathBuf::from("caddy-test.exe"),
-            admin_socket: state.directory.join("caddy-admin.sock"),
+            admin_port: CADDY_ADMIN_PORT,
         },
         WindowsAdapters {
             process_host: &state.host,
@@ -248,7 +249,7 @@ fn failed_apply_terminates_spawned_sidecars() {
             runtime_directory: harness.directory.clone(),
             coredns_exe: PathBuf::from("coredns-test.exe"),
             caddy_exe: PathBuf::from("caddy-test.exe"),
-            admin_socket: harness.directory.join("caddy-admin.sock"),
+            admin_port: CADDY_ADMIN_PORT,
         },
         WindowsAdapters {
             process_host: &harness.host,
@@ -299,7 +300,7 @@ fn diagnose_flags_missing_sidecars_with_remedies() {
             runtime_directory: harness.directory.clone(),
             coredns_exe: PathBuf::from("C:\\definitely\\missing\\coredns.exe"),
             caddy_exe: PathBuf::from("C:\\definitely\\missing\\caddy.exe"),
-            admin_socket: harness.directory.join("caddy-admin.sock"),
+            admin_port: CADDY_ADMIN_PORT,
         },
         WindowsAdapters {
             process_host: &harness.host,
@@ -343,7 +344,7 @@ fn diagnose_is_quiet_when_sidecars_exist() {
             runtime_directory: harness.directory.clone(),
             coredns_exe: coredns,
             caddy_exe: caddy,
-            admin_socket: harness.directory.join("caddy-admin.sock"),
+            admin_port: CADDY_ADMIN_PORT,
         },
         WindowsAdapters {
             process_host: &harness.host,

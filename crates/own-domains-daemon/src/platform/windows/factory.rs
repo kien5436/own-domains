@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{RuntimeBackend, UnavailableRuntimeBackend, probe::CaddyAdminClient};
 use std::{
+    net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -29,7 +30,8 @@ pub(crate) fn runtime_backend(
         resources.as_deref(),
         sidecars,
     )?;
-    let admin = CaddyAdminClient::new(paths.admin_socket.clone())?;
+    let admin =
+        CaddyAdminClient::new_tcp(SocketAddr::from((Ipv4Addr::LOCALHOST, paths.admin_port)))?;
     let backend = WindowsRuntimeBackend::with_adapters(
         paths,
         WindowsAdapters {

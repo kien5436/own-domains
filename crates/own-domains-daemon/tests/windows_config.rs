@@ -1,9 +1,11 @@
 //! Exact Windows host artifact rendering (no privileges needed).
 
-use std::{net::Ipv4Addr, path::Path};
+use std::net::Ipv4Addr;
 
 use own_domains_core::{Settings, build_corefile, build_proxy_config};
-use own_domains_daemon::platform::windows::{windows_dns_options, windows_proxy_options};
+use own_domains_daemon::platform::windows::{
+    CADDY_ADMIN_PORT, windows_dns_options, windows_proxy_options,
+};
 
 fn settings() -> Settings {
     Settings {
@@ -37,8 +39,7 @@ fn windows_dns_binds_loopback_and_lan_on_53_with_zero_ttl() {
 
 #[test]
 fn windows_proxy_binds_80_and_443_with_h1_h2_only() {
-    let admin = std::env::temp_dir().join("od-win-test\\caddy-admin.sock");
-    let options = windows_proxy_options(&settings(), &admin).unwrap();
+    let options = windows_proxy_options(&settings(), CADDY_ADMIN_PORT).unwrap();
     assert_eq!(
         options.listen_addresses,
         vec![Ipv4Addr::LOCALHOST, "192.168.1.20".parse().unwrap()]
@@ -60,7 +61,6 @@ fn windows_proxy_binds_80_and_443_with_h1_h2_only() {
     assert!(!text.contains("0.0.0.0"), "{text}");
     assert_eq!(
         config["admin"]["listen"],
-        serde_json::Value::from(format!("unix/{}", admin.display()))
+        serde_json::Value::from(format!("127.0.0.1:{CADDY_ADMIN_PORT}"))
     );
-    assert!(windows_proxy_options(&settings(), Path::new("relative.sock")).is_err());
 }
