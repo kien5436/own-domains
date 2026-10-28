@@ -10,8 +10,12 @@ pub mod interfaces;
 pub mod ip;
 pub mod manifest;
 pub mod nftables;
+pub mod runtime;
 pub mod systemd;
 pub mod trust;
+
+#[cfg(target_os = "linux")]
+pub(crate) use runtime::runtime_backend;
 
 pub use config::{
     linux_dns_options, linux_proxy_options, render_linux_corefile, render_linux_proxy,
