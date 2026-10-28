@@ -10,6 +10,7 @@ pub mod interfaces;
 pub mod ip;
 pub mod nftables;
 pub mod systemd;
+pub mod trust;
 
 pub use config::{
     linux_dns_options, linux_proxy_options, render_linux_corefile, render_linux_proxy,
