@@ -116,6 +116,8 @@ pub trait BackendProcessHost: Send + Sync {
 pub trait BackendChild: Send {
     fn terminate(&self) -> Result<(), String>;
     fn wait_exit(&self, timeout: Duration) -> Result<u32, String>;
+    /// Exit code if the child already finished, `None` while it runs.
+    fn try_wait(&self) -> Result<Option<u32>, String>;
 }
 
 pub trait BackendReadiness: Send + Sync {
@@ -142,6 +144,7 @@ pub struct WindowsAdapters<'a> {
 
 struct BackendState {
     running: bool,
+    applied_revision: u64,
 }
 
 pub struct WindowsRuntimeBackend<'a> {
@@ -156,7 +159,10 @@ impl<'a> WindowsRuntimeBackend<'a> {
         Self {
             paths,
             adapters,
-            state: Mutex::new(BackendState { running: false }),
+            state: Mutex::new(BackendState {
+                running: false,
+                applied_revision: 0,
+            }),
             children: Mutex::new(Vec::new()),
         }
     }
@@ -180,6 +186,19 @@ impl<'a> WindowsRuntimeBackend<'a> {
             let _ = child.wait_exit(Duration::from_secs(5));
         }
     }
+
+    /// Every tracked child still running. A retry or settings change must
+    /// never stack a second CoreDNS/Caddy beside live ones.
+    fn children_alive(&self) -> bool {
+        let children = self
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        !children.is_empty()
+            && children
+                .iter()
+                .all(|child| matches!(child.try_wait(), Ok(None)))
+    }
 }
 
 fn failure(error: impl std::fmt::Display) -> RuntimeError {
@@ -188,6 +207,31 @@ fn failure(error: impl std::fmt::Display) -> RuntimeError {
 
 impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
     fn apply(&self, settings: &Settings) -> Result<ApplyResult, RuntimeError> {
+        // Idempotent retry: a live runtime at this revision needs no new
+        // sidecars (mirrors the macOS fast path).
+        let (running, applied_revision) = {
+            let state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            (state.running, state.applied_revision)
+        };
+        if running
+            && applied_revision == settings.revision
+            && self.children_alive()
+            && self.adapters.setup.is_running()
+        {
+            return Ok(ApplyResult {
+                desired_revision: settings.revision,
+                applied_revision,
+                status: ApplyStatus::Applied,
+                message: None,
+            });
+        }
+        // Stop-before-spawn: never stack a second CoreDNS/Caddy beside live
+        // ones (a timed-out CLI retry must converge, not conflict).
+        self.terminate_all();
+        let _ = self.adapters.setup.stop();
         let dns = windows_dns_options(settings).map_err(failure)?;
         let corefile = build_corefile(settings, &dns).map_err(failure)?;
         let corefile_path = self.write_text("Corefile", &corefile)?;
@@ -269,10 +313,13 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
             return Err(error);
         }
 
-        self.state
+        let mut state = self
+            .state
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .running = true;
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.running = true;
+        state.applied_revision = settings.revision;
+        drop(state);
         Ok(ApplyResult {
             desired_revision: settings.revision,
             applied_revision: settings.revision,
@@ -373,6 +420,10 @@ impl BackendChild for WindowsChild {
 
     fn wait_exit(&self, timeout: Duration) -> Result<u32, String> {
         WindowsChild::wait_timeout(self, timeout).map_err(|error| error.to_string())
+    }
+
+    fn try_wait(&self) -> Result<Option<u32>, String> {
+        WindowsChild::try_wait(self).map_err(|error| error.to_string())
     }
 }
 

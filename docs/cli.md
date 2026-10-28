@@ -8,7 +8,7 @@ cargo run -p own-domains-cli --bin own-domains -- --state-dir .own-domains statu
 cargo run -p own-domains-cli --bin own-domains -- --state-dir .own-domains add shop.own --port 3000 --revision 0 --https
 ```
 
-The command surface is `start`, `stop`, `status`, `list`, `add`, `edit`, `enable`, `disable`, `remove`, `doctor`, `setup`, and `uninstall`. Use `--json` for one machine-readable protocol result on stdout. Mutation commands require `--revision` to prevent stale writes.
+The command surface is `start`, `stop`, `status`, `list`, `add`, `edit`, `enable`, `disable`, `remove`, `doctor`, `setup`, and `uninstall`. Use `--json` for one machine-readable protocol result on stdout. Mutation commands require `--revision` to prevent stale writes. `--state-dir` may be omitted: the CLI then uses the platform default (`%LOCALAPPDATA%\OwnDomains` on Windows, `~/Library/Application Support/OwnDomains` on macOS, `$XDG_STATE_HOME/own-domains` or `~/.local/state/own-domains` on Linux), the same directory the desktop app uses by default.
 
 When no daemon is running, reads report a stopped runtime and mutations take the exclusive state lock, save through the same daemon command handler, print `saved; runtime stopped`, and exit without starting DNS or proxy services. `start` launches `own-domains-daemon`; set `OWN_DOMAINS_DAEMON` to an explicit binary path when it is not on `PATH`.
 

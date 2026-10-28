@@ -44,6 +44,10 @@ impl BackendChild for FakeChild {
     fn wait_exit(&self, _timeout: Duration) -> Result<u32, String> {
         Ok(0)
     }
+
+    fn try_wait(&self) -> Result<Option<u32>, String> {
+        Ok(None)
+    }
 }
 
 struct FakeHost {
@@ -181,6 +185,40 @@ fn apply_writes_configs_and_starts_sidecars() {
         "{log}"
     );
     assert!(log.contains("admin-load"), "{log}");
+}
+
+#[test]
+fn apply_same_revision_twice_spawns_sidecars_once() {
+    let harness = harness();
+    let backend = backend(&harness);
+    let first = backend.apply(&settings()).unwrap();
+    assert_eq!(first.applied_revision, 5);
+    let second = backend.apply(&settings()).unwrap();
+    assert_eq!(second.applied_revision, 5);
+    assert!(matches!(second.status, ApplyStatus::Applied));
+
+    let log = harness.log.events.lock().unwrap().join("\n");
+    assert_eq!(log.matches("spawn coredns-test.exe").count(), 1, "{log}");
+    assert_eq!(log.matches("spawn caddy-test.exe").count(), 1, "{log}");
+    assert_eq!(log.matches("setup-start").count(), 1, "{log}");
+    assert!(!log.contains("terminate"), "{log}");
+}
+
+#[test]
+fn apply_new_revision_restarts_sidecars() {
+    let harness = harness();
+    let backend = backend(&harness);
+    backend.apply(&settings()).unwrap();
+    let mut updated = settings();
+    updated.revision = 6;
+    let result = backend.apply(&updated).unwrap();
+    assert_eq!(result.applied_revision, 6);
+
+    let log = harness.log.events.lock().unwrap().join("\n");
+    assert_eq!(log.matches("spawn coredns-test.exe").count(), 2, "{log}");
+    assert_eq!(log.matches("spawn caddy-test.exe").count(), 2, "{log}");
+    assert!(log.contains("terminate coredns-test.exe"), "{log}");
+    assert!(log.contains("terminate caddy-test.exe"), "{log}");
 }
 
 #[test]

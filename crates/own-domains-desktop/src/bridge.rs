@@ -43,6 +43,13 @@ pub struct DesktopPaths {
     pub endpoint: Endpoint,
 }
 impl DesktopPaths {
+    /// Platform default state directory (see
+    /// [`own_domains_core::default_state_dir`]). `None` when the base
+    /// location cannot be determined; callers keep requiring an explicit
+    /// absolute path then.
+    pub fn default_state_dir() -> Option<PathBuf> {
+        own_domains_core::default_state_dir()
+    }
     pub fn new(
         state_dir: Option<&Path>,
         socket: Option<&Path>,

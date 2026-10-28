@@ -279,6 +279,12 @@ fn configuration() -> Result<(DesktopPaths, PathBuf), String> {
             other => return Err(format!("unknown desktop argument: {other}")),
         }
     }
+    // Bare GUI launch uses the platform default so no command is needed;
+    // explicit flags and the environment override keep working, and a
+    // missing base location still fails with the absolute-path error below.
+    if state_dir.is_none() {
+        state_dir = DesktopPaths::default_state_dir();
+    }
     let paths = DesktopPaths::new(state_dir.as_deref(), socket.as_deref(), pipe.as_deref())
         .map_err(|error| format!("{error:?}"))?;
     let executable = match std::env::var_os("OWN_DOMAINS_DAEMON") {

@@ -101,6 +101,23 @@ fn parses_complete_command_surface() {
 }
 
 #[test]
+fn state_dir_defaults_to_none_for_platform_resolution() {
+    let bare = Cli::try_parse_from(["own-domains", "status"]).unwrap();
+    assert_eq!(bare.state_dir, None);
+    let explicit = Cli::try_parse_from([
+        "own-domains",
+        "--state-dir",
+        #[cfg(windows)]
+        r"C:\od-state",
+        #[cfg(not(windows))]
+        "/tmp/od-state",
+        "status",
+    ])
+    .unwrap();
+    assert!(explicit.state_dir.is_some());
+}
+
+#[test]
 fn parser_rejects_missing_values_and_unknown_flags() {
     assert!(Cli::try_parse_from(["own-domains", "add", "shop.own", "--port", "3000"]).is_err());
     assert!(Cli::try_parse_from(["own-domains", "list", "--unknown"]).is_err());

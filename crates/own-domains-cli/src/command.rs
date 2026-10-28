@@ -3,7 +3,9 @@ use crate::platform::host_installer;
 use crate::privilege::setup_user;
 use clap::{Parser, Subcommand};
 use own_domains_client::{Client, ClientError, LifecycleError, connect_or_launch, stop_and_wait};
-use own_domains_core::{ApplyStatus, DomainService, MappingInput, MappingPatch, SettingsStore};
+use own_domains_core::{
+    ApplyStatus, DomainService, MappingInput, MappingPatch, SettingsStore, default_state_dir,
+};
 use own_domains_daemon::{
     DaemonState, ProcessLock, UnavailableRuntimeBackend,
     platform::{SetupApplyResult, SetupFailure, SetupPreview, SetupRequest, UninstallRequest},
@@ -18,8 +20,8 @@ use std::{
 #[derive(Debug, Parser)]
 #[command(name = "own-domains", version, about = "Manage local .own domains")]
 pub struct Cli {
-    #[arg(long, global = true, default_value = ".own-domains")]
-    pub state_dir: PathBuf,
+    #[arg(long, global = true)]
+    pub state_dir: Option<PathBuf>,
     #[arg(long, global = true)]
     pub socket: Option<PathBuf>,
     #[arg(long, global = true)]
@@ -121,16 +123,27 @@ impl CommandOutput {
 }
 
 pub fn execute(cli: Cli) -> CommandOutput {
+    // Bare invocation uses the platform default so GUI and CLI share one
+    // registry; explicit --state-dir still wins everywhere below.
+    let state_dir = match cli.state_dir.clone().or_else(default_state_dir) {
+        Some(dir) => dir,
+        None => {
+            return CommandOutput::error(
+                2,
+                "unable to determine a state directory: pass --state-dir",
+            );
+        }
+    };
     if let CliCommand::Setup {
         apply,
         lan_address,
         interface,
     } = &cli.command
     {
-        return execute_setup(*apply, &cli.state_dir, lan_address, interface);
+        return execute_setup(*apply, &state_dir, lan_address, interface);
     }
     if let CliCommand::Uninstall { apply, purge } = &cli.command {
-        return execute_uninstall(*apply, *purge, &cli.state_dir);
+        return execute_uninstall(*apply, *purge, &state_dir);
     }
     let endpoint = match (&cli.socket, &cli.pipe) {
         (Some(_), Some(_)) => return CommandOutput::error(2, "use either --socket or --pipe"),
@@ -139,13 +152,16 @@ pub fn execute(cli: Cli) -> CommandOutput {
             Err(message) => return CommandOutput::error(2, message),
         },
         (Some(path), None) => Endpoint::unix(path.clone()),
-        (None, None) => match Endpoint::default_for_state_dir(&cli.state_dir) {
+        (None, None) => match Endpoint::default_for_state_dir(&state_dir) {
             Ok(endpoint) => endpoint,
             Err(message) => return CommandOutput::error(2, message),
         },
     };
+    // Start waits for sidecar readiness inside the daemon (two bounded
+    // probes plus spawn margin); cold boots observed near 30 s, so the
+    // request budget is twice the combined readiness deadlines.
     let client_timeout = if matches!(cli.command, CliCommand::Start) {
-        Duration::from_secs(30)
+        Duration::from_secs(120)
     } else {
         Duration::from_secs(5)
     };
@@ -162,7 +178,7 @@ pub fn execute(cli: Cli) -> CommandOutput {
             }
         }
         Ok(client) => run_live(&client, &cli.command, cli.json),
-        Err(ClientError::DaemonUnavailable { .. }) => run_offline(&cli, &endpoint),
+        Err(ClientError::DaemonUnavailable { .. }) => run_offline(&cli, &state_dir, &endpoint),
         Err(error) => client_error(error),
     }
 }
@@ -296,16 +312,20 @@ fn run_live(client: &Client, command: &CliCommand, json: bool) -> CommandOutput 
     }
 }
 
-fn run_offline(cli: &Cli, endpoint: &own_domains_protocol::Endpoint) -> CommandOutput {
+fn run_offline(
+    cli: &Cli,
+    state_dir: &Path,
+    endpoint: &own_domains_protocol::Endpoint,
+) -> CommandOutput {
     match &cli.command {
-        CliCommand::Start => start_daemon(cli, endpoint),
+        CliCommand::Start => start_daemon(cli, state_dir, endpoint),
         CliCommand::Stop | CliCommand::Status => CommandOutput::success(if cli.json {
             "{\"runtimeStatus\":\"stopped\"}\n".into()
         } else {
             "stopped\n".into()
         }),
         CliCommand::List => {
-            let service = DomainService::new(SettingsStore::new(&cli.state_dir));
+            let service = DomainService::new(SettingsStore::new(state_dir));
             match service.list() {
                 Ok(settings) => render(
                     CommandResult::Settings(settings),
@@ -321,12 +341,12 @@ fn run_offline(cli: &Cli, endpoint: &own_domains_protocol::Endpoint) -> CommandO
             "runtime stopped; no active services\n".into()
         }),
         mutation => {
-            let _lock = match ProcessLock::acquire(&cli.state_dir) {
+            let _lock = match ProcessLock::acquire(state_dir) {
                 Ok(lock) => lock,
                 Err(error) => return CommandOutput::error(4, error),
             };
             let state = DaemonState::new(
-                DomainService::new(SettingsStore::new(&cli.state_dir)),
+                DomainService::new(SettingsStore::new(state_dir)),
                 Arc::new(UnavailableRuntimeBackend),
             );
             let command = match to_offline_protocol(mutation, &state) {
@@ -463,16 +483,18 @@ fn mutation_for_existing(
     }
 }
 
-fn start_daemon(cli: &Cli, endpoint: &own_domains_protocol::Endpoint) -> CommandOutput {
+fn start_daemon(
+    cli: &Cli,
+    state_dir: &Path,
+    endpoint: &own_domains_protocol::Endpoint,
+) -> CommandOutput {
     let executable = std::env::var_os("OWN_DOMAINS_DAEMON")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("own-domains-daemon"));
-    match connect_or_launch(
-        &cli.state_dir,
-        endpoint,
-        &executable,
-        Duration::from_secs(30),
-    ) {
+    // Same budget as an already-running daemon: Start waits for sidecar
+    // readiness inside the daemon, which exceeds the generic 30 s launch
+    // timeout on cold boots.
+    match connect_or_launch(state_dir, endpoint, &executable, Duration::from_secs(120)) {
         Ok(client) => match client.request(Command::Start) {
             Ok(result) => render(result, cli.json, None),
             Err(error) => client_error(error),

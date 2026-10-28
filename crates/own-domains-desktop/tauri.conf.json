@@ -38,7 +38,8 @@
   "bundle": {
     "active": true,
     "externalBin": [
-      "binaries/own-domains-daemon"
+      "binaries/own-domains-daemon",
+      "binaries/own-domains"
     ],
     "resources": {
       "../../sidecars/build/aarch64-apple-darwin/coredns-aarch64-apple-darwin": "coredns-aarch64-apple-darwin",

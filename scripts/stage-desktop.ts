@@ -2,8 +2,16 @@ import { copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+export function stagedBinaryName(binary: string, target: string): string {
+  return `${binary}-${target}${target.includes('-windows-') ? '.exe' : ''}`;
+}
+
 export function stagedDaemonName(target: string): string {
-  return `own-domains-daemon-${target}${target.includes('-windows-') ? '.exe' : ''}`;
+  return stagedBinaryName('own-domains-daemon', target);
+}
+
+export function stagedCliName(target: string): string {
+  return stagedBinaryName('own-domains', target);
 }
 
 function hostTriple(): string {
@@ -26,33 +34,40 @@ function main(): number {
   if (!target) throw new Error('--target requires a triple');
   const profile = release ? 'release' : 'debug';
   const workspace = resolve(process.cwd());
-  const executable = `own-domains-daemon${target.includes('-windows-') ? '.exe' : ''}`;
-  const source = join(
-    workspace,
-    'target',
-    ...(-1 === targetIndex ? [] : [target]),
-    profile,
-    executable,
-  );
-  const destinationDirectory = join(
-    workspace,
-    'crates',
-    'own-domains-desktop',
-    'binaries',
-  );
-  const destination = join(destinationDirectory, stagedDaemonName(target));
+  const binaries = ['own-domains-daemon', 'own-domains'];
+  const exeSuffix = target.includes('-windows-') ? '.exe' : '';
 
-  mkdirSync(destinationDirectory, { recursive: true });
-  copyFileSync(source, destination);
+  for (const binary of binaries) {
+    const source = join(
+      workspace,
+      'target',
+      ...(-1 === targetIndex ? [] : [target]),
+      profile,
+      `${binary}${exeSuffix}`,
+    );
+    const destinationDirectory = join(
+      workspace,
+      'crates',
+      'own-domains-desktop',
+      'binaries',
+    );
+    const destination = join(
+      destinationDirectory,
+      stagedBinaryName(binary, target),
+    );
 
-  // Mode bits are meaningless on Windows; the suffix above is the contract.
-  if ('win32' !== process.platform) {
-    const mode = statSync(destination).mode & 0o777;
+    mkdirSync(destinationDirectory, { recursive: true });
+    copyFileSync(source, destination);
 
-    if (0 === (mode & 0o111)) throw new Error(`staged daemon is not executable: ${destination}`);
+    // Mode bits are meaningless on Windows; the suffix above is the contract.
+    if ('win32' !== process.platform) {
+      const mode = statSync(destination).mode & 0o777;
+
+      if (0 === (mode & 0o111)) throw new Error(`staged binary is not executable: ${destination}`);
+    }
+
+    process.stdout.write(`staged ${destination}\n`);
   }
-
-  process.stdout.write(`staged ${destination}\n`);
 
   return 0;
 }

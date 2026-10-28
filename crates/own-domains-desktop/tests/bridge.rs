@@ -31,6 +31,20 @@ fn rejects_missing_and_relative_state_paths_without_creating_settings() {
 }
 
 #[test]
+fn default_state_dir_is_absolute_when_defined() {
+    let Some(dir) = DesktopPaths::default_state_dir() else {
+        return;
+    };
+    assert!(dir.is_absolute(), "{dir:?}");
+    #[cfg(target_os = "windows")]
+    assert!(dir.ends_with("OwnDomains"), "{dir:?}");
+    #[cfg(target_os = "macos")]
+    assert!(dir.ends_with("OwnDomains"), "{dir:?}");
+    #[cfg(target_os = "linux")]
+    assert!(dir.ends_with("own-domains"), "{dir:?}");
+}
+
+#[test]
 #[cfg(unix)]
 fn bridge_preserves_errors_and_uses_only_the_selected_daemon() {
     let directory = std::env::temp_dir().join(format!("od-{}", uuid::Uuid::new_v4()));

@@ -9,11 +9,14 @@ First beta with Windows host support (Windows 10/11, x64), alongside the native 
 - Windows setup, doctor, and uninstall through a manifest-owned NRPT rule for `.own`, a LAN firewall rule, and a per-user Root CA certificate. Setup and uninstall are fully reversible.
 - Windows backend serving `.own` over CoreDNS and Caddy with a loopback-only admin endpoint, verified end to end on x64 hardware with real sidecars.
 - Unsigned NSIS installer for x64 Windows (SmartScreen warning expected; WebView2 required).
+- The desktop app and CLI run without `--state-dir`, defaulting to the platform state directory (explicit flags and `OWN_DOMAINS_STATE_DIR` still win).
+- The desktop bundle ships the CLI beside the daemon, so the installed app directory carries `own-domains.exe`.
 
 ### Fixed
 
 - Setup persists the selected LAN address so a later start serves it without further privileged steps.
 - Uninstall removes the installed CA certificate instead of leaving it trusted.
+- The desktop app starts with the platform default settings directory, so a bare launch opens the window instead of exiting.
 
 ### Known limitations
 

@@ -16,7 +16,7 @@ cargo build -p own-domains-daemon -p own-domains-cli
 
 `sidecars:fetch` downloads the pinned macOS release assets and verifies archive checksums, Caddy's signed checksum manifest, and each extracted executable's SHA-256 digest. Build output lives under ignored `sidecars/build/<target>/`. Run the download once without `--verify-only` to populate a new checkout.
 
-Select the existing native settings directory explicitly. There is no desktop default relative to the launch directory and no automatic migration from legacy application data. GUI and CLI must receive the same directory. Do not run the legacy TypeScript settings writer against that directory concurrently: it does not participate in the Rust process lock.
+Select the existing native settings directory explicitly. A bare GUI launch uses the platform default (`%LOCALAPPDATA%\OwnDomains` on Windows, `~/Library/Application Support/OwnDomains` on macOS, `$XDG_STATE_HOME/own-domains` or `~/.local/state/own-domains` on Linux); there is no default relative to the launch directory and no automatic migration from legacy application data. GUI and CLI must receive the same directory, so pass the same explicit `--state-dir` to the CLI when it differs from the default. Do not run the legacy TypeScript settings writer against that directory concurrently: it does not participate in the Rust process lock.
 
 ```bash
 export OWN_DOMAINS_STATE_DIR="$HOME/Library/Application Support/OwnDomains"
@@ -35,7 +35,7 @@ Use the actual revision reported by status for edits. A conflict reloads state w
 
 ## Packaging
 
-`desktop:prepare` builds the daemon and stages it for Tauri's `externalBin` entry. `desktop:build` creates a release executable with the staged daemon; use the architecture-specific scripts when cross-building on macOS:
+`desktop:prepare` builds the daemon and CLI and stages both for Tauri's `externalBin` entries. `desktop:build` creates a release executable with the staged binaries; use the architecture-specific scripts when cross-building on macOS:
 
 ```bash
 pnpm run desktop:prepare
@@ -44,7 +44,7 @@ pnpm run desktop:build:arm64
 pnpm run desktop:build:x86_64
 ```
 
-The Tauri configuration declares both architecture sidecars and per-target runtime manifests as resources, places the daemon beside the desktop executable, and sets the macOS minimum version to 15.0. Local acceptance uses an ad-hoc-signed arm64 app bundle; Developer ID signing, notarization, and a distributable installer remain distribution work. See [macOS acceptance](macos-acceptance.md) and [Platform support](platform-support.md).
+The Tauri configuration declares both architecture sidecars and per-target runtime manifests as resources, places the daemon and CLI beside the desktop executable, and sets the macOS minimum version to 15.0. The installed app directory therefore carries `own-domains.exe` next to `own-domains-daemon.exe`, so the CLI runs with no build tree present. Local acceptance uses an ad-hoc-signed arm64 app bundle; Developer ID signing, notarization, and a distributable installer remain distribution work. See [macOS acceptance](macos-acceptance.md) and [Platform support](platform-support.md).
 
 On Linux installations where Homebrew appears before `/usr/bin` in `PATH`, select the system `pkg-config` so Cargo can find the APT-installed GTK/WebKit libraries:
 

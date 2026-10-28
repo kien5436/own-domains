@@ -3,9 +3,9 @@
 ## Goal
 
 `pnpm run desktop:build:windows` on a Windows machine produces an
-installable unsigned NSIS bundle: app + daemon sidecar binary + staged
-Windows sidecars, with a Windows icon and no macOS-only assumptions in
-the staging path.
+installable unsigned NSIS bundle: app + daemon and CLI sidecar binaries
++ staged Windows sidecars, with a Windows icon and no macOS-only
+assumptions in the staging path.
 
 ## Constraints
 
