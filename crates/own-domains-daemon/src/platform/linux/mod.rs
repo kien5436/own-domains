@@ -5,7 +5,10 @@
 //! uninstall land in a later milestone.
 
 mod config;
+mod error;
+pub mod interfaces;
 
 pub use config::{
     linux_dns_options, linux_proxy_options, render_linux_corefile, render_linux_proxy,
 };
+pub use error::LinuxArtifactError;
