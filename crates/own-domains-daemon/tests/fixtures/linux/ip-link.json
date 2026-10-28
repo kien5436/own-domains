@@ -1,0 +1,95 @@
+[
+  {
+    "ifindex": 1,
+    "ifname": "lo",
+    "flags": ["LOOPBACK", "UP", "LOWER_UP"],
+    "mtu": 65536,
+    "link_type": "loopback"
+  },
+  {
+    "ifindex": 2,
+    "ifname": "enp3s0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "ether"
+  },
+  {
+    "ifindex": 3,
+    "ifname": "wlp2s0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "ether"
+  },
+  {
+    "ifindex": 4,
+    "ifname": "br0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "bridge"
+  },
+  {
+    "ifindex": 5,
+    "ifname": "bond0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "bond"
+  },
+  {
+    "ifindex": 6,
+    "ifname": "vlan100",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "vlan"
+  },
+  {
+    "ifindex": 7,
+    "ifname": "enp3s0.100",
+    "master": "br0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "vlan"
+  },
+  {
+    "ifindex": 8,
+    "ifname": "enp4s0",
+    "master": "bond0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "ether"
+  },
+  {
+    "ifindex": 9,
+    "ifname": "docker0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "bridge"
+  },
+  {
+    "ifindex": 10,
+    "ifname": "br-0123456789ab",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "bridge"
+  },
+  {
+    "ifindex": 11,
+    "ifname": "veth123",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "veth"
+  },
+  {
+    "ifindex": 12,
+    "ifname": "virbr0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "bridge"
+  },
+  {
+    "ifindex": 13,
+    "ifname": "tun0",
+    "flags": ["POINTOPOINT", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "link_type": "tun"
+  }
+]
