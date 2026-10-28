@@ -29,13 +29,7 @@ pub(crate) fn runtime_backend(
     // resolve the staged sidecars. Explicit `--resources`/`--sidecars`
     // overrides still win; dev trees without a bundle fall back to the
     // exe-adjacent plain names in `resolve_paths`.
-    let resources = resources.or_else(|| {
-        if exe_dir.join("sidecars").is_dir() {
-            Some(exe_dir.clone())
-        } else {
-            None
-        }
-    });
+    let resources = resources.or_else(|| super::backend::bundled_resources_dir(&exe_dir));
     let paths = resolve_paths(
         state_dir,
         &current_dir,

@@ -5,7 +5,7 @@
 use own_domains_core::{DomainMapping, SettingsStore};
 use own_domains_daemon::platform::{
     HostInstaller, SetupRequest, UninstallRequest,
-    windows::setup::{CommandRunner, SessionProbe, WindowsHostInstaller},
+    windows::setup::{CommandRunner, RunningProcess, SessionProbe, WindowsHostInstaller},
 };
 use std::{
     path::{Path, PathBuf},
@@ -16,10 +16,12 @@ use std::{
 };
 
 type Responder = Box<dyn Fn(&str, &[String]) -> Result<String, String> + Send>;
+type SpawnHook = Box<dyn Fn(&str, &[String]) + Send>;
 
 struct FakeRunner {
     calls: Mutex<Vec<(String, Vec<String>)>>,
     respond: Mutex<Responder>,
+    on_spawn: Mutex<SpawnHook>,
 }
 
 impl FakeRunner {
@@ -29,7 +31,12 @@ impl FakeRunner {
         Self {
             calls: Mutex::new(Vec::new()),
             respond: Mutex::new(Box::new(respond)),
+            on_spawn: Mutex::new(Box::new(|_, _| {})),
         }
+    }
+
+    fn set_spawn_hook(&self, hook: impl Fn(&str, &[String]) + Send + 'static) {
+        *self.on_spawn.lock().unwrap() = Box::new(hook);
     }
 
     fn calls(&self) -> Vec<(String, Vec<String>)> {
@@ -42,6 +49,14 @@ impl FakeRunner {
             .map(|(program, _)| program.clone())
             .collect()
     }
+
+    fn spawns(&self) -> Vec<Vec<String>> {
+        self.calls()
+            .iter()
+            .filter(|(program, _)| program.starts_with("spawn:"))
+            .map(|(_, args)| args.clone())
+            .collect()
+    }
 }
 
 impl CommandRunner for FakeRunner {
@@ -52,6 +67,31 @@ impl CommandRunner for FakeRunner {
             .unwrap()
             .push((program.to_string(), argv.clone()));
         self.respond.lock().unwrap()(program, &argv)
+    }
+
+    fn spawn(&self, program: &str, args: &[&str]) -> Result<Box<dyn RunningProcess>, String> {
+        let argv: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+        self.calls
+            .lock()
+            .unwrap()
+            .push((format!("spawn:{program}"), argv.clone()));
+        (self.on_spawn.lock().unwrap())(program, &argv);
+        Ok(Box::new(FakeRunningChild { alive: true }))
+    }
+}
+
+struct FakeRunningChild {
+    alive: bool,
+}
+
+impl RunningProcess for FakeRunningChild {
+    fn is_running(&mut self) -> Result<bool, String> {
+        Ok(self.alive)
+    }
+
+    fn terminate(&mut self) -> Result<(), String> {
+        self.alive = false;
+        Ok(())
     }
 }
 
@@ -98,10 +138,13 @@ struct Harness {
 fn harness(interactive: bool) -> Harness {
     let state = std::env::temp_dir().join(format!("od-win-setup-{}", uuid::Uuid::new_v4()));
     let runner = Arc::new(FakeRunner::with_handler(chain(|_, _| Ok(String::new()))));
+    let caddy = equip_caddy(&state, &runner);
     let installer = WindowsHostInstaller::with_parts(
         Box::new(FakeRunnerHandle(runner.clone())),
         Box::new(FakeSession { interactive }),
-    );
+        None,
+    )
+    .with_caddy(caddy);
     Harness {
         state,
         runner,
@@ -116,6 +159,10 @@ struct FakeRunnerHandle(Arc<FakeRunner>);
 impl CommandRunner for FakeRunnerHandle {
     fn run(&self, program: &str, args: &[&str]) -> Result<String, String> {
         self.0.run(program, args)
+    }
+
+    fn spawn(&self, program: &str, args: &[&str]) -> Result<Box<dyn RunningProcess>, String> {
+        self.0.spawn(program, args)
     }
 }
 
@@ -270,15 +317,40 @@ fn nrpt_harness(
         }
         respond(program, args)
     }));
+    let caddy = equip_caddy(&state, &runner);
     let installer = WindowsHostInstaller::with_parts(
         Box::new(FakeRunnerHandle(runner.clone())),
         Box::new(FakeSession { interactive: true }),
-    );
+        None,
+    )
+    .with_caddy(caddy);
     Harness {
         state,
         runner,
         installer,
     }
+}
+
+/// Stage a fake Caddy and teach the runner to materialize the CA pair a
+/// real generation run would produce. Every general harness uses it so
+/// `apply_setup` passes the trust step; tests that need a missing or
+/// pre-existing CA opt out explicitly.
+fn equip_caddy(state: &Path, runner: &Arc<FakeRunner>) -> PathBuf {
+    std::fs::create_dir_all(state).unwrap();
+    let caddy = state.join("caddy-test.exe");
+    std::fs::write(&caddy, b"fake-caddy").unwrap();
+    let generated = state.to_path_buf();
+    runner.set_spawn_hook(move |program, args| {
+        assert!(program.ends_with("caddy-test.exe"), "{program}");
+        assert!(args.iter().any(|arg| arg == "run"), "{args:?}");
+        let dir = generated.join("caddy-data/pki/authorities/local");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("root.crt"), b"fake-ca-crt").unwrap();
+        std::fs::write(dir.join("root.key"), b"fake-ca-key").unwrap();
+        std::fs::write(dir.join("intermediate.crt"), b"fake-ca-intermediate").unwrap();
+        std::fs::write(dir.join("intermediate.key"), b"fake-ca-intermediate-key").unwrap();
+    });
+    caddy
 }
 
 fn powershell_commands(harness: &Harness) -> Vec<String> {
@@ -451,10 +523,13 @@ fn firewall_harness(
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("ca.crt"), b"fake-cert").unwrap();
     let runner = Arc::new(FakeRunner::with_handler(chain(respond)));
+    let caddy = equip_caddy(&state, &runner);
     let installer = WindowsHostInstaller::with_parts(
         Box::new(FakeRunnerHandle(runner.clone())),
         Box::new(FakeSession { interactive: true }),
-    );
+        None,
+    )
+    .with_caddy(caddy);
     Harness {
         state,
         runner,
@@ -471,6 +546,7 @@ fn trust_harness(
     let installer = WindowsHostInstaller::with_parts(
         Box::new(FakeRunnerHandle(runner.clone())),
         Box::new(FakeSession { interactive: true }),
+        None,
     );
     Harness {
         state,
@@ -489,18 +565,47 @@ fn certutil_commands(harness: &Harness) -> Vec<Vec<String>> {
         .collect()
 }
 
-#[test]
-fn trust_generates_missing_cert_then_installs_it() {
-    let harness = trust_harness(|_, args| {
-        if args
-            .iter()
-            .any(|arg| arg.contains("New-SelfSignedCertificate"))
-        {
-            Ok("CD34EF56AB78\n".into())
-        } else {
-            Ok(String::new())
-        }
+fn trust_harness_with_generation(
+    respond: impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static,
+) -> Harness {
+    let state = std::env::temp_dir().join(format!("od-win-setup-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&state).unwrap();
+    let caddy = state.join("caddy-test.exe");
+    std::fs::write(&caddy, b"fake-caddy").unwrap();
+    let runner = Arc::new(FakeRunner::with_handler(chain(respond)));
+    // The generation run drops its key pair here, like real Caddy would.
+    let generated = state.clone();
+    runner.set_spawn_hook(move |program, args| {
+        assert!(program.ends_with("caddy-test.exe"), "{program}");
+        assert!(args.iter().any(|arg| arg == "run"), "{args:?}");
+        let dir = generated.join("caddy-data/pki/authorities/local");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("root.crt"), b"fake-ca-crt").unwrap();
+        std::fs::write(dir.join("root.key"), b"fake-ca-key").unwrap();
+        std::fs::write(dir.join("intermediate.crt"), b"fake-ca-intermediate").unwrap();
+        std::fs::write(dir.join("intermediate.key"), b"fake-ca-intermediate-key").unwrap();
     });
+    let installer = WindowsHostInstaller::with_parts(
+        Box::new(FakeRunnerHandle(runner.clone())),
+        Box::new(FakeSession { interactive: true }),
+        None,
+    )
+    .with_caddy(caddy);
+    Harness {
+        state,
+        runner,
+        installer,
+    }
+}
+
+fn ca_paths(state: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = state.join("caddy-data/pki/authorities/local");
+    (dir.join("root.crt"), dir.join("root.key"))
+}
+
+#[test]
+fn trust_generates_ca_with_staged_caddy_then_installs_it() {
+    let harness = trust_harness_with_generation(|_, _| Ok(String::new()));
     let request = SetupRequest {
         state_directory: harness.state.clone(),
         lan_address: "192.168.1.20".into(),
@@ -508,15 +613,82 @@ fn trust_generates_missing_cert_then_installs_it() {
     };
     harness.installer.apply_setup(&request).unwrap();
 
-    let generated = powershell_commands(&harness);
+    // Caddy ran with a PKI-only config against the state storage.
+    let spawns = harness.runner.spawns();
     assert!(
-        generated
-            .iter()
-            .any(|command| command.contains("New-SelfSignedCertificate")
-                && command.contains("CN=OwnDomains Local CA")
-                && command.contains("Export-Certificate")),
-        "{generated:?}"
+        spawns.iter().any(|args| args.iter().any(|arg| arg == "run")
+            && args.iter().any(|arg| arg.contains("caddy-ca-gen.json"))),
+        "{spawns:?}"
     );
+    let (cert, key) = ca_paths(&harness.state);
+    assert!(cert.is_file() && key.is_file());
+    let installed = certutil_commands(&harness);
+    let expected_root = vec![
+        "-addstore".to_string(),
+        "-user".to_string(),
+        "Root".to_string(),
+        cert.display().to_string(),
+    ];
+    let intermediate = cert.parent().unwrap().join("intermediate.crt");
+    let expected_intermediate = vec![
+        "-addstore".to_string(),
+        "-user".to_string(),
+        "CA".to_string(),
+        intermediate.display().to_string(),
+    ];
+    assert!(
+        installed.iter().any(|args| args == &expected_root),
+        "{installed:?}"
+    );
+    assert!(
+        installed.iter().any(|args| args == &expected_intermediate),
+        "{installed:?}"
+    );
+    let receipt: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(harness.state.join("applied").join("trust.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt["thumbprint"], "AB12CD34EF56");
+    assert_eq!(receipt["generated"], true);
+    assert_eq!(receipt["schemaVersion"], 2);
+    // Phone/setup-route copy tracks the trusted root.
+    assert_eq!(
+        std::fs::read(harness.state.join("ca.crt")).unwrap(),
+        b"fake-ca-crt"
+    );
+}
+
+#[test]
+fn trust_reuses_preexisting_ca_without_spawning() {
+    let harness = trust_harness_with_generation(|_, _| Ok("AB12CD34EF56\n".into()));
+    let (cert, key) = ca_paths(&harness.state);
+    std::fs::create_dir_all(cert.parent().unwrap()).unwrap();
+    std::fs::write(&cert, b"provided-ca-crt").unwrap();
+    std::fs::write(&key, b"provided-ca-key").unwrap();
+    std::fs::write(
+        cert.parent().unwrap().join("intermediate.crt"),
+        b"provided-ca-intermediate",
+    )
+    .unwrap();
+    std::fs::write(
+        cert.parent().unwrap().join("intermediate.key"),
+        b"provided-ca-intermediate-key",
+    )
+    .unwrap();
+    let request = SetupRequest {
+        state_directory: harness.state.clone(),
+        lan_address: "192.168.1.20".into(),
+        interface: "Ethernet".into(),
+    };
+    harness.installer.apply_setup(&request).unwrap();
+
+    assert!(harness.runner.spawns().is_empty());
+    let receipt: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(harness.state.join("applied").join("trust.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt["thumbprint"], "AB12CD34EF56");
+    assert_eq!(receipt["generated"], false);
     let installed = certutil_commands(&harness);
     assert!(
         installed.iter().any(|args| args
@@ -524,102 +696,56 @@ fn trust_generates_missing_cert_then_installs_it() {
                 "-addstore".to_string(),
                 "-user".to_string(),
                 "Root".to_string(),
-                harness.state.join("ca.crt").display().to_string()
+                cert.display().to_string()
             ]),
         "{installed:?}"
     );
-    let receipt: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(harness.state.join("applied").join("trust.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(receipt["thumbprint"], "CD34EF56AB78");
-    assert_eq!(receipt["generated"], true);
+    assert!(
+        installed.iter().any(|args| args
+            == &vec![
+                "-addstore".to_string(),
+                "-user".to_string(),
+                "CA".to_string(),
+                cert.parent()
+                    .unwrap()
+                    .join("intermediate.crt")
+                    .display()
+                    .to_string()
+            ]),
+        "{installed:?}"
+    );
 }
 
 #[test]
-fn trust_receipt_records_only_the_thumbprint() {
-    // Real `Export-Certificate` output starts with a directory listing; the
-    // receipt must hold just the trailing thumbprint or `certutil -delstore`
-    // exits 0 while deleting nothing, leaking the CA on uninstall.
-    let harness = trust_harness(|_, args| {
-        if args
-            .iter()
-            .any(|arg| arg.contains("New-SelfSignedCertificate"))
-        {
-            Ok("\n\n    Directory: C:\\Temp\n\n\nMode LastWriteTime Length Name\n---- ------------- ------ ----\n-a---- 28/10/2026 10:11 751 ca.crt\nCD34EF56AB78\n".into())
-        } else {
-            Ok(String::new())
-        }
-    });
+fn trust_requires_staged_caddy_for_generation() {
+    let harness = trust_harness(|_, _| Ok(String::new()));
+    let request = SetupRequest {
+        state_directory: harness.state.clone(),
+        lan_address: "192.168.1.20".into(),
+        interface: "Ethernet".into(),
+    };
+    let error = harness.installer.apply_setup(&request).unwrap_err();
+    assert!(error.message.contains("Caddy sidecar"), "{}", error.message);
+    assert!(!harness.state.join("applied").join("trust.json").exists());
+}
+
+#[test]
+fn trust_uninstall_removes_generated_copy_and_delstores() {
+    let harness = trust_harness_with_generation(|_, _| Ok(String::new()));
     let request = SetupRequest {
         state_directory: harness.state.clone(),
         lan_address: "192.168.1.20".into(),
         interface: "Ethernet".into(),
     };
     harness.installer.apply_setup(&request).unwrap();
-    let receipt: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(harness.state.join("applied").join("trust.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(receipt["thumbprint"], "CD34EF56AB78");
-}
-
-#[test]
-fn trust_uninstall_removes_generated_cert_file_but_keeps_provided_one() {
-    // Generated cert: file deleted on uninstall.
-    let generated = trust_harness(|_, args| {
-        if args
-            .iter()
-            .any(|arg| arg.contains("New-SelfSignedCertificate"))
-        {
-            Ok("CD34EF56AB78\n".into())
-        } else {
-            Ok(String::new())
-        }
-    });
-    let request = SetupRequest {
-        state_directory: generated.state.clone(),
-        lan_address: "192.168.1.20".into(),
-        interface: "Ethernet".into(),
-    };
-    generated.installer.apply_setup(&request).unwrap();
-    generated
+    harness
         .installer
         .apply_uninstall(&UninstallRequest {
-            state_directory: generated.state.clone(),
+            state_directory: harness.state.clone(),
             purge: false,
         })
         .unwrap();
-    let removed = certutil_commands(&generated);
-    assert!(
-        removed.iter().any(|args| args
-            == &vec![
-                "-delstore".to_string(),
-                "-user".to_string(),
-                "Root".to_string(),
-                "CD34EF56AB78".to_string()
-            ]),
-        "{removed:?}"
-    );
-
-    // Provided cert: store entry removed, file preserved.
-    let provided = firewall_harness(|_, _| Ok(String::new()));
-    let request = SetupRequest {
-        state_directory: provided.state.clone(),
-        lan_address: "192.168.1.20".into(),
-        interface: "Ethernet".into(),
-    };
-    provided.installer.apply_setup(&request).unwrap();
-    assert!(provided.state.join("ca.crt").is_file());
-    provided
-        .installer
-        .apply_uninstall(&UninstallRequest {
-            state_directory: provided.state.clone(),
-            purge: false,
-        })
-        .unwrap();
-    assert!(provided.state.join("ca.crt").is_file());
-    let removed = certutil_commands(&provided);
+    let removed = certutil_commands(&harness);
     assert!(
         removed.iter().any(|args| args
             == &vec![
@@ -630,15 +756,130 @@ fn trust_uninstall_removes_generated_cert_file_but_keeps_provided_one() {
             ]),
         "{removed:?}"
     );
+    // The served intermediate is removed alongside the root.
+    assert!(
+        removed.iter().any(|args| args
+            == &vec![
+                "-delstore".to_string(),
+                "-user".to_string(),
+                "CA".to_string(),
+                "AB12CD34EF56".to_string()
+            ]),
+        "{removed:?}"
+    );
+    // Generated phone copy goes; the CA itself stays with the state dir
+    // (purge removes the whole tree).
+    assert!(!harness.state.join("ca.crt").exists());
+    let (cert, key) = ca_paths(&harness.state);
+    assert!(cert.is_file() && key.is_file());
+}
+
+#[test]
+fn trust_uninstall_keeps_provided_ca_files() {
+    let harness = trust_harness_with_generation(|_, _| Ok("AB12CD34EF56\n".into()));
+    let (cert, key) = ca_paths(&harness.state);
+    std::fs::create_dir_all(cert.parent().unwrap()).unwrap();
+    std::fs::write(&cert, b"provided-ca-crt").unwrap();
+    std::fs::write(&key, b"provided-ca-key").unwrap();
+    std::fs::write(
+        cert.parent().unwrap().join("intermediate.crt"),
+        b"provided-ca-intermediate",
+    )
+    .unwrap();
+    std::fs::write(
+        cert.parent().unwrap().join("intermediate.key"),
+        b"provided-ca-intermediate-key",
+    )
+    .unwrap();
+    let request = SetupRequest {
+        state_directory: harness.state.clone(),
+        lan_address: "192.168.1.20".into(),
+        interface: "Ethernet".into(),
+    };
+    harness.installer.apply_setup(&request).unwrap();
+    harness
+        .installer
+        .apply_uninstall(&UninstallRequest {
+            state_directory: harness.state.clone(),
+            purge: false,
+        })
+        .unwrap();
+    let removed = certutil_commands(&harness);
+    assert!(
+        removed.iter().any(|args| args
+            == &vec![
+                "-delstore".to_string(),
+                "-user".to_string(),
+                "Root".to_string(),
+                "AB12CD34EF56".to_string()
+            ]),
+        "{removed:?}"
+    );
+    assert!(cert.is_file() && key.is_file());
+    assert!(harness.state.join("ca.crt").is_file());
+    let removed = certutil_commands(&harness);
+    assert!(
+        removed.iter().any(|args| args
+            == &vec![
+                "-delstore".to_string(),
+                "-user".to_string(),
+                "CA".to_string(),
+                "AB12CD34EF56".to_string()
+            ]),
+        "{removed:?}"
+    );
+}
+
+#[test]
+fn legacy_trust_receipt_migrates_to_caddy_ca() {
+    let harness = trust_harness_with_generation(|_, _| Ok(String::new()));
+    // v1 receipt from the self-signed era, plus its published copy.
+    std::fs::create_dir_all(harness.state.join("applied")).unwrap();
+    std::fs::write(
+        harness.state.join("applied").join("trust.json"),
+        r#"{"thumbprint": "OLDTHUMBPRINT", "generated": true}"#,
+    )
+    .unwrap();
+    std::fs::write(harness.state.join("ca.crt"), b"old-self-signed").unwrap();
+    let request = SetupRequest {
+        state_directory: harness.state.clone(),
+        lan_address: "192.168.1.20".into(),
+        interface: "Ethernet".into(),
+    };
+    harness.installer.apply_setup(&request).unwrap();
+
+    // Superseded entry is removed (best-effort) and the receipt now tracks
+    // Caddy's real root at schema version 2.
+    let removed = certutil_commands(&harness);
+    assert!(
+        removed.iter().any(|args| args
+            == &vec![
+                "-delstore".to_string(),
+                "-user".to_string(),
+                "Root".to_string(),
+                "OLDTHUMBPRINT".to_string()
+            ]),
+        "{removed:?}"
+    );
+    let receipt: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(harness.state.join("applied").join("trust.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt["schemaVersion"], 2);
+    assert_eq!(receipt["thumbprint"], "AB12CD34EF56");
+    assert_eq!(
+        std::fs::read(harness.state.join("ca.crt")).unwrap(),
+        b"fake-ca-crt"
+    );
 }
 
 #[test]
 fn trust_failure_aborts_without_receipt() {
-    let harness = trust_harness(|program, _| {
+    let harness = trust_harness_with_generation(|program, _| {
         if program == "certutil" {
             Err("The request is not supported.".into())
         } else {
-            Ok("CD34EF56AB78\n".into())
+            Ok(String::new())
         }
     });
     let request = SetupRequest {

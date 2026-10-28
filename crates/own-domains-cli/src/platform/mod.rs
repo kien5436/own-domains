@@ -9,14 +9,22 @@ pub(crate) mod windows;
 
 use own_domains_daemon::platform::HostInstaller;
 
-pub fn host_installer() -> Box<dyn HostInstaller> {
+/// Only the Windows installer resolves staged sidecars from the state
+/// dir; other platforms ignore it.
+#[allow(unused_variables)]
+pub fn host_installer(state_dir: &std::path::Path) -> Box<dyn HostInstaller> {
     #[cfg(target_os = "macos")]
     {
         Box::new(macos::MacOsHostInstaller)
     }
     #[cfg(target_os = "windows")]
     {
-        Box::new(own_domains_daemon::platform::windows::setup::WindowsHostInstaller::new())
+        let mut installer =
+            own_domains_daemon::platform::windows::setup::WindowsHostInstaller::new();
+        if let Some(caddy) = windows::staged_caddy_exe(state_dir) {
+            installer = installer.with_caddy(caddy);
+        }
+        Box::new(installer)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -53,7 +61,7 @@ mod tests {
     #[test]
     #[cfg(target_os = "windows")]
     fn windows_uses_the_live_installer() {
-        let installer = super::host_installer();
+        let installer = super::host_installer(std::path::Path::new(r"C:\od-state"));
         let preview = installer
             .preview_setup(&SetupRequest {
                 state_directory: std::path::PathBuf::from(r"C:\od-state"),

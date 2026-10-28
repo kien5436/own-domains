@@ -120,6 +120,7 @@ fn backend(state: &BackendHarness) -> WindowsRuntimeBackend<'_> {
             coredns_exe: PathBuf::from("coredns-test.exe"),
             caddy_exe: PathBuf::from("caddy-test.exe"),
             admin_port: CADDY_ADMIN_PORT,
+            caddy_data_directory: state.directory.join("caddy-data"),
         },
         WindowsAdapters {
             process_host: &state.host,
@@ -174,6 +175,16 @@ fn apply_writes_configs_and_starts_sidecars() {
             "{server}"
         );
     }
+    // State-dir file-system storage: Caddy must issue from the CA that
+    // setup generated and trusted, never a per-user-store CA.
+    assert_eq!(
+        proxy_json["storage"],
+        serde_json::json!({
+            "module": "file_system",
+            "root": harness.directory.join("caddy-data").to_string_lossy(),
+        }),
+        "{proxy}"
+    );
 
     let log = harness.log.events.lock().unwrap().join("\n");
     assert!(log.contains("spawn coredns-test.exe"), "{log}");
@@ -288,6 +299,7 @@ fn failed_apply_terminates_spawned_sidecars() {
             coredns_exe: PathBuf::from("coredns-test.exe"),
             caddy_exe: PathBuf::from("caddy-test.exe"),
             admin_port: CADDY_ADMIN_PORT,
+            caddy_data_directory: harness.directory.join("caddy-data"),
         },
         WindowsAdapters {
             process_host: &harness.host,
@@ -339,6 +351,7 @@ fn diagnose_flags_missing_sidecars_with_remedies() {
             coredns_exe: PathBuf::from("C:\\definitely\\missing\\coredns.exe"),
             caddy_exe: PathBuf::from("C:\\definitely\\missing\\caddy.exe"),
             admin_port: CADDY_ADMIN_PORT,
+            caddy_data_directory: harness.directory.join("caddy-data"),
         },
         WindowsAdapters {
             process_host: &harness.host,
@@ -383,6 +396,7 @@ fn diagnose_is_quiet_when_sidecars_exist() {
             coredns_exe: coredns,
             caddy_exe: caddy,
             admin_port: CADDY_ADMIN_PORT,
+            caddy_data_directory: harness.directory.join("caddy-data"),
         },
         WindowsAdapters {
             process_host: &harness.host,

@@ -21,6 +21,10 @@ fn relative_state_dir_resolves_against_current_dir() {
     assert_eq!(paths.coredns_exe, base.join("exe").join("coredns.exe"));
     assert_eq!(paths.caddy_exe, base.join("exe").join("caddy.exe"));
     assert_eq!(paths.admin_port, CADDY_ADMIN_PORT);
+    assert_eq!(
+        paths.caddy_data_directory,
+        base.join("od-state").join("caddy-data")
+    );
 }
 
 #[test]

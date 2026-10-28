@@ -132,6 +132,7 @@ fn backend_serves_dns_and_http_with_real_sidecars() {
                 coredns_exe: coredns.clone(),
                 caddy_exe: caddy.clone(),
                 admin_port: CADDY_ADMIN_PORT,
+                caddy_data_directory: runtime.join("caddy-data"),
             },
             WindowsAdapters {
                 process_host: &SystemProcessHost,

@@ -31,6 +31,11 @@ pub struct WindowsPaths {
     pub coredns_exe: PathBuf,
     pub caddy_exe: PathBuf,
     pub admin_port: u16,
+    /// File-system storage root for Caddy (`<state_dir>/caddy-data`).
+    /// Pointing both setup-time generation and the runtime proxy at the
+    /// same root keeps one stable internal CA: the trusted root is the
+    /// one that actually signs served certificates.
+    pub caddy_data_directory: PathBuf,
 }
 
 /// Resolve backend file locations from launch inputs. Pure lexical paths:
@@ -49,6 +54,18 @@ fn bundled_target() -> &'static str {
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         "unknown-windows-target"
+    }
+}
+
+/// Installed-bundle resources root for a daemon executable: the exe
+/// directory itself when it carries a `sidecars/` bundle layout. Shared
+/// by the runtime factory and the CLI setup path so both resolve the
+/// same staged sidecars.
+pub fn bundled_resources_dir(exe_dir: &Path) -> Option<PathBuf> {
+    if exe_dir.join("sidecars").is_dir() {
+        Some(exe_dir.to_path_buf())
+    } else {
+        None
     }
 }
 
@@ -105,6 +122,7 @@ pub fn resolve_paths(
         admin_port: CADDY_ADMIN_PORT,
         coredns_exe: sidecars.join(coredns_name),
         caddy_exe: sidecars.join(caddy_name),
+        caddy_data_directory: state_dir.join("caddy-data"),
         runtime_directory,
     })
 }
@@ -236,7 +254,14 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
         let corefile = build_corefile(settings, &dns).map_err(failure)?;
         let corefile_path = self.write_text("Corefile", &corefile)?;
         let proxy = windows_proxy_options(settings, self.paths.admin_port).map_err(failure)?;
-        let config = build_proxy_config(settings, &proxy).map_err(failure)?;
+        let mut config = build_proxy_config(settings, &proxy).map_err(failure)?;
+        // File-system storage rooted in the state dir (mirrors macOS):
+        // Caddy issues from the CA that setup generated and trusted,
+        // instead of a per-user-store CA the trust step never sees.
+        config["storage"] = serde_json::json!({
+            "module": "file_system",
+            "root": self.paths.caddy_data_directory.to_string_lossy(),
+        });
         let config_text =
             serde_json::to_string_pretty(&config).map_err(|error| failure(error.to_string()))?;
         let config_path = self.write_text("caddy.json", &config_text)?;
@@ -284,7 +309,9 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
             .setup
             .start(
                 SocketAddr::from((Ipv4Addr::LOCALHOST, 4781)),
-                self.paths.runtime_directory.join("ca.crt"),
+                self.paths
+                    .caddy_data_directory
+                    .join("pki/authorities/local/root.crt"),
             )
             .map_err(RuntimeError::Failure)
             .and_then(|()| {

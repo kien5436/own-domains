@@ -251,7 +251,7 @@ fn execute_setup(
         lan_address: lan_address.to_string(),
         interface: interface.to_string(),
     };
-    let installer = host_installer();
+    let installer = host_installer(state_directory);
     if !apply {
         return match installer.preview_setup(&request) {
             Ok(preview) => CommandOutput::success(render_preview(&preview)),
@@ -288,7 +288,7 @@ fn execute_uninstall(apply: bool, purge: bool, state_directory: &Path) -> Comman
         state_directory: state_directory.to_path_buf(),
         purge,
     };
-    let installer = host_installer();
+    let installer = host_installer(state_directory);
     if !apply {
         return match installer.preview_uninstall(&request) {
             Ok(preview) => CommandOutput::success(render_preview(&preview)),
