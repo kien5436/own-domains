@@ -23,6 +23,19 @@ pub(crate) fn runtime_backend(
         .parent()
         .ok_or("the daemon executable has no parent directory")?
         .to_path_buf();
+    // Installed bundle layout (NSIS): sidecars live under
+    // `<exe-dir>/sidecars/<triple>/` with triple-infixed names. Derive that
+    // automatically so GUI/CLI launches, which pass no explicit locations,
+    // resolve the staged sidecars. Explicit `--resources`/`--sidecars`
+    // overrides still win; dev trees without a bundle fall back to the
+    // exe-adjacent plain names in `resolve_paths`.
+    let resources = resources.or_else(|| {
+        if exe_dir.join("sidecars").is_dir() {
+            Some(exe_dir.clone())
+        } else {
+            None
+        }
+    });
     let paths = resolve_paths(
         state_dir,
         &current_dir,

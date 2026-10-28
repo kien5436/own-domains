@@ -2,6 +2,7 @@
 //!
 //! All system effects go through the fake runner; no real mutation here.
 
+use own_domains_core::{DomainMapping, SettingsStore};
 use own_domains_daemon::platform::{
     HostInstaller, SetupRequest, UninstallRequest,
     windows::setup::{CommandRunner, SessionProbe, WindowsHostInstaller},
@@ -178,6 +179,31 @@ fn apply_writes_receipts_and_second_apply_is_unchanged() {
     assert!(second.written.is_empty());
     assert_eq!(second.unchanged.len(), 3);
     assert_eq!(harness.runner.calls().len(), calls_before);
+}
+
+#[test]
+fn apply_persists_lan_address_without_resetting_settings() {
+    let harness = harness(true);
+    let store = SettingsStore::new(&harness.state);
+    let mut settings = store.load().unwrap();
+    settings.mappings.push(DomainMapping {
+        id: "shop".into(),
+        hostname: "shop.own".into(),
+        upstream_port: 3000,
+        tls: false,
+        enabled: true,
+    });
+    let revision = settings.revision;
+    store.save(&settings, Some(revision)).unwrap();
+
+    let request = setup_request(&harness.state);
+    harness.installer.apply_setup(&request).unwrap();
+
+    let updated = store.load().unwrap();
+    assert_eq!(updated.lan_address, "192.168.1.20");
+    assert_eq!(updated.revision, revision);
+    assert_eq!(updated.mappings.len(), 1);
+    assert_eq!(updated.mappings[0].hostname, "shop.own");
 }
 
 #[test]
@@ -508,6 +534,34 @@ fn trust_generates_missing_cert_then_installs_it() {
     .unwrap();
     assert_eq!(receipt["thumbprint"], "CD34EF56AB78");
     assert_eq!(receipt["generated"], true);
+}
+
+#[test]
+fn trust_receipt_records_only_the_thumbprint() {
+    // Real `Export-Certificate` output starts with a directory listing; the
+    // receipt must hold just the trailing thumbprint or `certutil -delstore`
+    // exits 0 while deleting nothing, leaking the CA on uninstall.
+    let harness = trust_harness(|_, args| {
+        if args
+            .iter()
+            .any(|arg| arg.contains("New-SelfSignedCertificate"))
+        {
+            Ok("\n\n    Directory: C:\\Temp\n\n\nMode LastWriteTime Length Name\n---- ------------- ------ ----\n-a---- 28/10/2026 10:11 751 ca.crt\nCD34EF56AB78\n".into())
+        } else {
+            Ok(String::new())
+        }
+    });
+    let request = SetupRequest {
+        state_directory: harness.state.clone(),
+        lan_address: "192.168.1.20".into(),
+        interface: "Ethernet".into(),
+    };
+    harness.installer.apply_setup(&request).unwrap();
+    let receipt: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(harness.state.join("applied").join("trust.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt["thumbprint"], "CD34EF56AB78");
 }
 
 #[test]

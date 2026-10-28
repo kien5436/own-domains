@@ -11,6 +11,7 @@ use super::super::{
     HostInstaller, SetupAction, SetupApplyResult, SetupFailure, SetupPreview, SetupRequest,
     UninstallRequest,
 };
+use own_domains_core::SettingsStore;
 use std::path::{Path, PathBuf};
 
 const NRPT_NAMESPACE: &str = ".own";
@@ -183,10 +184,21 @@ impl WindowsHostInstaller {
             (output.trim().to_string(), false)
         } else {
             let output = self.powershell(&format!(
-                "$cert = New-SelfSignedCertificate -Subject '{CA_SUBJECT}' -CertStoreLocation Cert:\\CurrentUser\\My -KeyExportPolicy Exportable -KeyUsage CertSign,CRLSign,DigitalSignature -Type Custom; Export-Certificate -Cert $cert -FilePath '{}'; $cert.Thumbprint",
+                "$cert = New-SelfSignedCertificate -Subject '{CA_SUBJECT}' -CertStoreLocation Cert:\\CurrentUser\\My -KeyExportPolicy Exportable -KeyUsage CertSign,CRLSign,DigitalSignature -Type Custom; Export-Certificate -Cert $cert -FilePath '{}' | Out-Null; $cert.Thumbprint",
                 cert.display()
             ))?;
-            (output.trim().to_string(), true)
+            // Export-Certificate prints a directory listing; the thumbprint
+            // is the last line. A receipt holding the whole blob makes
+            // `certutil -delstore` exit 0 while deleting nothing, leaking
+            // the CA on uninstall (observed on x64 hardware).
+            let thumbprint = output
+                .lines()
+                .rev()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or_default()
+                .to_string();
+            (thumbprint, true)
         };
         if thumbprint.is_empty() {
             return Err("unable to determine the CA thumbprint".into());
@@ -318,6 +330,18 @@ impl WindowsHostInstaller {
         serde_json::from_str(&text)
             .map_err(|error| self.failure("unable to parse the receipt", error.to_string()))
     }
+
+    fn persist_lan_address(&self, state: &Path, lan_address: &str) -> Result<(), SetupFailure> {
+        let store = SettingsStore::new(state);
+        let mut settings = store
+            .load()
+            .map_err(|error| self.failure("unable to load settings", error.to_string()))?;
+        settings.lan_address = lan_address.to_string();
+        let revision = settings.revision;
+        store
+            .save(&settings, Some(revision))
+            .map_err(|error| self.failure("unable to persist LAN address", error.to_string()))
+    }
 }
 
 impl Default for WindowsHostInstaller {
@@ -366,6 +390,10 @@ impl HostInstaller for WindowsHostInstaller {
             "firewall.json",
             || self.apply_firewall(&request.lan_address),
         )?;
+        // Record the selected LAN address so a later `start` serves it.
+        // Receipts make a persist failure retry-safe: re-running apply
+        // skips the host mutations as unchanged and retries the write.
+        self.persist_lan_address(&request.state_directory, &request.lan_address)?;
         Ok(SetupApplyResult {
             written,
             unchanged,
