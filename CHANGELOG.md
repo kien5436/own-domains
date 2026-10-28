@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.0-beta.3 - 2026-10-28
+
+First beta with Windows host support (Windows 10/11, x64), alongside the native macOS app.
+
+### Added
+
+- Windows setup, doctor, and uninstall through a manifest-owned NRPT rule for `.own`, a LAN firewall rule, and a per-user Root CA certificate. Setup and uninstall are fully reversible.
+- Windows backend serving `.own` over CoreDNS and Caddy with a loopback-only admin endpoint, verified end to end on x64 hardware with real sidecars.
+- Unsigned NSIS installer for x64 Windows (SmartScreen warning expected; WebView2 required).
+
+### Fixed
+
+- Setup persists the selected LAN address so a later start serves it without further privileged steps.
+- Uninstall removes the installed CA certificate instead of leaving it trusted.
+
+### Known limitations
+
+- No Developer ID-signed or notarized binary is attached; the Windows installer is unsigned.
+- The legacy TypeScript test suite is macOS/Linux-only (file modes, shell scripts, dnsmasq/launchd fixtures); Windows is validated through the Rust suites and the setup runbook instead.
+- Encrypted-DNS coexistence review stays deferred (see PLAN.md).
+
 ## 0.1.0-beta.2 - 2026-10-26
 
 Second beta of the native macOS app. This release makes the privileged host integration independent of the current LAN address.
