@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "platform": "linux",
+  "hostIntegrationVersion": 1,
+  "userName": "alice",
+  "userId": 1000,
+  "backupDirectory": "/etc/own-domains/backups",
+  "interfaces": [
+    "enp3s0",
+    "wlp2s0"
+  ],
+  "artifacts": [
+    {
+      "path": "/etc/own-domains/nftables.conf",
+      "sha256": "46e92a9662dc960c57e56bfce2314c9e2eed1705542383e8ec04c138d6c32e25",
+      "mode": 420,
+      "ownerId": 0,
+      "groupId": 0,
+      "kind": "nftables"
+    },
+    {
+      "path": "/etc/systemd/system/own-domains-nftables.service",
+      "sha256": "0cdec45ba7d8bf8b1b199a1ab9470c2516aac1885f4cd3f73588c78c1c229a7b",
+      "mode": 420,
+      "ownerId": 0,
+      "groupId": 0,
+      "kind": "systemdUnit"
+    },
+    {
+      "path": "/etc/systemd/system/own-domains-resolver.service",
+      "sha256": "ee3bf6488512322657856b9599ae1da22fe388674c42e3eede2db7a464fb55f4",
+      "mode": 420,
+      "ownerId": 0,
+      "groupId": 0,
+      "kind": "systemdUnit"
+    },
+    {
+      "path": "/usr/local/share/ca-certificates/own-domains.crt",
+      "sha256": "42da423243c0cc218e36536ce722a39d708037f8f66948dfe5820eff3ca95e2c",
+      "mode": 420,
+      "ownerId": 0,
+      "groupId": 0,
+      "kind": "trustCertificate"
+    }
+  ],
+  "sidecars": {
+    "schemaVersion": 1,
+    "coredns": {
+      "version": "1.14.7",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "caddy": {
+      "version": "2.11.7",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "caFingerprintSha256": "15a63910f999a5e2e8493ccf7e57b0c7c85fccc70ee8eb62d8f309a4e013be6f",
+  "nftablesTable": "ip own_domains",
+  "resolverLink": "own-domains0",
+  "systemdUnits": [
+    "own-domains-nftables.service",
+    "own-domains-resolver.service"
+  ]
+}

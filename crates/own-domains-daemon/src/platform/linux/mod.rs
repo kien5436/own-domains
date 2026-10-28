@@ -8,6 +8,7 @@ mod config;
 mod error;
 pub mod interfaces;
 pub mod ip;
+pub mod manifest;
 pub mod nftables;
 pub mod systemd;
 pub mod trust;
