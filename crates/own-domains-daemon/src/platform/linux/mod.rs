@@ -12,6 +12,7 @@ pub mod ip;
 pub mod manifest;
 pub mod nftables;
 pub mod runtime;
+pub mod setup;
 pub mod systemd;
 pub mod trust;
 

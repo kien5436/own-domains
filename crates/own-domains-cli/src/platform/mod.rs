@@ -1,4 +1,7 @@
-#[cfg(any(not(any(target_os = "macos", target_os = "windows")), test))]
+#[cfg(any(
+    not(any(target_os = "macos", target_os = "windows", target_os = "linux")),
+    test
+))]
 mod unsupported;
 
 #[cfg(target_os = "macos")]
@@ -6,6 +9,9 @@ mod macos;
 
 #[cfg(target_os = "windows")]
 pub(crate) mod windows;
+
+#[cfg(target_os = "linux")]
+pub(crate) mod linux;
 
 use own_domains_daemon::platform::HostInstaller;
 
@@ -26,7 +32,15 @@ pub fn host_installer(state_dir: &std::path::Path) -> Box<dyn HostInstaller> {
         }
         Box::new(installer)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        let mut installer = own_domains_daemon::platform::linux::setup::LinuxHostInstaller::new();
+        if let Some(caddy) = linux::staged_caddy_exe(state_dir) {
+            installer = installer.with_caddy(caddy);
+        }
+        Box::new(installer)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         Box::new(unsupported::UnsupportedHostInstaller)
     }
@@ -70,5 +84,25 @@ mod tests {
             })
             .unwrap();
         assert_eq!(preview.actions.len(), 3);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_uses_the_live_installer() {
+        let installer = super::host_installer(std::path::Path::new("/tmp/od-state"));
+        let preview = installer
+            .preview_setup(&SetupRequest {
+                state_directory: std::path::PathBuf::from("/tmp/od-state"),
+                lan_address: "192.168.1.20".into(),
+                interface: "enp3s0".into(),
+            })
+            .unwrap();
+        assert_eq!(preview.actions.len(), 5);
+        assert!(
+            preview
+                .actions
+                .iter()
+                .all(|action| action.kind.starts_with("linux-"))
+        );
     }
 }

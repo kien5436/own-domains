@@ -230,12 +230,16 @@ fn execute_setup(
     lan_address: &str,
     interface: &str,
 ) -> CommandOutput {
-    if !cfg!(target_os = "macos") && !cfg!(target_os = "windows") {
+    if !cfg!(target_os = "macos") && !cfg!(target_os = "windows") && !cfg!(target_os = "linux") {
         return CommandOutput::error(3, "macOS host setup is unsupported on this platform");
     }
     #[cfg(target_os = "windows")]
     if apply && !crate::platform::windows::is_elevated() {
         return CommandOutput::error(2, "setup --apply must run from an elevated prompt");
+    }
+    #[cfg(target_os = "linux")]
+    if apply && !crate::platform::linux::is_root() {
+        return CommandOutput::error(2, "setup --apply must run as root through sudo");
     }
     #[cfg(target_os = "macos")]
     let (_, identity) = match setup_user(apply) {
@@ -265,7 +269,7 @@ fn execute_setup(
 }
 
 fn execute_uninstall(apply: bool, purge: bool, state_directory: &Path) -> CommandOutput {
-    if !cfg!(target_os = "macos") && !cfg!(target_os = "windows") {
+    if !cfg!(target_os = "macos") && !cfg!(target_os = "windows") && !cfg!(target_os = "linux") {
         return CommandOutput::error(3, "macOS host uninstall is unsupported on this platform");
     }
     if purge && !apply {
@@ -274,6 +278,10 @@ fn execute_uninstall(apply: bool, purge: bool, state_directory: &Path) -> Comman
     #[cfg(target_os = "windows")]
     if apply && !crate::platform::windows::is_elevated() {
         return CommandOutput::error(2, "uninstall --apply must run from an elevated prompt");
+    }
+    #[cfg(target_os = "linux")]
+    if apply && !crate::platform::linux::is_root() {
+        return CommandOutput::error(2, "uninstall --apply must run as root through sudo");
     }
     #[cfg(target_os = "macos")]
     let (_, identity) = match setup_user(apply) {
