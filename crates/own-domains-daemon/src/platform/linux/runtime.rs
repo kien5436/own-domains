@@ -13,8 +13,6 @@ use own_domains_core::{ApplyResult, Diagnostic, DiagnosticStatus, Settings};
 use own_domains_protocol::RuntimeStatus;
 
 use super::manifest::parse_linux_manifest;
-#[cfg(target_os = "linux")]
-use crate::UnavailableRuntimeBackend;
 use crate::{RuntimeBackend, RuntimeError};
 
 pub struct LinuxRuntimeBackend {
@@ -38,7 +36,7 @@ impl LinuxRuntimeBackend {
     }
 }
 
-fn setup_required(path: &Path) -> Diagnostic {
+pub(crate) fn setup_required(path: &Path) -> Diagnostic {
     Diagnostic {
         code: "setupRequired".into(),
         status: DiagnosticStatus::Error,
@@ -50,7 +48,7 @@ fn setup_required(path: &Path) -> Diagnostic {
     }
 }
 
-fn setup_manifest_invalid(message: String) -> Diagnostic {
+pub(crate) fn setup_manifest_invalid(message: String) -> Diagnostic {
     Diagnostic {
         code: "setupManifestInvalid".into(),
         status: DiagnosticStatus::Error,
@@ -98,12 +96,9 @@ impl RuntimeBackend for LinuxRuntimeBackend {
 #[cfg(target_os = "linux")]
 pub(crate) fn runtime_backend(
     state_dir: &Path,
-    _resources: Option<PathBuf>,
-    _sidecars: Option<PathBuf>,
+    resources: Option<PathBuf>,
+    sidecars: Option<PathBuf>,
     settings_only: bool,
 ) -> Result<Arc<dyn RuntimeBackend>, Box<dyn std::error::Error>> {
-    if settings_only {
-        return Ok(Arc::new(UnavailableRuntimeBackend));
-    }
-    Ok(Arc::new(LinuxRuntimeBackend::new(state_dir)?))
+    super::backend::runtime_backend(state_dir, resources, sidecars, settings_only)
 }

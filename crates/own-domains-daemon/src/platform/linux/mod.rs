@@ -4,6 +4,7 @@
 //! these constructors. Nothing here touches the machine; privileged setup and
 //! uninstall land in a later milestone.
 
+pub mod backend;
 mod config;
 mod error;
 pub mod interfaces;
