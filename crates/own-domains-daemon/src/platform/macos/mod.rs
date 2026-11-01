@@ -15,6 +15,10 @@ pub use crate::platform::{
 
 pub use super::{SidecarManifest, SidecarSpec};
 pub(crate) use crate::platform::unix::command::MAX_COMMAND_BYTES;
+pub use crate::platform::unix::config::{
+    CandidateConfiguration, ConfigurationError, ConfigurationFiles, ConfigurationValidator,
+    DEFAULT_DNS_VALIDATION_PORT, SystemConfigurationFiles, SystemConfigurationValidator,
+};
 pub use crate::platform::unix::process::{
     ChildProcess, ListenerBinding, OwnedProcessRecord, ProcessComponent, ProcessError, ProcessHost,
     ProcessIdentity, ProcessRecords, ProcessState, RetryPolicy, SIGKILL, SIGTERM, SpawnSpec,
@@ -27,11 +31,7 @@ pub use crate::platform::unix::{
 pub use crate::probe::{
     CaddyAdmin, CaddyAdminClient, DnsReadinessProbe, HttpReadinessProbe, ReadinessProbe,
 };
-pub use config::{
-    CandidateConfiguration, ConfigurationError, ConfigurationFiles, ConfigurationStager,
-    ConfigurationValidator, DEFAULT_DNS_VALIDATION_PORT, SystemConfigurationFiles,
-    SystemConfigurationValidator,
-};
+pub use config::ConfigurationStager;
 pub use host::{
     HostArtifact, HostInstallManifest, HostIntegrationInspector, HostSetupError, HostSetupPlan,
     MacOsSetupOptions, ManifestArtifact, NetworkInterface, build_host_setup_plan,
