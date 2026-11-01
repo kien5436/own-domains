@@ -1,0 +1,21 @@
+[Unit]
+Description=Own Domains nftables redirect
+After=network-pre.target nftables.service
+Wants=network-pre.target
+Before=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+ExecStart=/usr/sbin/nft -f /etc/own-domains/nftables.conf
+ExecStop=-/usr/sbin/nft delete table ip own_domains
+
+[Install]
+WantedBy=multi-user.target

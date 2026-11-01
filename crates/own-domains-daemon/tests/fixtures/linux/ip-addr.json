@@ -1,0 +1,157 @@
+[
+  {
+    "ifindex": 1,
+    "ifname": "lo",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "127.0.0.1",
+        "prefixlen": 8,
+        "scope": "host"
+      }
+    ]
+  },
+  {
+    "ifindex": 2,
+    "ifname": "enp3s0",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "192.168.1.21",
+        "prefixlen": 24,
+        "scope": "global",
+        "secondary": true
+      },
+      {
+        "family": "inet",
+        "local": "192.168.1.20",
+        "prefixlen": 24,
+        "scope": "global"
+      },
+      {
+        "family": "inet",
+        "local": "169.254.10.10",
+        "prefixlen": 16,
+        "scope": "link"
+      }
+    ]
+  },
+  {
+    "ifindex": 3,
+    "ifname": "wlp2s0",
+    "addr_info": []
+  },
+  {
+    "ifindex": 4,
+    "ifname": "br0",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "10.0.0.5",
+        "prefixlen": 24,
+        "scope": "global"
+      }
+    ]
+  },
+  {
+    "ifindex": 5,
+    "ifname": "bond0",
+    "addr_info": []
+  },
+  {
+    "ifindex": 6,
+    "ifname": "vlan100",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "10.0.0.100",
+        "prefixlen": 24,
+        "scope": "global"
+      }
+    ]
+  },
+  {
+    "ifindex": 7,
+    "ifname": "enp3s0.100",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "10.0.0.101",
+        "prefixlen": 24,
+        "scope": "global"
+      }
+    ]
+  },
+  {
+    "ifindex": 8,
+    "ifname": "enp4s0",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "10.0.0.102",
+        "prefixlen": 24,
+        "scope": "global"
+      }
+    ]
+  },
+  {
+    "ifindex": 9,
+    "ifname": "docker0",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "172.17.0.1",
+        "prefixlen": 16,
+        "scope": "global"
+      }
+    ]
+  },
+  {
+    "ifindex": 10,
+    "ifname": "br-0123456789ab",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "172.18.0.1",
+        "prefixlen": 16,
+        "scope": "global"
+      }
+    ]
+  },
+  {
+    "ifindex": 11,
+    "ifname": "veth123",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "169.254.1.1",
+        "prefixlen": 16,
+        "scope": "link"
+      }
+    ]
+  },
+  {
+    "ifindex": 12,
+    "ifname": "virbr0",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "192.168.122.1",
+        "prefixlen": 24,
+        "scope": "global"
+      }
+    ]
+  },
+  {
+    "ifindex": 13,
+    "ifname": "tun0",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "10.8.0.1",
+        "prefixlen": 24,
+        "scope": "global"
+      }
+    ]
+  }
+]

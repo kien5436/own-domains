@@ -13,6 +13,7 @@ pub use crate::platform::{
     SetupRequest, UninstallRequest,
 };
 
+pub use super::{SidecarManifest, SidecarSpec};
 pub use crate::probe::{
     CaddyAdmin, CaddyAdminClient, DnsReadinessProbe, HttpReadinessProbe, ReadinessProbe,
 };
@@ -24,8 +25,8 @@ pub use config::{
 pub use host::{
     CommandRunner, HostArtifact, HostCommand, HostCommandOutput, HostFileKind, HostFileMetadata,
     HostFileSystem, HostInstallManifest, HostIntegrationInspector, HostSetupError, HostSetupPlan,
-    MacOsSetupOptions, ManifestArtifact, NetworkInterface, SidecarManifest, SidecarSpec,
-    SystemCommandRunner, SystemHostFileSystem, build_host_setup_plan, discover_network_interfaces,
+    MacOsSetupOptions, ManifestArtifact, NetworkInterface, SystemCommandRunner,
+    SystemHostFileSystem, build_host_setup_plan, discover_network_interfaces,
     validate_host_setup_plan,
 };
 pub(crate) use host::{

@@ -1,0 +1,24 @@
+destroy table ip own_domains
+
+table ip own_domains {
+  chain prerouting {
+    type nat hook prerouting priority -110; policy accept;
+
+    iifname "enp3s0" fib daddr . iif type local ip daddr != 169.254.0.0/16 udp dport 53 redirect to :5354
+    iifname "enp3s0" fib daddr . iif type local ip daddr != 169.254.0.0/16 tcp dport 53 redirect to :5354
+    iifname "enp3s0" fib daddr . iif type local ip daddr != 169.254.0.0/16 tcp dport 80 redirect to :8080
+    iifname "enp3s0" fib daddr . iif type local ip daddr != 169.254.0.0/16 tcp dport 443 redirect to :8443
+
+    iifname "wlp2s0" fib daddr . iif type local ip daddr != 169.254.0.0/16 udp dport 53 redirect to :5354
+    iifname "wlp2s0" fib daddr . iif type local ip daddr != 169.254.0.0/16 tcp dport 53 redirect to :5354
+    iifname "wlp2s0" fib daddr . iif type local ip daddr != 169.254.0.0/16 tcp dport 80 redirect to :8080
+    iifname "wlp2s0" fib daddr . iif type local ip daddr != 169.254.0.0/16 tcp dport 443 redirect to :8443
+  }
+
+  chain output {
+    type nat hook output priority -100; policy accept;
+
+    meta skuid 1000 fib daddr type local ip daddr != 127.0.0.0/8 ip daddr != 169.254.0.0/16 tcp dport 80 redirect to :8080
+    meta skuid 1000 fib daddr type local ip daddr != 127.0.0.0/8 ip daddr != 169.254.0.0/16 tcp dport 443 redirect to :8443
+  }
+}
