@@ -15,6 +15,11 @@ pub use crate::platform::{
 
 pub use super::{SidecarManifest, SidecarSpec};
 pub(crate) use crate::platform::unix::command::MAX_COMMAND_BYTES;
+pub use crate::platform::unix::process::{
+    ChildProcess, ListenerBinding, OwnedProcessRecord, ProcessComponent, ProcessError, ProcessHost,
+    ProcessIdentity, ProcessRecords, ProcessState, RetryPolicy, SIGKILL, SIGTERM, SpawnSpec,
+    SystemProcessHost, SystemWaiter, Waiter,
+};
 pub use crate::platform::unix::{
     command::{CommandRunner, HostCommand, HostCommandOutput, SystemCommandRunner},
     files::{HostFileKind, HostFileMetadata, HostFileSystem, SystemHostFileSystem},
@@ -36,11 +41,7 @@ pub(crate) use host::{
     InstalledHostManifest, parse_host_install_manifest, validate_installed_manifest,
 };
 pub use paths::{MacOsArchitecture, RuntimePaths};
-pub use process::{
-    ChildProcess, FileProcessRecords, ListenerBinding, OwnedProcessRecord, ProcessComponent,
-    ProcessError, ProcessHost, ProcessIdentity, ProcessRecords, ProcessState, ProcessSupervisor,
-    RetryPolicy, SIGKILL, SIGTERM, SpawnSpec, SystemProcessHost, SystemWaiter, Waiter,
-};
+pub use process::{FileProcessRecords, ProcessSupervisor};
 pub use runtime::{
     MacOsRuntimeBackend, ReadinessKind, RuntimeAdapters, RuntimeReadiness, SetupServerControl,
     SystemHostInspector, SystemRuntimeReadiness, SystemSetupServer,
