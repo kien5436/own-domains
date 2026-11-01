@@ -6,6 +6,8 @@ pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+pub mod unix;
+
 pub mod windows;
 
 use std::{path::Path, path::PathBuf, sync::Arc};
