@@ -1,6 +1,7 @@
 use super::{
-    CommandRunner, HostCommand, HostCommandOutput, HostFileKind, HostFileMetadata, HostFileSystem,
-    MAX_COMMAND_BYTES, MacOsArchitecture, RuntimePaths, SidecarManifest, SidecarSpec,
+    CommandRunner, HostArtifact, HostCommand, HostCommandOutput, HostFileKind, HostFileMetadata,
+    HostFileSystem, MAX_COMMAND_BYTES, MacOsArchitecture, RuntimePaths, SidecarManifest,
+    SidecarSpec,
 };
 use own_domains_core::{Diagnostic, DiagnosticStatus, Settings};
 use serde::{Deserialize, Serialize};
@@ -43,16 +44,6 @@ pub struct MacOsSetupOptions {
 pub struct NetworkInterface {
     pub name: String,
     pub primary_ipv4: Option<Ipv4Addr>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HostArtifact {
-    pub path: PathBuf,
-    pub content: String,
-    pub mode: u32,
-    pub owner_id: u32,
-    pub backup_existing: bool,
-    pub managed_block: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

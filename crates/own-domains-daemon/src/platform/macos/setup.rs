@@ -1,6 +1,7 @@
 use super::{
     CommandRunner, HostArtifact, HostCommand, HostCommandOutput, HostFileKind, HostSetupPlan,
-    InstalledHostManifest, RuntimePaths, parse_host_install_manifest, validate_installed_manifest,
+    InstalledHostManifest, RuntimePaths, SetupFile, SetupHost, backup_path, command, command_error,
+    failure, parse_host_install_manifest, validate_installed_manifest,
 };
 use crate::platform::{SetupAction, SetupApplyResult, SetupFailure, SetupPreview};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -15,28 +16,6 @@ const PF_CONF: &str = "/etc/pf.conf";
 const PF_ANCHOR: &str = "/etc/pf.anchors/dev.owndomains";
 const BEGIN_MARKER: &str = "# BEGIN OWN DOMAINS\n";
 const END_MARKER: &str = "# END OWN DOMAINS\n";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SetupFile {
-    pub content: Vec<u8>,
-    pub mode: u32,
-    pub owner_id: u32,
-    pub kind: HostFileKind,
-}
-
-pub trait SetupHost: Send + Sync {
-    fn inspect_file(&self, path: &Path) -> Result<Option<SetupFile>, String>;
-    fn atomic_write(&self, path: &Path, file: &SetupFile) -> Result<(), String>;
-    fn write_backup(&self, path: &Path, file: &SetupFile) -> Result<(), String> {
-        self.atomic_write(path, file)
-    }
-    fn remove_file(&self, path: &Path) -> Result<(), String>;
-    fn remove_tree(&self, path: &Path) -> Result<(), String>;
-    fn run(&self, command: &HostCommand) -> Result<HostCommandOutput, String>;
-    fn certificate_trusted(&self, certificate: &Path) -> Result<bool, String>;
-    fn pf_enabled(&self) -> Result<bool, String>;
-    fn final_probe(&self) -> Result<(), String>;
-}
 
 struct PlannedArtifact<'a> {
     artifact: &'a HostArtifact,
@@ -467,10 +446,6 @@ fn rollback_setup(
     unresolved
 }
 
-fn backup_path(backup_directory: &Path, path: &Path) -> PathBuf {
-    backup_directory.join(path.strip_prefix("/").unwrap_or(path))
-}
-
 fn certificate_installed(host: &dyn SetupHost, fingerprint: &str) -> Result<bool, String> {
     let find = command(
         "/usr/bin/security",
@@ -506,38 +481,6 @@ fn certificate_sha256(host: &dyn SetupHost, path: &Path) -> Result<String, Strin
         .decode(body.as_bytes())
         .map_err(|error| format!("unable to decode {}: {error}", path.display()))?;
     Ok(format!("{:x}", Sha256::digest(der)))
-}
-
-fn command<const N: usize>(program: &str, args: [&str; N]) -> HostCommand {
-    HostCommand {
-        program: program.into(),
-        args: args.into_iter().map(String::from).collect(),
-        timeout: Duration::from_secs(10),
-    }
-}
-
-fn command_error(command: &HostCommand, output: &HostCommandOutput) -> String {
-    let detail = if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    };
-    format!(
-        "{} failed: {}",
-        command.program.display(),
-        String::from_utf8_lossy(detail)
-            .chars()
-            .take(240)
-            .collect::<String>()
-    )
-}
-
-fn failure(message: impl ToString) -> SetupFailure {
-    SetupFailure {
-        message: message.to_string(),
-        unresolved: vec![],
-        exit_code: 4,
-    }
 }
 
 #[allow(dead_code)]

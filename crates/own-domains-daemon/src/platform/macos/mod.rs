@@ -27,6 +27,8 @@ pub use crate::platform::unix::process::{
 pub use crate::platform::unix::runtime::{
     ReadinessKind, RuntimeAdapters, RuntimeReadiness, SetupServerControl, SystemSetupServer,
 };
+pub use crate::platform::unix::setup::{HostArtifact, SetupFile, SetupHost};
+pub(crate) use crate::platform::unix::setup::{backup_path, command, command_error, failure};
 pub use crate::platform::unix::{
     command::{CommandRunner, HostCommand, HostCommandOutput, SystemCommandRunner},
     files::{HostFileKind, HostFileMetadata, HostFileSystem, SystemHostFileSystem},
@@ -36,7 +38,7 @@ pub use crate::probe::{
 };
 pub use config::ConfigurationStager;
 pub use host::{
-    HostArtifact, HostInstallManifest, HostIntegrationInspector, HostSetupError, HostSetupPlan,
+    HostInstallManifest, HostIntegrationInspector, HostSetupError, HostSetupPlan,
     MacOsSetupOptions, ManifestArtifact, NetworkInterface, build_host_setup_plan,
     discover_network_interfaces, validate_host_setup_plan,
 };
@@ -46,7 +48,4 @@ pub(crate) use host::{
 pub use paths::{MacOsArchitecture, RuntimePaths};
 pub use process::{FileProcessRecords, ProcessSupervisor};
 pub use runtime::{MacOsRuntimeBackend, SystemHostInspector, SystemRuntimeReadiness};
-pub use setup::{
-    SetupFile, SetupHost, SystemSetupHost, apply_setup, apply_uninstall, preview_setup,
-    preview_uninstall,
-};
+pub use setup::{SystemSetupHost, apply_setup, apply_uninstall, preview_setup, preview_uninstall};
