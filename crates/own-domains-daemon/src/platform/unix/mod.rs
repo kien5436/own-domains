@@ -1,6 +1,7 @@
 pub mod command;
 pub mod config;
 pub mod files;
+pub mod paths;
 pub mod process;
 pub mod runtime;
 pub mod setup;

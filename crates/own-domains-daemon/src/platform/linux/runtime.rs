@@ -34,7 +34,7 @@ impl LinuxRuntimeBackend {
     }
 
     fn manifest_path(&self) -> PathBuf {
-        self.state_dir.join("install-manifest.json")
+        crate::platform::unix::paths::install_manifest_path(&self.state_dir)
     }
 }
 
