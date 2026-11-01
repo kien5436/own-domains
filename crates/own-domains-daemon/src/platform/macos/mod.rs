@@ -24,6 +24,9 @@ pub use crate::platform::unix::process::{
     ProcessIdentity, ProcessRecords, ProcessState, RetryPolicy, SIGKILL, SIGTERM, SpawnSpec,
     SystemProcessHost, SystemWaiter, Waiter,
 };
+pub use crate::platform::unix::runtime::{
+    ReadinessKind, RuntimeAdapters, RuntimeReadiness, SetupServerControl, SystemSetupServer,
+};
 pub use crate::platform::unix::{
     command::{CommandRunner, HostCommand, HostCommandOutput, SystemCommandRunner},
     files::{HostFileKind, HostFileMetadata, HostFileSystem, SystemHostFileSystem},
@@ -42,10 +45,7 @@ pub(crate) use host::{
 };
 pub use paths::{MacOsArchitecture, RuntimePaths};
 pub use process::{FileProcessRecords, ProcessSupervisor};
-pub use runtime::{
-    MacOsRuntimeBackend, ReadinessKind, RuntimeAdapters, RuntimeReadiness, SetupServerControl,
-    SystemHostInspector, SystemRuntimeReadiness, SystemSetupServer,
-};
+pub use runtime::{MacOsRuntimeBackend, SystemHostInspector, SystemRuntimeReadiness};
 pub use setup::{
     SetupFile, SetupHost, SystemSetupHost, apply_setup, apply_uninstall, preview_setup,
     preview_uninstall,

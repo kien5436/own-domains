@@ -9,15 +9,15 @@ use std::{
 };
 
 use crate::platform::HostInspector;
-use crate::{RuntimeBackend, RuntimeError, SetupServer};
+use crate::{RuntimeBackend, RuntimeError};
 
 use super::{
-    CaddyAdmin, CaddyAdminClient, ConfigurationError, ConfigurationFiles, ConfigurationStager,
-    ConfigurationValidator, DnsReadinessProbe, FileProcessRecords, HostIntegrationInspector,
-    HttpReadinessProbe, ProcessComponent, ProcessError, ProcessHost, ProcessRecords, ProcessState,
-    ProcessSupervisor, ReadinessProbe, RuntimePaths, SidecarManifest, SystemCommandRunner,
-    SystemConfigurationFiles, SystemConfigurationValidator, SystemHostFileSystem,
-    SystemProcessHost, SystemWaiter, Waiter,
+    CaddyAdminClient, ConfigurationError, ConfigurationStager, DnsReadinessProbe,
+    FileProcessRecords, HostIntegrationInspector, HttpReadinessProbe, ProcessComponent,
+    ProcessError, ProcessState, ProcessSupervisor, ReadinessKind, ReadinessProbe, RuntimeAdapters,
+    RuntimePaths, RuntimeReadiness, SidecarManifest, SystemCommandRunner, SystemConfigurationFiles,
+    SystemConfigurationValidator, SystemHostFileSystem, SystemProcessHost, SystemSetupServer,
+    SystemWaiter,
 };
 
 pub struct SystemHostInspector {
@@ -48,29 +48,6 @@ impl HostInspector for SystemHostInspector {
         )
         .inspect(settings)
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReadinessKind {
-    Dns,
-    CaddyAdmin,
-    Setup,
-    Http,
-}
-
-impl ReadinessKind {
-    fn component(self) -> &'static str {
-        match self {
-            Self::Dns => "CoreDNS",
-            Self::CaddyAdmin => "Caddy admin",
-            Self::Setup => "setup server",
-            Self::Http => "Caddy HTTP",
-        }
-    }
-}
-
-pub trait RuntimeReadiness: Send + Sync {
-    fn check(&self, kind: ReadinessKind, settings: &Settings) -> Result<(), String>;
 }
 
 pub struct SystemRuntimeReadiness {
@@ -133,71 +110,6 @@ impl ReadinessProbe for RuntimeProbe<'_> {
     fn check(&self) -> Result<(), String> {
         self.readiness.check(self.kind, self.settings)
     }
-}
-
-pub trait SetupServerControl: Send + Sync {
-    fn start(&self, address: SocketAddr, certificate: PathBuf) -> Result<(), String>;
-    fn stop(&self) -> Result<(), String>;
-    fn is_running(&self) -> bool;
-}
-
-pub struct SystemSetupServer {
-    server: Mutex<Option<SetupServer>>,
-}
-
-impl SystemSetupServer {
-    pub fn new() -> Self {
-        Self {
-            server: Mutex::new(None),
-        }
-    }
-}
-
-impl Default for SystemSetupServer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SetupServerControl for SystemSetupServer {
-    fn start(&self, address: SocketAddr, certificate: PathBuf) -> Result<(), String> {
-        let mut server = self.server.lock().unwrap();
-        if server.is_some() {
-            return Ok(());
-        }
-        let bound = SetupServer::bind(address, certificate)
-            .map_err(|error| format!("unable to start the setup server: {error}"))?;
-        *server = Some(bound);
-        Ok(())
-    }
-
-    fn stop(&self) -> Result<(), String> {
-        let mut guard = self.server.lock().unwrap();
-        if let Some(server) = guard.as_ref() {
-            server
-                .shutdown()
-                .map_err(|error| format!("unable to stop the setup server: {error}"))?;
-        }
-        *guard = None;
-        Ok(())
-    }
-
-    fn is_running(&self) -> bool {
-        self.server.lock().unwrap().is_some()
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct RuntimeAdapters<'a> {
-    pub inspector: &'a dyn HostInspector,
-    pub files: &'a dyn ConfigurationFiles,
-    pub validator: &'a dyn ConfigurationValidator,
-    pub process_host: &'a dyn ProcessHost,
-    pub records: &'a dyn ProcessRecords,
-    pub waiter: &'a dyn Waiter,
-    pub caddy: &'a dyn CaddyAdmin,
-    pub setup: &'a dyn SetupServerControl,
-    pub readiness: &'a dyn RuntimeReadiness,
 }
 
 #[derive(Default)]
