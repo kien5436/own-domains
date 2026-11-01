@@ -73,6 +73,12 @@ async function verifyPreflight(): Promise<void> {
       platform: 'windows',
       architectures: ['amd64'],
     })),
+    ...(await verifySidecars({
+      manifest,
+      outputDirectory,
+      platform: 'linux',
+      architectures: ['amd64', 'arm64'],
+    })),
   ];
 
   for (const sidecar of verified)

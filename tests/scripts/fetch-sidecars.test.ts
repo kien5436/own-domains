@@ -439,6 +439,76 @@ describe('windows release manifest validation', () => {
   });
 });
 
+describe('linux release manifest validation', () => {
+  const mutableFor = (target: SidecarBuildManifest) => target as unknown as {
+    coredns: { linuxReleases: Record<string, unknown> };
+    caddy: { linuxReleases: Record<string, unknown> };
+  };
+
+  const linuxRelease = (overrides: Record<string, unknown> = {}) => ({
+    target: 'x86_64-unknown-linux-gnu',
+    url: 'https://github.com/example/sidecars/releases/download/v1/core-linux64.tgz',
+    archiveMember: 'coredns',
+    checksum: {
+      algorithm: 'sha256',
+      url: 'https://github.com/example/sidecars/releases/download/v1/core-linux64.tgz.sha256',
+      value: 'a'.repeat(64),
+    },
+    executableSha256: 'b'.repeat(64),
+    ...overrides,
+  });
+
+  const withLinux = (mutate: (target: SidecarBuildManifest) => void) => {
+    const { manifest } = fixture();
+
+    mutate(manifest);
+
+    return manifest;
+  };
+
+  it('accepts linux releases for both architectures alongside darwin ones', () => {
+    const manifest = withLinux((target) => {
+      mutableFor(target).coredns.linuxReleases = { amd64: linuxRelease() };
+      mutableFor(target).caddy.linuxReleases = {
+        amd64: linuxRelease(),
+        arm64: linuxRelease({ target: 'aarch64-unknown-linux-gnu' }),
+      };
+    });
+
+    expect(() => parseManifest(manifest)).not.toThrow();
+  });
+
+  it('accepts manifests without any linux releases', () => {
+    const { manifest } = fixture();
+
+    expect(() => parseManifest(manifest)).not.toThrow();
+  });
+
+  it('accepts a sparse linux matrix (coredns x64 only)', () => {
+    const manifest = withLinux((target) => {
+      mutableFor(target).coredns.linuxReleases = { amd64: linuxRelease() };
+    });
+
+    expect(() => parseManifest(manifest)).not.toThrow();
+  });
+
+  it.each([
+    ['unknown architecture', 'mips', { target: 'x86_64-unknown-linux-gnu' }],
+    ['wrong target for arch', 'amd64', { target: 'aarch64-unknown-linux-gnu' }],
+    ['darwin target in a linux release', 'amd64', { target: 'aarch64-apple-darwin' }],
+    ['windows target in a linux release', 'amd64', { target: 'x86_64-pc-windows-msvc' }],
+    ['bad archive digest', 'amd64', { checksum: { algorithm: 'sha256', url: 'https://github.com/example/x.sha256', value: 'zz' } }],
+    ['non-github url', 'amd64', { url: 'https://example.com/core-linux64.tgz' }],
+    ['directory member', 'amd64', { archiveMember: 'bin/coredns' }],
+  ])('rejects linux releases with %s', (label: string, architecture: string, overrides: Record<string, unknown>) => {
+    const manifest = withLinux((target) => {
+      mutableFor(target).coredns.linuxReleases = { [architecture]: linuxRelease(overrides) };
+    });
+
+    expect(() => parseManifest(manifest)).toThrow();
+  });
+});
+
 const crcTable = (() => {
   const table = new Uint32Array(256);
 
@@ -537,6 +607,153 @@ describe('zip member extraction', () => {
 
     expect(() => extractZipMember(archive.subarray(0, 20), 'coredns.exe')).toThrow();
     expect(() => extractZipMember(Buffer.from('not a zip'), 'coredns.exe')).toThrow();
+  });
+});
+
+describe('linux platform fetch', () => {
+  const linuxManifest = () => {
+    const { manifest } = fixture();
+    const mutable = manifest as unknown as {
+      coredns: { linuxReleases: Record<string, unknown> };
+      caddy: { linuxReleases: Record<string, unknown> };
+    };
+    const coreTgz = tarGz([{ name: 'coredns', content: 'core-binary' }]);
+    const caddyTgz = tarGz([{ name: 'caddy', content: 'caddy-binary' }]);
+    const coreSha = digest('sha256', coreTgz);
+    const caddySha = digest('sha512', caddyTgz);
+    const release = (
+      target: string,
+      url: string,
+      member: string,
+      checksum: { algorithm: 'sha256' | 'sha512'; url: string; value: string },
+      executable: string,
+    ) => ({
+      target,
+      url,
+      archiveMember: member,
+      checksum,
+      executableSha256: digest('sha256', Buffer.from(executable)),
+    });
+
+    mutable.coredns.linuxReleases = {
+      amd64: release(
+        'x86_64-unknown-linux-gnu',
+        'https://github.com/example/sidecars/releases/download/v1/core-linux64.tgz',
+        'coredns',
+        {
+          algorithm: 'sha256',
+          url: 'https://github.com/example/sidecars/releases/download/v1/core-linux64.tgz.sha256',
+          value: coreSha,
+        },
+        'core-binary',
+      ),
+    };
+    mutable.caddy.linuxReleases = {
+      amd64: release(
+        'x86_64-unknown-linux-gnu',
+        'https://github.com/example/sidecars/releases/download/v1/caddy-linux64.tgz',
+        'caddy',
+        {
+          algorithm: 'sha512',
+          url: 'https://github.com/example/sidecars/releases/download/v1/checksums.txt',
+          value: caddySha,
+        },
+        'caddy-binary',
+      ),
+      arm64: release(
+        'aarch64-unknown-linux-gnu',
+        'https://github.com/example/sidecars/releases/download/v1/caddy-linuxarm64.tgz',
+        'caddy',
+        {
+          algorithm: 'sha512',
+          url: 'https://github.com/example/sidecars/releases/download/v1/checksums.txt',
+          value: caddySha,
+        },
+        'caddy-binary',
+      ),
+    };
+
+    return { manifest, coreTgz, caddyTgz };
+  };
+
+  const linuxResponses = (
+    manifest: SidecarBuildManifest,
+    coreTgz: Buffer,
+    caddyTgz: Buffer,
+  ): Map<string, HttpResponse> => {
+    const mutable = manifest as unknown as {
+      coredns: { linuxReleases: Record<string, { url: string; checksum: { url: string } }> };
+      caddy: { linuxReleases: Record<string, { url: string; checksum: { url: string } }> };
+    };
+    const coreRelease = mutable.coredns.linuxReleases.amd64;
+    const caddyRelease = mutable.caddy.linuxReleases.amd64;
+    const coreSha = digest('sha256', coreTgz);
+    const caddySha = digest('sha512', caddyTgz);
+
+    return new Map([
+      [coreRelease.url, { status: 200, headers: {}, body: coreTgz }],
+      [coreRelease.checksum.url, { status: 200, headers: {}, body: Buffer.from(`${coreSha}  core-linux64.tgz\n`) }],
+      [caddyRelease.url, { status: 200, headers: {}, body: caddyTgz }],
+      [
+        caddyRelease.checksum.url,
+        {
+          status: 200,
+          headers: {},
+          body: Buffer.from(`${caddySha}  caddy-linux64.tgz\n${caddySha}  caddy-linuxarm64.tgz\n`),
+        },
+      ],
+    ]);
+  };
+
+  it('fetches linux sidecars with triple-suffixed names and no exe suffix', async () => {
+    const { manifest, coreTgz, caddyTgz } = linuxManifest() as unknown as {
+      manifest: SidecarBuildManifest;
+      coreTgz: Buffer;
+      caddyTgz: Buffer;
+    };
+    const outputDirectory = temporaryDirectory();
+    const fetched = await fetchSidecars({
+      manifest,
+      outputDirectory,
+      platform: 'linux',
+      architectures: ['amd64'],
+      fetchBytes: fetcher(linuxResponses(manifest, coreTgz, caddyTgz)),
+    });
+
+    expect(fetched).toHaveLength(1);
+    const target = join(outputDirectory, 'x86_64-unknown-linux-gnu');
+
+    expect(readFileSync(join(target, 'coredns-x86_64-unknown-linux-gnu'), 'utf8')).toBe('core-binary');
+    expect(readFileSync(join(target, 'caddy-x86_64-unknown-linux-gnu'), 'utf8')).toBe('caddy-binary');
+    expect(join(target, 'coredns-x86_64-unknown-linux-gnu.exe')).toBe(join(target, 'coredns-x86_64-unknown-linux-gnu.exe'));
+    expect(existsSync(join(target, 'coredns-x86_64-unknown-linux-gnu.exe'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(target, 'manifest.json'), 'utf8'))).toEqual({
+      schemaVersion: 1,
+      coredns: { version: '1.0.0', sha256: digest('sha256', Buffer.from('core-binary')) },
+      caddy: { version: '1.0.0', sha256: digest('sha256', Buffer.from('caddy-binary')) },
+    });
+    expect(existsSync(join(target, 'coredns-x86_64-unknown-linux-gnu.tmp'))).toBe(false);
+  });
+
+  it('rejects a linux checksum mismatch without writing', async () => {
+    const { manifest, coreTgz, caddyTgz } = linuxManifest() as unknown as {
+      manifest: SidecarBuildManifest;
+      coreTgz: Buffer;
+      caddyTgz: Buffer;
+    };
+    const mutable = manifest as unknown as { coredns: { linuxReleases: Record<string, { checksum: { value: string } }> } };
+
+    mutable.coredns.linuxReleases.amd64.checksum.value = '0'.repeat(64);
+
+    await expect(
+      fetchSidecars({
+        manifest,
+        outputDirectory: temporaryDirectory(),
+        platform: 'linux',
+        architectures: ['amd64'],
+        fetchBytes: fetcher(linuxResponses(manifest, coreTgz, caddyTgz)),
+      }),
+    ).rejects.toThrow(/checksum|digest/i);
   });
 });
 

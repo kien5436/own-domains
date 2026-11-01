@@ -58,11 +58,20 @@ export interface WindowsRelease {
   executableSha256: string;
 }
 
+export interface LinuxRelease {
+  target: string;
+  url: string;
+  archiveMember: string;
+  checksum: Checksum;
+  executableSha256: string;
+}
+
 export interface SidecarDefinition {
   version: string;
   signature?: SignatureConfig;
   releases: Record<Architecture, SidecarRelease>;
   windowsReleases?: WindowsRelease[];
+  linuxReleases?: Partial<Record<Architecture, LinuxRelease>>;
 }
 
 export interface SidecarBuildManifest {
@@ -114,6 +123,11 @@ const WINDOWS_TARGETS: Record<Architecture, string> = {
   amd64: 'x86_64-pc-windows-msvc',
 };
 
+const LINUX_TARGETS: Record<Architecture, string> = {
+  arm64: 'aarch64-unknown-linux-gnu',
+  amd64: 'x86_64-unknown-linux-gnu',
+};
+
 const ARCHITECTURES: Architecture[] = ['arm64', 'amd64'];
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
 const MAX_EXECUTABLE_BYTES = 128 * 1024 * 1024;
@@ -135,6 +149,7 @@ function hostArchitecture(): Architecture {
 
 function defaultArchitectures(platform: SidecarPlatform = 'darwin'): Architecture[] {
   if ('windows' === platform) return ['amd64'];
+  if ('linux' === platform) return [...ARCHITECTURES];
 
   return 'darwin' === process.platform ? [hostArchitecture()] : [...ARCHITECTURES];
 }
@@ -250,6 +265,20 @@ function validateWindowsReleases(name: string, releases: WindowsRelease[] | unde
   }
 }
 
+function validateLinuxReleases(name: string, releases: Partial<Record<Architecture, LinuxRelease>> | undefined): void {
+  if (undefined === releases) return;
+  if ('object' !== typeof releases || null === releases || Array.isArray(releases))
+    throw new Error(`${name} linuxReleases must be a map keyed by architecture`);
+
+  for (const [architecture, release] of Object.entries(releases)) {
+    if (!ARCHITECTURES.includes(architecture as Architecture))
+      throw new Error(`${name} linux release has unknown architecture: ${architecture}`);
+    if (!release || 'object' !== typeof release)
+      throw new Error(`${name} linux release ${architecture} is not an object`);
+    validateRelease(name, `linux/${architecture}`, release, LINUX_TARGETS[architecture as Architecture]);
+  }
+}
+
 export function parseManifest(raw: unknown): SidecarBuildManifest {
   const manifest = raw as SidecarBuildManifest;
 
@@ -270,6 +299,7 @@ export function parseManifest(raw: unknown): SidecarBuildManifest {
     }
 
     validateWindowsReleases(name, sidecar.windowsReleases);
+    validateLinuxReleases(name, sidecar.linuxReleases);
 
     if (sidecar.signature) {
       validateReleaseUrl(sidecar.signature.checksumUrl);
@@ -538,6 +568,16 @@ function sidecarExpectation(
     return { target: WINDOWS_TARGETS[architecture], coredns, caddy };
   }
 
+  if ('linux' === platform) {
+    const coredns = manifest.coredns.linuxReleases?.[architecture];
+    const caddy = manifest.caddy.linuxReleases?.[architecture];
+
+    if (!coredns) throw new Error(`coredns linux ${architecture} release is not defined`);
+    if (!caddy) throw new Error(`caddy linux ${architecture} release is not defined`);
+
+    return { target: LINUX_TARGETS[architecture], coredns, caddy };
+  }
+
   return {
     target: TARGETS[architecture],
     coredns: manifest.coredns.releases[architecture],
@@ -779,8 +819,8 @@ function parseArguments(argv: string[]) {
 
         break;
       case '--platform':
-        if ('darwin' !== argv[index + 1] && 'windows' !== argv[index + 1])
-          throw new Error('--platform requires darwin or windows');
+        if ('darwin' !== argv[index + 1] && 'windows' !== argv[index + 1] && 'linux' !== argv[index + 1])
+          throw new Error('--platform requires darwin, windows, or linux');
         platform = argv[++index] as SidecarPlatform;
 
         break;
@@ -825,10 +865,11 @@ export async function runCli(argv: string[]): Promise<number> {
     const manifest = parseManifest(
       JSON.parse(readFileSync(options.manifestPath, 'utf8')) as SidecarBuildManifest,
     );
-    const hostTargets = 'win32' === process.platform ? WINDOWS_TARGETS : TARGETS;
-    const platformTargets = 'windows' === options.platform ? WINDOWS_TARGETS : TARGETS;
+    const hostPlatform: SidecarPlatform = 'win32' === process.platform ? 'windows' : 'linux' === process.platform ? 'linux' : 'darwin';
+    const hostTargets = 'windows' === hostPlatform ? WINDOWS_TARGETS : 'linux' === hostPlatform ? LINUX_TARGETS : TARGETS;
+    const platformTargets = 'windows' === options.platform ? WINDOWS_TARGETS : 'linux' === options.platform ? LINUX_TARGETS : TARGETS;
     const shouldRunVersions
-      = ('win32' === process.platform) === ('windows' === options.platform)
+      = hostPlatform === options.platform
         && options.architectures.every((architecture) => platformTargets[architecture] === hostTargets[hostArchitecture()]);
     const runVersion = shouldRunVersions ? nativeVersion : undefined;
     const sidecars = options.verifyOnly

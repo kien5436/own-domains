@@ -39,7 +39,31 @@
         },
         "executableSha256": "a6ac3466a93f907c5ef7c170a41fdc6901df195da223c60adeca8de1a891d8b5"
       }
-    ]
+    ],
+    "linuxReleases": {
+      "amd64": {
+        "target": "x86_64-unknown-linux-gnu",
+        "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_linux_amd64.tgz",
+        "archiveMember": "coredns",
+        "checksum": {
+          "algorithm": "sha256",
+          "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_linux_amd64.tgz.sha256",
+          "value": "9a09356438c6d9591cb80011a2a7a52f87fc3a113f6690e41f243f98b98faac9"
+        },
+        "executableSha256": "67d7387acb5d58df2c884cd2f0a4a4815f6a6bb29b865a6ea5efa4e782d76faa"
+      },
+      "arm64": {
+        "target": "aarch64-unknown-linux-gnu",
+        "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_linux_arm64.tgz",
+        "archiveMember": "coredns",
+        "checksum": {
+          "algorithm": "sha256",
+          "url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_linux_arm64.tgz.sha256",
+          "value": "bf26782d19b5340e3e6cb50f1ed6df72f58e4a30932c79d167f0f0a8b1e92e16"
+        },
+        "executableSha256": "e9a0052a67f70f59a88092ce466c1605308b41db2a5e4ddffd171fe670863401"
+      }
+    }
   },
   "caddy": {
     "version": "2.11.7",
@@ -98,6 +122,30 @@
         },
         "executableSha256": "79c43d6e18b5762a3ccfefc60d8ad3bbcbe6438d175fa18a5d6aa560e36f7044"
       }
-    ]
+    ],
+    "linuxReleases": {
+      "amd64": {
+        "target": "x86_64-unknown-linux-gnu",
+        "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz",
+        "archiveMember": "caddy",
+        "checksum": {
+          "algorithm": "sha512",
+          "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_checksums.txt",
+          "value": "a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7"
+        },
+        "executableSha256": "678ade3bfc088749c81a681adc603333ee0bb023b6a6cfe3c0f58bef8ff854e9"
+      },
+      "arm64": {
+        "target": "aarch64-unknown-linux-gnu",
+        "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_arm64.tar.gz",
+        "archiveMember": "caddy",
+        "checksum": {
+          "algorithm": "sha512",
+          "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_checksums.txt",
+          "value": "3db36ba90c7a6e8dda40ee3dd71fa08844c76b5fb08f61b31e5e78d2ed38e71c51dc7baed875e50d1ca1279196e84302967237386ae87c91ae9f2aaceada682e"
+        },
+        "executableSha256": "0019d864a2cdee41c3675cb2a26185833c5d9540a48f5a6729142c0413461b60"
+      }
+    }
   }
 }

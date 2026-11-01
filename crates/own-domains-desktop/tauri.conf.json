@@ -48,7 +48,9 @@
       "../../sidecars/build/x86_64-apple-darwin/caddy-x86_64-apple-darwin": "caddy-x86_64-apple-darwin",
       "../../sidecars/build/aarch64-apple-darwin/manifest.json": "sidecars/manifest-aarch64-apple-darwin.json",
       "../../sidecars/build/x86_64-apple-darwin/manifest.json": "sidecars/manifest-x86_64-apple-darwin.json",
-      "../../sidecars/build/x86_64-pc-windows-msvc": "sidecars/x86_64-pc-windows-msvc"
+      "../../sidecars/build/x86_64-pc-windows-msvc": "sidecars/x86_64-pc-windows-msvc",
+      "../../sidecars/build/x86_64-unknown-linux-gnu": "sidecars/x86_64-unknown-linux-gnu",
+      "../../sidecars/build/aarch64-unknown-linux-gnu": "sidecars/aarch64-unknown-linux-gnu"
     },
     "macOS": {
       "minimumSystemVersion": "15.0"
