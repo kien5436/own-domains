@@ -15,8 +15,9 @@ pub use crate::platform::{
 
 pub use super::{SidecarManifest, SidecarSpec};
 pub(crate) use crate::platform::unix::command::MAX_COMMAND_BYTES;
-pub use crate::platform::unix::command::{
-    CommandRunner, HostCommand, HostCommandOutput, SystemCommandRunner,
+pub use crate::platform::unix::{
+    command::{CommandRunner, HostCommand, HostCommandOutput, SystemCommandRunner},
+    files::{HostFileKind, HostFileMetadata, HostFileSystem, SystemHostFileSystem},
 };
 pub use crate::probe::{
     CaddyAdmin, CaddyAdminClient, DnsReadinessProbe, HttpReadinessProbe, ReadinessProbe,
@@ -27,10 +28,9 @@ pub use config::{
     SystemConfigurationValidator,
 };
 pub use host::{
-    HostArtifact, HostFileKind, HostFileMetadata, HostFileSystem, HostInstallManifest,
-    HostIntegrationInspector, HostSetupError, HostSetupPlan, MacOsSetupOptions, ManifestArtifact,
-    NetworkInterface, SystemHostFileSystem, build_host_setup_plan, discover_network_interfaces,
-    validate_host_setup_plan,
+    HostArtifact, HostInstallManifest, HostIntegrationInspector, HostSetupError, HostSetupPlan,
+    MacOsSetupOptions, ManifestArtifact, NetworkInterface, build_host_setup_plan,
+    discover_network_interfaces, validate_host_setup_plan,
 };
 pub(crate) use host::{
     InstalledHostManifest, parse_host_install_manifest, validate_installed_manifest,
