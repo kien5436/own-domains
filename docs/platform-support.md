@@ -6,8 +6,8 @@ Own Domains has one native runtime backend today: macOS. A platform is not suppo
 | --- | --- | --- |
 | Apple silicon macOS 15+ | Implemented; first beta | Passed 2026-10-22: ad-hoc-signed arm64 app and CLI, automated runner, GUI checks, and one physical-phone pass |
 | Intel macOS 15+ | Buildable; runtime not acceptance-tested | Not required |
-| Ubuntu 24+ | Support target; returns `runtimeUnavailable` | Separate design, implementation plan, and acceptance required |
-| Windows 10/11 | Support target; IPC and runtime are not implemented | Separate design, implementation plan, and acceptance required |
+| Ubuntu 24+ | Milestone 1 done: artifacts render byte-exact, backend skeleton with manifest gate; full runtime pending (Milestone 2) | Recorded in `docs/linux-acceptance.md` |
+| Windows 10/11 | Implemented; beta.3 unsigned NSIS installer (x64; ARM64 runs the x64 build emulated) | Recorded in `docs/windows-acceptance.md` |
 
 ## Host integration boundary
 
@@ -32,4 +32,10 @@ Intel macOS is buildable with `pnpm run desktop:build:x86_64`. It is not accepta
 
 ## Ubuntu and Windows
 
-Ubuntu 24+ and Windows 10/11 are implementation targets, not current runtime support. Linux and Windows return `runtimeUnavailable`; Windows IPC is also unimplemented. Each platform needs a separate architecture design, implementation plan, and acceptance record before this matrix can claim runtime support.
+Windows 10/11 is supported as of beta.3 (see `docs/windows-acceptance.md`).
+Ubuntu 24+ has Milestone 1 done — artifact rendering and the backend
+skeleton with manifest gating (see `docs/linux-acceptance.md`) — while the
+full runtime backend is still Milestone 2, at which point `apply` stops
+reporting `runtimeUnavailable`. Each platform keeps its own architecture
+design, implementation plan, and acceptance record before this matrix
+claims runtime support.
