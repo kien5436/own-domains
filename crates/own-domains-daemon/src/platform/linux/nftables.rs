@@ -22,9 +22,10 @@ pub fn render_nftables<N: AsRef<str>>(
     let covered = validate_covered_interfaces(interfaces)?;
 
     let mut ruleset = String::new();
-    ruleset.push_str(&format!(
-        "destroy table {NFTABLES_TABLE}\n\ntable {NFTABLES_TABLE} {{\n"
-    ));
+    // No `destroy table` here: the file must load cleanly on a fresh boot
+    // (no table exists yet) and on re-apply. Replacement is handled by a
+    // best-effort `delete` before each load, in the unit and in setup.
+    ruleset.push_str(&format!("table {NFTABLES_TABLE} {{\n"));
     ruleset.push_str(
         "  chain prerouting {\n    type nat hook prerouting priority -110; policy accept;\n",
     );

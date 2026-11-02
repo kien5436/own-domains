@@ -24,6 +24,7 @@ pub fn render_nftables_unit() -> String {
         "ProtectKernelTunables=yes\n",
         "ProtectControlGroups=yes\n",
         "CapabilityBoundingSet=CAP_NET_ADMIN\n",
+        "ExecStart=-/usr/sbin/nft delete table ip own_domains\n",
         "ExecStart=/usr/sbin/nft -f /etc/own-domains/nftables.conf\n",
         "ExecStop=-/usr/sbin/nft delete table ip own_domains\n",
         "\n",

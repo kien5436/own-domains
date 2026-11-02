@@ -14,13 +14,13 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+#[cfg(target_os = "macos")]
+use tauri::menu::{MenuBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{
     Emitter, Manager,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-#[cfg(target_os = "macos")]
-use tauri::menu::{MenuBuilder, PredefinedMenuItem, SubmenuBuilder};
 
 // Runtime startup applies CoreDNS and Caddy configuration, which can take
 // longer than the default IPC timeout on a cold start.

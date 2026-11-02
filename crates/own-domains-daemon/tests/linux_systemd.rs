@@ -46,6 +46,7 @@ fn nftables_unit_is_byte_exact() {
     for line in [
         "After=network-pre.target nftables.service",
         "Before=network.target",
+        "ExecStart=-/usr/sbin/nft delete table ip own_domains",
         "ExecStart=/usr/sbin/nft -f /etc/own-domains/nftables.conf",
         "ExecStop=-/usr/sbin/nft delete table ip own_domains",
     ] {

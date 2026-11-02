@@ -14,6 +14,7 @@ ProtectSystem=full
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 CapabilityBoundingSet=CAP_NET_ADMIN
+ExecStart=-/usr/sbin/nft delete table ip own_domains
 ExecStart=/usr/sbin/nft -f /etc/own-domains/nftables.conf
 ExecStop=-/usr/sbin/nft delete table ip own_domains
 

@@ -1,5 +1,3 @@
-destroy table ip own_domains
-
 table ip own_domains {
   chain prerouting {
     type nat hook prerouting priority -110; policy accept;

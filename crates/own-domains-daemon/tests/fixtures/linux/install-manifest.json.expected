@@ -12,7 +12,7 @@
   "artifacts": [
     {
       "path": "/etc/own-domains/nftables.conf",
-      "sha256": "46e92a9662dc960c57e56bfce2314c9e2eed1705542383e8ec04c138d6c32e25",
+      "sha256": "febe63c4bb761c1b0fb206b1608f29f6b8ee9112f54c830e954018f900e01e87",
       "mode": 420,
       "ownerId": 0,
       "groupId": 0,
@@ -20,7 +20,7 @@
     },
     {
       "path": "/etc/systemd/system/own-domains-nftables.service",
-      "sha256": "0cdec45ba7d8bf8b1b199a1ab9470c2516aac1885f4cd3f73588c78c1c229a7b",
+      "sha256": "747081f9aa2ec8decce4d78a17e69437d4911c30fad86f30b7d359ad1661f979",
       "mode": 420,
       "ownerId": 0,
       "groupId": 0,

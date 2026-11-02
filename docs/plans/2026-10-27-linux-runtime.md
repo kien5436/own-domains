@@ -250,8 +250,6 @@ Steps:
    1000, the fixture is exactly:
 
    ```nft
-   destroy table ip own_domains
-
    table ip own_domains {
      chain prerouting {
        type nat hook prerouting priority -110; policy accept;
@@ -310,6 +308,9 @@ Steps:
    a single trailing newline, and assert exact equality. Assert the nftables
    unit has
    `After=network-pre.target nftables.service`, `Before=network.target`,
+   a tolerant `ExecStart=-/usr/sbin/nft delete table ip own_domains`
+   ahead of the load (the file itself carries no `destroy` so a fresh
+   boot loads cleanly),
    `ExecStart=/usr/sbin/nft -f /etc/own-domains/nftables.conf`, and
    `ExecStop=-/usr/sbin/nft delete table ip own_domains`. Assert the resolver
    unit has `After=systemd-resolved.service`, `PartOf=systemd-resolved.service`,
