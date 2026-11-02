@@ -150,7 +150,7 @@ fn privileged_setup_identity_requires_root_and_a_valid_sudo_target() {
     );
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 #[test]
 fn setup_and_uninstall_report_unsupported_platform_before_host_changes() {
     let setup = execute(

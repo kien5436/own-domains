@@ -18,7 +18,7 @@ import { gunzipSync, inflateRawSync } from 'node:zlib';
 
 export type Architecture = 'arm64' | 'amd64';
 
-export type SidecarPlatform = 'darwin' | 'windows';
+export type SidecarPlatform = 'darwin' | 'windows' | 'linux';
 
 export type SidecarName = 'coredns' | 'caddy';
 
