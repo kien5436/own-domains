@@ -163,6 +163,7 @@ pub struct LinuxLiveBackend<'a> {
     state_dir: PathBuf,
     paths: LinuxPaths,
     adapters: LinuxAdapters<'a>,
+    inspector: Option<super::inspector::LinuxHostInspector>,
     state: Mutex<BackendState>,
     children: Mutex<Vec<Box<dyn BackendChild>>>,
 }
@@ -178,12 +179,21 @@ impl<'a> LinuxLiveBackend<'a> {
             state_dir,
             paths,
             adapters,
+            inspector: None,
             state: Mutex::new(BackendState {
                 running: false,
                 applied_revision: 0,
             }),
             children: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Attach the host inspector run by `diagnose` after the manifest
+    /// gate passes. The factory wires the real one; tests substitute
+    /// fakes or omit it.
+    pub fn with_inspector(mut self, inspector: super::inspector::LinuxHostInspector) -> Self {
+        self.inspector = Some(inspector);
+        self
     }
 
     fn write_text(&self, name: &str, contents: &str) -> Result<PathBuf, RuntimeError> {
@@ -384,10 +394,9 @@ impl crate::RuntimeBackend for LinuxLiveBackend<'_> {
         )
     }
 
-    fn diagnose(&self, _settings: &Settings) -> Result<Vec<Diagnostic>, RuntimeError> {
-        // Manifest gate only (mirrors the skeleton): sidecar presence
-        // surfaces via apply errors, and the healthy-manifest test pins an
-        // empty vec.
+    fn diagnose(&self, settings: &Settings) -> Result<Vec<Diagnostic>, RuntimeError> {
+        // Manifest gate first (mirrors the skeleton): without a valid
+        // manifest there is nothing to inspect against.
         let path = self.manifest_path();
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
@@ -402,7 +411,10 @@ impl crate::RuntimeBackend for LinuxLiveBackend<'_> {
             }
         };
         match parse_linux_manifest(&bytes) {
-            Ok(_) => Ok(Vec::new()),
+            Ok(_) => Ok(match &self.inspector {
+                Some(inspector) => inspector.inspect(settings),
+                None => Vec::new(),
+            }),
             Err(error) => Ok(vec![setup_manifest_invalid(error.to_string())]),
         }
     }
@@ -616,6 +628,12 @@ pub fn runtime_backend(
         sidecars,
     )?;
     let admin = CaddyAdminClient::new(paths.admin_socket.clone())?;
+    let inspector = super::inspector::LinuxHostInspector::new(
+        Box::new(super::super::windows::setup::SystemCommandRunner),
+        state_dir.to_path_buf(),
+        paths.coredns_exe.clone(),
+        paths.caddy_exe.clone(),
+    );
     let backend = LinuxLiveBackend::with_adapters(
         paths,
         LinuxAdapters {
@@ -624,6 +642,7 @@ pub fn runtime_backend(
             caddy: Box::leak(Box::new(admin)),
             setup: Box::leak(Box::new(SystemSetup::new())),
         },
-    );
+    )
+    .with_inspector(inspector);
     Ok(std::sync::Arc::new(backend))
 }

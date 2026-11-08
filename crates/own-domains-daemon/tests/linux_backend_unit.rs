@@ -411,3 +411,99 @@ fn factory_reports_setup_required_without_manifest() {
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, "setupRequired");
 }
+
+#[test]
+fn live_diagnose_runs_inspector_after_healthy_manifest() {
+    use own_domains_daemon::platform::linux::inspector::LinuxHostInspector;
+
+    let base = tmp_dir("diagnose-inspect");
+    let sidecars = base.join("sidecars");
+    std::fs::create_dir_all(&sidecars).unwrap();
+    let state = base.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    // Minimal valid manifest; no artifacts exist under the default `/`.
+    use own_domains_daemon::platform::linux::manifest::LinuxArtifactContent;
+    use own_domains_daemon::platform::linux::manifest::LinuxArtifactKind;
+    let contents = [
+        (
+            "/etc/own-domains/nftables.conf",
+            LinuxArtifactKind::Nftables,
+        ),
+        (
+            "/etc/systemd/system/own-domains-nftables.service",
+            LinuxArtifactKind::SystemdUnit,
+        ),
+        (
+            "/etc/systemd/system/own-domains-resolver.service",
+            LinuxArtifactKind::SystemdUnit,
+        ),
+        (
+            "/usr/local/share/ca-certificates/own-domains.crt",
+            LinuxArtifactKind::TrustCertificate,
+        ),
+    ];
+    let buffers: Vec<Vec<u8>> = contents
+        .iter()
+        .map(|(path, _)| format!("placeholder for {path}").into_bytes())
+        .collect();
+    let artifact_contents: Vec<LinuxArtifactContent<'_>> = contents
+        .iter()
+        .zip(buffers.iter())
+        .map(|((path, kind), bytes)| LinuxArtifactContent {
+            path,
+            kind: *kind,
+            content: bytes,
+        })
+        .collect();
+    let manifest = own_domains_daemon::platform::linux::manifest::build_linux_manifest(
+        "testuser",
+        1000,
+        &["enp3s0"],
+        own_domains_daemon::platform::SidecarManifest {
+            schema_version: 1,
+            coredns: own_domains_daemon::platform::SidecarSpec {
+                version: "1.14.7".into(),
+                sha256: "aa".repeat(32),
+            },
+            caddy: own_domains_daemon::platform::SidecarSpec {
+                version: "2.11.7".into(),
+                sha256: "bb".repeat(32),
+            },
+        },
+        &"cc".repeat(32),
+        &artifact_contents,
+    );
+    let text =
+        own_domains_daemon::platform::linux::manifest::render_linux_manifest(&manifest).unwrap();
+    std::fs::write(state.join("install-manifest.json"), text).unwrap();
+
+    let paths = resolve_paths(&state, &base, &base.join("exe"), None, Some(sidecars)).unwrap();
+    let fakes = fakes(false);
+    let backend = LinuxLiveBackend::with_adapters(
+        paths,
+        LinuxAdapters {
+            process_host: &fakes.host,
+            readiness: &fakes.readiness,
+            caddy: &fakes.admin,
+            setup: &fakes.setup,
+        },
+    )
+    .with_inspector(LinuxHostInspector::new(
+        Box::new(own_domains_daemon::platform::windows::setup::SystemCommandRunner),
+        state.clone(),
+        state.join("coredns"),
+        state.join("caddy"),
+    ));
+
+    // Manifest is healthy, so the gate passes and the inspector runs:
+    // nothing is installed under the real `/` in this test env.
+    let diagnostics = backend
+        .diagnose(&own_domains_core::Settings::default())
+        .unwrap();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "artifactMissing"),
+        "{diagnostics:?}"
+    );
+}
