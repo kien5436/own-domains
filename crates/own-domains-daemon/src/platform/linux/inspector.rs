@@ -554,7 +554,10 @@ impl LinuxHostInspector {
                     ));
                 }
             }
-            match self.systemctl(&["is-enabled", name]) {
+            // `show` prints the state word and exits 0 regardless of
+            // state; `is-enabled`/`is-active` exit non-zero with empty
+            // output when the answer is negative, losing the state.
+            match self.systemctl(&["show", "-p", "UnitFileState", "--value", name]) {
                 Ok(output) if output.trim() == "enabled" => {}
                 Ok(output) => {
                     diagnostics.push(Self::error(
@@ -569,7 +572,7 @@ impl LinuxHostInspector {
                     ));
                 }
             }
-            match self.systemctl(&["is-active", name]) {
+            match self.systemctl(&["show", "-p", "ActiveState", "--value", name]) {
                 Ok(output) if output.trim() == "active" => {}
                 Ok(output) => {
                     diagnostics.push(Self::error(
@@ -625,8 +628,16 @@ impl LinuxHostInspector {
                 }
             }
             Err(error) => {
+                // Stopping the unit deletes the table, so a missing
+                // table is an expected state with its own code — not an
+                // unreadable one.
+                let missing = error.contains("No such file or directory");
                 diagnostics.push(Self::error(
-                    "nftablesUnreadable",
+                    if missing {
+                        "nftablesTableMissing"
+                    } else {
+                        "nftablesUnreadable"
+                    },
                     format!("unable to list nft table ip own_domains: {error}"),
                 ));
             }

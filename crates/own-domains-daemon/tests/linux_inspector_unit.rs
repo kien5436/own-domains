@@ -96,10 +96,10 @@ impl CommandRunner for FakeRunner {
             return Ok("SHA256 Fingerprint=3F:6E:6C:C2:51:61:13:8D:90:67:FF:AD:9E:9E:AA:F5:7B:BB:82:FB:A3:CF:83:C4:EC:37:EF:A9:6C:F3:18:BA\n".into());
         }
         if program.ends_with("systemctl") {
-            if args.first().is_some_and(|arg| *arg == "is-enabled") {
+            if args.contains(&"UnitFileState") {
                 return Ok("enabled\n".into());
             }
-            if args.first().is_some_and(|arg| *arg == "is-active") {
+            if args.contains(&"ActiveState") {
                 return Ok("active\n".into());
             }
             return Ok(String::new());
@@ -353,10 +353,10 @@ fn systemctl_output(
     let active = active.to_string();
     move |program: &str, args: &[String]| {
         if program.ends_with("systemctl") {
-            if args.first().is_some_and(|arg| *arg == "is-enabled") {
+            if args.contains(&"UnitFileState".to_string()) {
                 return Ok(enabled.clone());
             }
-            if args.first().is_some_and(|arg| *arg == "is-active") {
+            if args.contains(&"ActiveState".to_string()) {
                 return Ok(active.clone());
             }
             return Ok(String::new());
@@ -463,10 +463,10 @@ fn resolved_output(
             return Ok("SHA256 Fingerprint=3F:6E:6C:C2:51:61:13:8D:90:67:FF:AD:9E:9E:AA:F5:7B:BB:82:FB:A3:CF:83:C4:EC:37:EF:A9:6C:F3:18:BA\n".into());
         }
         if program.ends_with("systemctl") {
-            if args.first().is_some_and(|arg| *arg == "is-enabled") {
+            if args.contains(&"UnitFileState".to_string()) {
                 return Ok("enabled\n".into());
             }
-            if args.first().is_some_and(|arg| *arg == "is-active") {
+            if args.contains(&"ActiveState".to_string()) {
                 return Ok("active\n".into());
             }
             return Ok(String::new());
@@ -782,10 +782,10 @@ fn network_responder(
             return Ok("SHA256 Fingerprint=3F:6E:6C:C2:51:61:13:8D:90:67:FF:AD:9E:9E:AA:F5:7B:BB:82:FB:A3:CF:83:C4:EC:37:EF:A9:6C:F3:18:BA\n".into());
         }
         if program.ends_with("systemctl") {
-            if args.first().is_some_and(|arg| *arg == "is-enabled") {
+            if args.contains(&"UnitFileState".to_string()) {
                 return Ok("enabled\n".into());
             }
-            if args.first().is_some_and(|arg| *arg == "is-active") {
+            if args.contains(&"ActiveState".to_string()) {
                 return Ok("active\n".into());
             }
             return Ok(String::new());
@@ -853,5 +853,56 @@ fn wildcard_listener_conflicts_but_stub_does_not() {
             .iter()
             .all(|diagnostic| !diagnostic.message.contains(":53")),
         "resolved stub must be ignored: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn stopped_unit_reports_inactive_not_unknown() {
+    // Real `systemctl show` exits 0 with the state word even for a
+    // stopped unit (unlike `is-active`, which exits non-zero with empty
+    // stderr and loses the state).
+    let tree = healthy_tree();
+    tree.runner
+        .set_responder(systemctl_output("enabled\n", "inactive\n"));
+    let diagnostics = inspector(&tree).inspect(&settings());
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "unitInactive"
+                && diagnostic.message.contains("own-domains-nftables")),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "unitUnknown"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn deleted_table_reports_missing_not_unreadable() {
+    // Stopping the unit deletes the table, so `nft list` fails with
+    // "No such file or directory" — that is a missing table, not an
+    // unreadable one.
+    let tree = healthy_tree();
+    tree.runner.set_responder(|program, _args| {
+        if program.ends_with("nft") {
+            return Err("/usr/sbin/nft failed: Error: No such file or directory\nlist table ip own_domains\n              ^^^^^^^^^^^".into());
+        }
+        Ok(String::new())
+    });
+    let diagnostics = inspector(&tree).inspect(&settings());
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "nftablesTableMissing"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "nftablesUnreadable"),
+        "{diagnostics:?}"
     );
 }
