@@ -4,13 +4,48 @@ This installs the Tauri desktop app (bundled daemon, CLI, and sidecars),
 then runs privileged host setup once. Greenfield installs only; reinstalls
 and upgrades are not covered yet.
 
-## 1. Install the `.deb`
+## 1. Build and install the `.deb`
 
-Build from the repo (see Task 4 of `docs/plans/2026-11-08-linux-deb.md`
-for the exact build commands), then:
+All commands run from the repo root on the Ubuntu VM (`feat/linux-deb`):
 
 ```sh
-sudo dpkg -i own-domains_0.1.0-beta.3_amd64.deb
+# System deps for Tauri v2 (record the exact set that works on 24.04):
+sudo apt update && sudo apt install -y \
+  build-essential curl wget file libssl-dev \
+  libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+  libwebkit2gtk-4.1-dev
+
+pnpm install
+cargo build --release -p own-domains-daemon -p own-domains-cli
+
+# Stage ALL FIVE sidecar targets. tauri.conf.json lists darwin, Windows,
+# and Linux resources unconditionally, and the Tauri build script fails
+# when any entry is missing ("resource path ... doesn't exist").
+# Fetching is download-only; non-host archives are never executed.
+pnpm run sidecars:fetch                  # darwin (both archs)
+pnpm run sidecars:fetch -- --platform windows
+pnpm run sidecars:fetch -- --platform linux
+
+If GitHub release downloads fail with 5xx (CDN outage — reproducible
+from multiple networks, not a repo bug), skip downloading: copy the
+already-verified `sidecars/build/<triple>/` trees from any machine that
+has them (same bytes, same pinned digests) and verify offline instead:
+
+```sh
+# on the source machine, for each missing triple:
+scp -r sidecars/build/<triple> <user>@<vm>:~/own-domains/sidecars/build/
+# on the VM (add --platform windows|linux to cover each):
+pnpm run sidecars:fetch -- --verify-only
+```
+
+pnpm run desktop:build:linux
+ls crates/own-domains-desktop/target/release/bundle/deb/
+```
+
+Then install:
+
+```sh
+sudo dpkg -i crates/own-domains-desktop/target/release/bundle/deb/own-domains_0.1.0-beta.3_amd64.deb
 sudo apt-get install -f   # only if dpkg reports missing dependencies
 ```
 

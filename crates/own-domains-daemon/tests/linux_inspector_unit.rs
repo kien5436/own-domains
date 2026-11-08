@@ -1074,3 +1074,60 @@ fn clean_global_block_is_silent() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn nft_permission_denied_is_unverifiable_not_unreadable() {
+    let tree = healthy_tree();
+    tree.runner.set_responder(|program, args| {
+        if program.ends_with("nft") {
+            return Err("/usr/sbin/nft failed: Error: Operation not permitted (you must be root)\nlist table ip own_domains\n              ^^^^^^^^^^^".into());
+        }
+        if program.ends_with("systemctl") {
+            if args.contains(&"UnitFileState".to_string()) {
+                return Ok("enabled\n".into());
+            }
+            if args.contains(&"ActiveState".to_string()) {
+                return Ok("active\n".into());
+            }
+            return Ok(String::new());
+        }
+        if program.ends_with("ip") && args.contains(&"-j".to_string()) {
+            if args.contains(&"link".to_string()) {
+                return Ok(fixture("ip-link.json"));
+            }
+            return Ok(fixture("ip-addr.json"));
+        }
+        if program.ends_with("ss") {
+            return Ok(String::new());
+        }
+        if program.ends_with("resolvectl") {
+            if args.get(1).map(String::as_str) == Some("own-domains0") {
+                return Ok("Link 4 (own-domains0): 127.0.0.1:5354\nLink 4 (own-domains0): ~own\nLink 4 (own-domains0): no\n".into());
+            }
+            return Ok(String::new());
+        }
+        if program.ends_with("coredns-test") {
+            return Ok("CoreDNS-1.14.7\n".into());
+        }
+        if program.ends_with("caddy-test") {
+            return Ok("v2.11.7\n".into());
+        }
+        if program.ends_with("openssl") {
+            return Ok("SHA256 Fingerprint=3F:6E:6C:C2:51:61:13:8D:90:67:FF:AD:9E:9E:AA:F5:7B:BB:82:FB:A3:CF:83:C4:EC:37:EF:A9:6C:F3:18:BA\n".into());
+        }
+        Ok(String::new())
+    });
+    let diagnostics = inspector(&tree).inspect(&settings());
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic.code
+            == "nftablesUnverifiable"
+            && diagnostic.status == own_domains_core::DiagnosticStatus::Warning),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "nftablesUnreadable"),
+        "{diagnostics:?}"
+    );
+}

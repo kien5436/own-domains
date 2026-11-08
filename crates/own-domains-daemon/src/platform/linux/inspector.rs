@@ -15,12 +15,12 @@ use super::super::windows::setup::CommandRunner;
 use super::firewall::{
     firewalld_remedy, missing_port_rules, parse_firewalld_ports, parse_ufw_status, ufw_remedy,
 };
-use super::ip::{LinuxInterface, discover_covered_interfaces};
+use super::ip::{discover_covered_interfaces, LinuxInterface};
 use super::manifest::RESOLVER_LINK;
-use super::manifest::{LinuxInstallManifest, parse_linux_manifest};
-use super::nftables::{NFTABLES_TABLE, render_nftables};
+use super::manifest::{parse_linux_manifest, LinuxInstallManifest};
+use super::nftables::{render_nftables, NFTABLES_TABLE};
 use super::systemd::{
-    NFTABLES_UNIT_NAME, RESOLVER_UNIT_NAME, render_nftables_unit, render_resolver_unit,
+    render_nftables_unit, render_resolver_unit, NFTABLES_UNIT_NAME, RESOLVER_UNIT_NAME,
 };
 use super::trust::{certificate_der, certificate_sha256};
 
@@ -739,16 +739,31 @@ impl LinuxHostInspector {
             Err(error) => {
                 // Stopping the unit deletes the table, so a missing
                 // table is an expected state with its own code — not an
-                // unreadable one.
+                // unreadable one. Likewise, an unprivileged caller cannot
+                // read the table at all: report that as unverifiable
+                // (warning), never as a failure.
                 let missing = error.contains("No such file or directory");
-                diagnostics.push(Self::error(
-                    if missing {
-                        "nftablesTableMissing"
-                    } else {
-                        "nftablesUnreadable"
-                    },
-                    format!("unable to list nft table ip own_domains: {error}"),
-                ));
+                let denied = error.contains("Operation not permitted")
+                    || error.contains("Permission denied");
+                if denied {
+                    let mut diagnostic = Self::error(
+                        "nftablesUnverifiable",
+                        format!(
+                            "unable to list nft table ip own_domains without privilege: {error}"
+                        ),
+                    );
+                    diagnostic.status = DiagnosticStatus::Warning;
+                    diagnostics.push(diagnostic);
+                } else {
+                    diagnostics.push(Self::error(
+                        if missing {
+                            "nftablesTableMissing"
+                        } else {
+                            "nftablesUnreadable"
+                        },
+                        format!("unable to list nft table ip own_domains: {error}"),
+                    ));
+                }
             }
         }
     }
