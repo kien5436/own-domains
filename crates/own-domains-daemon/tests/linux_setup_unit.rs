@@ -225,7 +225,7 @@ fn responding_harness(
     .unwrap();
     let installer = LinuxHostInstaller::with_parts(Box::new(Handle(runner.clone())), Some(caddy))
         .with_system_root(root.clone())
-        .with_target_uid(1000)
+        .with_target_uid(test_target_uid())
         .with_target_user_name("testuser")
         .with_required_binaries(Vec::new());
     #[cfg(unix)]
@@ -239,15 +239,38 @@ fn responding_harness(
 /// Responder serving the checked-in `ip` fixtures plus success for
 /// everything else. Mirrors the guest layout the design targets:
 /// root (`id -u` → 0), state owned by uid 1000 (`stat` → 1000).
+/// Effective UID of the test process (`id -u` is POSIX and present
+/// wherever these tests run). The fake `id` responder above claims root,
+/// but file ownership is real, so the harness targets the real user.
+#[cfg(unix)]
+fn test_target_uid() -> u32 {
+    String::from_utf8_lossy(
+        &std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .expect("test requires `id -u`")
+            .stdout,
+    )
+    .trim()
+    .parse()
+    .expect("test requires numeric `id -u` output")
+}
+
+#[cfg(not(unix))]
+fn test_target_uid() -> u32 {
+    1000
+}
+
 fn fixture_responder() -> impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static {
     let link = fixture("ip-link.json");
     let addr = fixture("ip-addr.json");
+    let uid = test_target_uid().to_string();
     move |program: &str, args: &[String]| {
         if program == "id" {
             return Ok("0\n".into());
         }
         if program.ends_with("stat") {
-            return Ok("1000\n".into());
+            return Ok(format!("{uid}\n"));
         }
         if program.ends_with("ip") && args.contains(&"-j".to_string()) {
             if args.contains(&"link".to_string()) {
@@ -706,7 +729,7 @@ fn drifted_ip_responder() -> impl Fn(&str, &[String]) -> Result<String, String> 
             return Ok("0\n".into());
         }
         if program.ends_with("stat") {
-            return Ok("1000\n".into());
+            return Ok(format!("{}\n", test_target_uid()));
         }
         if program.ends_with("ip") && args.contains(&"-j".to_string()) {
             if args.contains(&"link".to_string()) {
@@ -761,7 +784,7 @@ fn reapply_with_new_interface_backs_up_and_updates() {
     let installer2 =
         LinuxHostInstaller::with_parts(Box::new(Handle2(runner2.clone())), Some(caddy))
             .with_system_root(root.clone())
-            .with_target_uid(1000)
+            .with_target_uid(test_target_uid())
             .with_target_user_name("testuser")
             .with_required_binaries(Vec::new());
 
@@ -810,7 +833,7 @@ fn rollback_reports_unresolved_items_and_keeps_nothing_half_written() {
                 return Ok("0\n".into());
             }
             if program.ends_with("stat") {
-                return Ok("1000\n".into());
+                return Ok(format!("{}\n", test_target_uid()));
             }
             if program.ends_with("systemctl")
                 && args.first().is_some_and(|arg| arg == "daemon-reload")
@@ -856,7 +879,7 @@ fn rollback_reports_unresolved_items_and_keeps_nothing_half_written() {
     }
     let installer = LinuxHostInstaller::with_parts(Box::new(Handle3(runner.clone())), Some(caddy))
         .with_system_root(root.clone())
-        .with_target_uid(1000)
+        .with_target_uid(test_target_uid())
         .with_target_user_name("testuser")
         .with_required_binaries(Vec::new());
     #[cfg(unix)]

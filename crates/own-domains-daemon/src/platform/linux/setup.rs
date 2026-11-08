@@ -308,6 +308,84 @@ impl LinuxHostInstaller {
         Ok(())
     }
 
+    /// Own everything under the state directory by the target user.
+    /// Setup runs as root, so files it creates (settings, manifest,
+    /// receipts, Caddy state) would otherwise stay root-owned and lock
+    /// the target user — and the GUI/CLI runtime — out with EACCES
+    /// (settings.json unreadable, Caddy state unwritable). Sensitive
+    /// JSON files are tightened to owner-only as well (0600); the Caddy
+    /// key material already is.
+    ///
+    /// Files already owned by the target are left alone, so repeated
+    /// applies only touch what drifted.
+    #[cfg(unix)]
+    fn own_state_tree(&self, state: &Path, user_id: u32) -> Result<(), SetupFailure> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let mut stack = vec![state.to_path_buf()];
+        while let Some(path) = stack.pop() {
+            let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+                self.failure(
+                    "unable to stat the state directory",
+                    format!("{}: {error}", path.display()),
+                )
+            })?;
+            // Never follow symlinks out of the state directory.
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                let entries = std::fs::read_dir(&path).map_err(|error| {
+                    self.failure(
+                        "unable to read the state directory",
+                        format!("{}: {error}", path.display()),
+                    )
+                })?;
+                for entry in entries {
+                    let entry = entry.map_err(|error| {
+                        self.failure(
+                            "unable to read the state directory",
+                            format!("{}: {error}", path.display()),
+                        )
+                    })?;
+                    stack.push(entry.path());
+                }
+            }
+            if metadata.uid() != user_id {
+                std::os::unix::fs::chown(&path, Some(user_id), None).map_err(|error| {
+                    self.failure(
+                        "unable to hand the state directory to the target user",
+                        format!("{}: {error}", path.display()),
+                    )
+                })?;
+            }
+        }
+        std::fs::set_permissions(state, PermissionsExt::from_mode(0o700)).map_err(|error| {
+            self.failure(
+                "unable to tighten the state directory",
+                format!("{}: {error}", state.display()),
+            )
+        })?;
+        for name in ["settings.json", INSTALL_MANIFEST_FILE] {
+            let file = state.join(name);
+            if file.is_file() {
+                std::fs::set_permissions(&file, PermissionsExt::from_mode(0o600)).map_err(
+                    |error| {
+                        self.failure(
+                            "unable to tighten user-owned files",
+                            format!("{}: {error}", file.display()),
+                        )
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn own_state_tree(&self, _state: &Path, _user_id: u32) -> Result<(), SetupFailure> {
+        Ok(())
+    }
+
     /// Every fixed executable must exist before any mutation.
     fn check_binaries(&self) -> Result<(), SetupFailure> {
         let required: Vec<String> = self.required_binaries.clone().unwrap_or_else(|| {
@@ -855,6 +933,10 @@ impl HostInstaller for LinuxHostInstaller {
         // Receipts make a persist failure retry-safe: re-running apply
         // skips the host mutations as unchanged and retries the write.
         self.persist_lan_address(&request.state_directory, &request.lan_address)?;
+        // Every apply ends target-owned: without this, files created by
+        // the root setup would lock the target user (and the GUI/CLI
+        // runtime) out with EACCES.
+        self.own_state_tree(&request.state_directory, user_id)?;
         Ok(SetupApplyResult {
             written,
             unchanged,
@@ -1374,5 +1456,126 @@ impl LinuxHostInstaller {
             self.runner.run(UPDATE_CA_BIN, &[])?;
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod state_ownership_tests {
+    use super::*;
+
+    fn tmp_state(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "od-linux-own-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn current_uid() -> u32 {
+        // `id -u` is POSIX and present everywhere these tests run.
+        String::from_utf8_lossy(
+            &std::process::Command::new("id")
+                .arg("-u")
+                .output()
+                .expect("test requires `id -u`")
+                .stdout,
+        )
+        .trim()
+        .parse()
+        .expect("test requires numeric `id -u` output")
+    }
+
+    fn owner_of(path: &Path) -> u32 {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path).unwrap().uid()
+    }
+
+    fn installer() -> LinuxHostInstaller {
+        LinuxHostInstaller::with_parts(
+            Box::new(crate::platform::windows::setup::SystemCommandRunner),
+            None,
+        )
+    }
+
+    #[test]
+    fn own_state_tree_hands_everything_to_the_target_user() {
+        let state = tmp_state("own");
+        let nested = state.join("applied");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(state.join("settings.json"), b"{}").unwrap();
+        std::fs::write(nested.join("nftables.json"), b"{}").unwrap();
+
+        installer().own_state_tree(&state, current_uid()).unwrap();
+
+        // Files and directories end up owned by the target user.
+        assert_eq!(owner_of(&state), current_uid());
+        assert_eq!(owner_of(&nested), current_uid());
+        assert_eq!(owner_of(&state.join("settings.json")), current_uid());
+        assert_eq!(owner_of(&nested.join("nftables.json")), current_uid());
+        // The state dir is tightened and the JSON files are owner-only.
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&state).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(state.join("settings.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn own_state_tree_refuses_unowned_uid_without_privilege() {
+        // 60000 owns nothing here. Without the privilege to chown, this
+        // must fail loudly (silence would recreate the EACCES lockout);
+        // with privilege (test suite running as root) it must succeed
+        // and the files must actually change owner.
+        let state = tmp_state("foreign");
+        std::fs::write(state.join("settings.json"), b"{}").unwrap();
+
+        let result = installer().own_state_tree(&state, 60000);
+        if current_uid() == 0 {
+            result.unwrap();
+            assert_eq!(owner_of(&state.join("settings.json")), 60000);
+        } else {
+            let error = result.unwrap_err();
+            assert!(
+                error
+                    .message
+                    .contains("hand the state directory to the target user"),
+                "unexpected error: {}",
+                error.message
+            );
+            // Nothing was half-repaired: the file keeps its real owner.
+            assert_eq!(owner_of(&state.join("settings.json")), current_uid());
+        }
+    }
+
+    #[test]
+    fn own_state_tree_never_follows_symlinks_out() {
+        let state = tmp_state("link");
+        let outside = tmp_state("outside");
+        let target = outside.join("victim");
+        std::fs::write(&target, b"untouched").unwrap();
+        std::os::unix::fs::symlink(&target, state.join("link")).unwrap();
+
+        installer().own_state_tree(&state, current_uid()).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"untouched");
+        assert!(
+            std::fs::symlink_metadata(state.join("link"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 }
