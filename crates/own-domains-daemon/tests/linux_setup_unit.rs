@@ -317,7 +317,6 @@ fn apply_writes_nftables_and_units_then_second_apply_is_unchanged() {
                 || program.ends_with("systemctl")
                 || program.ends_with("update-ca-certificates")
                 || program.ends_with("chown")
-                || program.ends_with("resolvectl")
                 || program.starts_with("spawn:")
         })
         .collect();
@@ -1079,4 +1078,42 @@ fn no_flush_ruleset_means_no_warning() {
 
     let result = installer.apply_setup(&setup_request(&state)).unwrap();
     assert!(result.warnings.is_empty(), "{result:?}");
+}
+
+#[test]
+fn preflight_rejects_global_own_domain() {
+    let (_runner, installer, _root, state) = responding_harness(|program, args| {
+        if program.ends_with("resolvectl") && args.first().is_some_and(|arg| arg == "status") {
+            return Ok("Global\n       Protocols: LLMNR=resolve\n        DNS Domain: ~own\n\nLink 2 (enp3s0)\n      Current DNS Server: 192.168.1.20\n".into());
+        }
+        fixture_responder()(program, args)
+    });
+
+    let error = installer.apply_setup(&setup_request(&state)).unwrap_err();
+    assert!(
+        error.message.contains("global"),
+        "unexpected error: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("resolved"),
+        "unexpected error: {}",
+        error.message
+    );
+    assert!(
+        !state.join("applied").exists(),
+        "rejected apply must not create receipts"
+    );
+}
+
+#[test]
+fn preflight_accepts_clean_global_block() {
+    let (_runner, installer, _root, state) = responding_harness(|program, args| {
+        if program.ends_with("resolvectl") && args.first().is_some_and(|arg| arg == "status") {
+            return Ok("Global\n       Protocols: LLMNR=resolve\n       DNS Servers: 192.168.1.1\n\nLink 2 (enp3s0)\n      Current DNS Server: 192.168.1.20\n".into());
+        }
+        fixture_responder()(program, args)
+    });
+
+    installer.apply_setup(&setup_request(&state)).unwrap();
 }

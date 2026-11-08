@@ -58,6 +58,20 @@ impl InspectFiles for SystemInspectFiles {
 
 /// Filesystem root for host artifact reads. `None` means the real `/`;
 /// tests point it at a temp dir.
+/// The global block of a `resolvectl status` output: everything before
+/// the first `Link N` section. Boundary-safe on any line ending. Shared
+/// by the inspector and the setup preflight.
+pub(crate) fn global_block(output: &str) -> &str {
+    let mut offset = 0;
+    for line in output.split_inclusive('\n') {
+        if line.trim_start_matches([' ', '\t']).starts_with("Link ") {
+            break;
+        }
+        offset += line.len();
+    }
+    &output[..offset]
+}
+
 pub struct LinuxHostInspector {
     runner: Box<dyn CommandRunner>,
     files: Box<dyn InspectFiles>,
@@ -174,8 +188,24 @@ impl LinuxHostInspector {
         self.inspect_sidecars(&manifest, &mut diagnostics);
         self.inspect_network(&manifest, settings, &mut diagnostics);
         self.inspect_firewall(&mut diagnostics);
+        self.inspect_resolved_global(&mut diagnostics);
         self.inspect_nftables_service(&mut diagnostics);
         diagnostics
+    }
+
+    fn inspect_resolved_global(&self, diagnostics: &mut Vec<Diagnostic>) {
+        let output = match self.resolvectl(&["status"]) {
+            Ok(output) => output,
+            // Unreadable here is already covered by the link checks when
+            // they run; a total `resolvectl` failure surfaces there.
+            Err(_) => return,
+        };
+        if global_block(&output).contains("~own") {
+            diagnostics.push(Self::error(
+                "resolvedDomainConflict",
+                "global resolved configuration claims ~own; the dummy link is shadowed (remove the global Domains=~own and restart systemd-resolved)".into(),
+            ));
+        }
     }
 
     /// Active default-deny firewalls must allow the high ports; an
@@ -591,7 +621,7 @@ impl LinuxHostInspector {
             match self.resolvectl(&["domain", &link]) {
                 Ok(output) if output.contains("~own") => {
                     diagnostics.push(Self::error(
-                        "ownDomainConflict",
+                        "resolvedDomainConflict",
                         format!("{link} also claims ~own; the dummy link is shadowed"),
                     ));
                 }

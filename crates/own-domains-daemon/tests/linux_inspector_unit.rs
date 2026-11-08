@@ -43,6 +43,66 @@ impl FakeRunner {
     }
 }
 
+/// Healthy-guest matrix shared by the default responder and test
+/// overrides: nft table present, units enabled/active, resolved link
+/// healthy with a clean global block, matching sidecars, quiet network.
+fn healthy_probe(program: &str, argv: &[String]) -> Result<String, String> {
+    if program.ends_with("nft") {
+        return Ok(
+            "table ip own_domains {\n\tchain prerouting {\n\t}\n\n\tchain output {\n\t}\n}".into(),
+        );
+    }
+    if program.ends_with("resolvectl") {
+        let subcommand = argv.first().map(String::as_str).unwrap_or("");
+        let link = argv.get(1).map(String::as_str).unwrap_or("");
+        if link == "own-domains0" {
+            return Ok(match subcommand {
+                "dns" => "Link 4 (own-domains0): 127.0.0.1:5354\n",
+                "domain" => "Link 4 (own-domains0): ~own\n",
+                "default-route" => "Link 4 (own-domains0): no\n",
+                "dnssec" => "Link 4 (own-domains0): no\n",
+                "dnsovertls" => "Link 4 (own-domains0): no\n",
+                _ => "",
+            }
+            .into());
+        }
+        return Ok(String::new());
+    }
+    if program.ends_with("coredns-test") {
+        return Ok("CoreDNS-1.14.7\n".into());
+    }
+    if program.ends_with("caddy-test") {
+        return Ok("v2.11.7\n".into());
+    }
+    if program.ends_with("ip") && argv.contains(&"-j".to_string()) {
+        if argv.contains(&"link".to_string()) {
+            return Ok(fixture("ip-link.json"));
+        }
+        if argv.contains(&"addr".to_string()) {
+            return Ok(fixture("ip-addr.json"));
+        }
+    }
+    if program.ends_with("ss") {
+        return Ok(String::new());
+    }
+    if program.ends_with("openssl") {
+        return Ok("SHA256 Fingerprint=3F:6E:6C:C2:51:61:13:8D:90:67:FF:AD:9E:9E:AA:F5:7B:BB:82:FB:A3:CF:83:C4:EC:37:EF:A9:6C:F3:18:BA\n".into());
+    }
+    if program.ends_with("systemctl") {
+        if argv.contains(&"UnitFileState".to_string()) {
+            return Ok("enabled\n".into());
+        }
+        if argv.contains(&"ActiveState".to_string()) {
+            return Ok("active\n".into());
+        }
+        return Ok(String::new());
+    }
+    if program.ends_with("resolvectl") && argv.first().is_some_and(|arg| arg == "status") {
+        return Ok("Global\n       Protocols: LLMNR=resolve\nCurrent DNS Server: 192.168.1.1\n       DNS Servers: 192.168.1.1\n\nLink 2 (enp3s0)\n      Current DNS Server: 192.168.1.1\n       DNS Servers: 192.168.1.1\n".into());
+    }
+    Ok(String::new())
+}
+
 impl CommandRunner for FakeRunner {
     fn run(&self, program: &str, args: &[&str]) -> Result<String, String> {
         let argv: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
@@ -53,58 +113,7 @@ impl CommandRunner for FakeRunner {
         if let Some(respond) = self.respond.lock().unwrap().as_ref() {
             return respond(program, &argv);
         }
-        if program.ends_with("nft") {
-            return Ok(
-                "table ip own_domains {\n\tchain prerouting {\n\t}\n\n\tchain output {\n\t}\n}"
-                    .into(),
-            );
-        }
-        if program.ends_with("resolvectl") {
-            let subcommand = args.first().copied().unwrap_or("");
-            let link = args.get(1).copied().unwrap_or("");
-            if link == "own-domains0" {
-                return Ok(match subcommand {
-                    "dns" => "Link 4 (own-domains0): 127.0.0.1:5354\n",
-                    "domain" => "Link 4 (own-domains0): ~own\n",
-                    "default-route" => "Link 4 (own-domains0): no\n",
-                    "dnssec" => "Link 4 (own-domains0): no\n",
-                    "dnsovertls" => "Link 4 (own-domains0): no\n",
-                    _ => "",
-                }
-                .into());
-            }
-            return Ok(String::new());
-        }
-        if program.ends_with("coredns-test") {
-            return Ok("CoreDNS-1.14.7\n".into());
-        }
-        if program.ends_with("caddy-test") {
-            return Ok("v2.11.7\n".into());
-        }
-        if program.ends_with("ip") && args.contains(&"-j") {
-            if args.contains(&"link") {
-                return Ok(fixture("ip-link.json"));
-            }
-            if args.contains(&"addr") {
-                return Ok(fixture("ip-addr.json"));
-            }
-        }
-        if program.ends_with("ss") {
-            return Ok(String::new());
-        }
-        if program.ends_with("openssl") {
-            return Ok("SHA256 Fingerprint=3F:6E:6C:C2:51:61:13:8D:90:67:FF:AD:9E:9E:AA:F5:7B:BB:82:FB:A3:CF:83:C4:EC:37:EF:A9:6C:F3:18:BA\n".into());
-        }
-        if program.ends_with("systemctl") {
-            if args.contains(&"UnitFileState") {
-                return Ok("enabled\n".into());
-            }
-            if args.contains(&"ActiveState") {
-                return Ok("active\n".into());
-            }
-            return Ok(String::new());
-        }
-        Ok(String::new())
+        healthy_probe(program, &argv)
     }
 
     fn spawn(&self, _program: &str, _args: &[&str]) -> Result<Box<dyn RunningProcess>, String> {
@@ -590,7 +599,7 @@ fn competing_own_claim_is_reported() {
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "ownDomainConflict"
+            .any(|diagnostic| diagnostic.code == "resolvedDomainConflict"
                 && diagnostic.message.contains("enp3s0")),
         "{diagnostics:?}"
     );
@@ -1013,6 +1022,55 @@ fn flush_ruleset_reports_service_conflict_warning() {
             .iter()
             .any(|diagnostic| diagnostic.code == "nftablesServiceConflict"
                 && diagnostic.status == own_domains_core::DiagnosticStatus::Warning),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn global_own_claim_is_reported() {
+    let tree = healthy_tree();
+    tree.runner.set_responder(|program, args| {
+        if program.ends_with("resolvectl") {
+            if args.first().is_some_and(|arg| *arg == "status") {
+                return Ok("Global\n       Protocols: LLMNR=resolve\nCurrent DNS Server: 192.168.1.1\n       DNS Servers: 192.168.1.1\n        DNS Domain: ~own\n\nLink 2 (enp3s0)\n      Current DNS Server: 192.168.1.1\n       DNS Servers: 192.168.1.1\n".into());
+            }
+            if args.get(1).map(String::as_str) == Some("own-domains0") {
+                return Ok("Link 4 (own-domains0): 127.0.0.1:5354\nLink 4 (own-domains0): ~own\nLink 4 (own-domains0): no\n".into());
+            }
+            return Ok(String::new());
+        }
+        healthy_probe(program, args)
+    });
+    let diagnostics = inspector(&tree).inspect(&settings());
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "resolvedDomainConflict"
+                && diagnostic.message.contains("global")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn clean_global_block_is_silent() {
+    let tree = healthy_tree();
+    tree.runner.set_responder(|program, args| {
+        if program.ends_with("resolvectl") {
+            if args.first().is_some_and(|arg| *arg == "status") {
+                return Ok("Global\n       Protocols: LLMNR=resolve\nCurrent DNS Server: 192.168.1.1\n       DNS Servers: 192.168.1.1\n\nLink 2 (enp3s0)\n      Current DNS Server: 192.168.1.1\n       DNS Servers: 192.168.1.1\n".into());
+            }
+            if args.get(1).map(String::as_str) == Some("own-domains0") {
+                return Ok("Link 4 (own-domains0): 127.0.0.1:5354\nLink 4 (own-domains0): ~own\nLink 4 (own-domains0): no\n".into());
+            }
+            return Ok(String::new());
+        }
+        healthy_probe(program, args)
+    });
+    let diagnostics = inspector(&tree).inspect(&settings());
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "resolvedDomainConflict"),
         "{diagnostics:?}"
     );
 }

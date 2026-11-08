@@ -15,6 +15,7 @@ use super::super::{
 use super::firewall::{
     firewalld_remedy, missing_port_rules, parse_firewalld_ports, parse_ufw_status, ufw_remedy,
 };
+use super::inspector::global_block;
 use super::interfaces::is_eligible_interface_name;
 use super::manifest::LinuxArtifactContent;
 use super::manifest::{build_linux_manifest, render_linux_manifest};
@@ -285,6 +286,26 @@ impl LinuxHostInstaller {
         Ok(Some(format!(
             "nftablesServiceConflict: {UNIT} is enabled and {PATH} contains `flush ruleset`; reloading it deletes the Own Domains table (not modified by setup)"
         )))
+    }
+
+    /// A global `Domains=~own` setting shadows the dummy link the same
+    /// way a conflicting link does: every `.own` name would go to the
+    /// global DNS instead of CoreDNS. Refuses with the exact fix; setup
+    /// never edits resolved configuration.
+    fn check_resolved_global(&self) -> Result<(), SetupFailure> {
+        let output = match self.runner.run("/usr/bin/resolvectl", &["status"]) {
+            Ok(output) => output,
+            Err(error) => {
+                return Err(self.failure("unable to read resolved status", error));
+            }
+        };
+        if global_block(&output).contains("~own") {
+            return Err(self.failure(
+                "global resolved configuration claims ~own; the dummy link would be shadowed",
+                "remove the global Domains=~own setting (resolved.conf or a drop-in), run systemctl restart systemd-resolved, then rerun setup".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Every fixed executable must exist before any mutation.
@@ -739,6 +760,7 @@ impl HostInstaller for LinuxHostInstaller {
         self.check_binaries()?;
         self.check_ufw()?;
         self.check_firewalld()?;
+        self.check_resolved_global()?;
         let discovered = self.covered_interfaces()?;
         self.validate_selection(&discovered, request)?;
         let interfaces: Vec<String> = discovered.into_iter().map(|item| item.name).collect();
