@@ -18,6 +18,7 @@ impl HostInstaller for FakeInstaller {
             written: Vec::new(),
             unchanged: Vec::new(),
             backups: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 
@@ -35,6 +36,7 @@ impl HostInstaller for FakeInstaller {
             written: Vec::new(),
             unchanged: Vec::new(),
             backups: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 }

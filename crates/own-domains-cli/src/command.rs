@@ -208,6 +208,12 @@ fn render_apply(result: &SetupApplyResult) -> String {
                 .iter()
                 .map(|path| format!("unchanged {}", path.display())),
         )
+        .chain(
+            result
+                .warnings
+                .iter()
+                .map(|warning| format!("warning {warning}")),
+        )
         .collect::<Vec<_>>()
         .join("\n")
         + "\n"
@@ -658,6 +664,36 @@ mod tests {
         assert_eq!(
             output.stderr,
             "host setup failed; unresolved: /etc/pf.conf\n"
+        );
+    }
+
+    #[test]
+    fn render_apply_lists_warnings_after_files() {
+        let result = SetupApplyResult {
+            written: vec![PathBuf::from("/etc/own-domains/nftables.conf")],
+            unchanged: vec![PathBuf::from("/etc/own-domains/resolver.service")],
+            backups: vec![],
+            warnings: vec![
+                "nftablesServiceConflict: unit file orders after nftables.service".into(),
+            ],
+        };
+        assert_eq!(
+            render_apply(&result),
+            "written /etc/own-domains/nftables.conf\nunchanged /etc/own-domains/resolver.service\nwarning nftablesServiceConflict: unit file orders after nftables.service\n"
+        );
+    }
+
+    #[test]
+    fn render_apply_without_warnings_is_unchanged() {
+        let result = SetupApplyResult {
+            written: vec![],
+            unchanged: vec![PathBuf::from("/etc/own-domains/nftables.conf")],
+            backups: vec![],
+            warnings: vec![],
+        };
+        assert_eq!(
+            render_apply(&result),
+            "unchanged /etc/own-domains/nftables.conf\n"
         );
     }
 }

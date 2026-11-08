@@ -906,3 +906,113 @@ fn deleted_table_reports_missing_not_unreadable() {
         "{diagnostics:?}"
     );
 }
+
+fn firewall_responder(
+    ufw: Result<&str, &str>,
+    firewalld_state: Result<&str, &str>,
+) -> impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static {
+    let ufw = ufw.map(str::to_string).map_err(str::to_string);
+    let firewalld_state = firewalld_state.map(str::to_string).map_err(str::to_string);
+    move |program: &str, args: &[String]| {
+        if program.ends_with("ufw") {
+            return ufw.clone();
+        }
+        if program.ends_with("firewall-cmd") {
+            if args.contains(&"--state".to_string()) {
+                return firewalld_state.clone();
+            }
+            return Ok("public\n".into());
+        }
+        Ok(String::new())
+    }
+}
+
+#[test]
+fn blocked_ufw_ports_are_reported() {
+    let tree = healthy_tree();
+    tree.runner.set_responder(|program, args| {
+        firewall_responder(
+            Ok("Status: active\n\nTo Action From\n5354/tcp ALLOW Anywhere\n\nDefault: deny (incoming), allow (outgoing)\n"),
+            Err("not running"),
+        )(program, args)
+    });
+    let diagnostics = inspector(&tree).inspect(&settings());
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "firewallBlocked"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn unreadable_firewall_is_a_warning() {
+    let tree = healthy_tree();
+    tree.runner.set_responder(|program, args| {
+        firewall_responder(
+            Err("ufw: command not found"),
+            Err("firewall-cmd: command not found"),
+        )(program, args)
+    });
+    let diagnostics = inspector(&tree).inspect(&settings());
+    let found: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "firewallUnverifiable")
+        .collect();
+    assert_eq!(found.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics.iter().all(|diagnostic| diagnostic.status
+            == own_domains_core::DiagnosticStatus::Warning
+            || diagnostic.code != "firewallUnverifiable"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn flush_ruleset_reports_service_conflict_warning() {
+    let tree = healthy_tree();
+    let inspector = LinuxHostInspector::with_parts(
+        Box::new(Handle(tree.runner.clone())),
+        tree.root.clone(),
+        tree.state.clone(),
+    )
+    .with_files(Box::new(FakeFiles))
+    .with_sidecars(tree.coredns_exe.clone(), tree.caddy_exe.clone());
+    std::fs::create_dir_all(tree.root.join("etc")).unwrap();
+    std::fs::write(
+        tree.root.join("etc/nftables.conf"),
+        "flush ruleset\ntable ip filter {}\n",
+    )
+    .unwrap();
+    tree.runner.set_responder(|program, args| {
+        if program.ends_with("systemctl") {
+            if args.contains(&"UnitFileState".to_string()) {
+                return Ok("enabled\n".into());
+            }
+            if args.contains(&"ActiveState".to_string()) {
+                return Ok("active\n".into());
+            }
+            return Ok(String::new());
+        }
+        if program.ends_with("ip") && args.contains(&"-j".to_string()) {
+            if args.contains(&"link".to_string()) {
+                return Ok(fixture("ip-link.json"));
+            }
+            if args.contains(&"addr".to_string()) {
+                return Ok(fixture("ip-addr.json"));
+            }
+        }
+        Ok(String::new())
+    });
+
+    // NOTE: this blanket responder shadows the healthy defaults (nft table
+    // listing, openssl, sidecar versions), so only the warning is asserted.
+    let diagnostics = inspector.inspect(&settings());
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "nftablesServiceConflict"
+                && diagnostic.status == own_domains_core::DiagnosticStatus::Warning),
+        "{diagnostics:?}"
+    );
+}

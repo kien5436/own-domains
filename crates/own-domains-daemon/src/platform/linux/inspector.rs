@@ -12,6 +12,9 @@ use own_domains_core::{Diagnostic, DiagnosticStatus, Settings};
 use sha2::Digest;
 
 use super::super::windows::setup::CommandRunner;
+use super::firewall::{
+    firewalld_remedy, missing_port_rules, parse_firewalld_ports, parse_ufw_status, ufw_remedy,
+};
 use super::ip::{LinuxInterface, discover_covered_interfaces};
 use super::manifest::RESOLVER_LINK;
 use super::manifest::{LinuxInstallManifest, parse_linux_manifest};
@@ -170,7 +173,83 @@ impl LinuxHostInspector {
         self.inspect_trust(&manifest, &mut diagnostics);
         self.inspect_sidecars(&manifest, &mut diagnostics);
         self.inspect_network(&manifest, settings, &mut diagnostics);
+        self.inspect_firewall(&mut diagnostics);
+        self.inspect_nftables_service(&mut diagnostics);
         diagnostics
+    }
+
+    /// Active default-deny firewalls must allow the high ports; an
+    /// unreadable firewall warns instead of claiming safety. Nothing
+    /// installed at all stays silent.
+    fn inspect_firewall(&self, diagnostics: &mut Vec<Diagnostic>) {
+        let mut readable = false;
+        let mut unreadable = false;
+        match self.runner.run("/usr/sbin/ufw", &["status"]) {
+            Ok(output) => {
+                readable = true;
+                let policy = parse_ufw_status(&output);
+                if policy.enforced {
+                    let missing = missing_port_rules(&policy.allowed);
+                    if !missing.is_empty() {
+                        diagnostics.push(Self::error(
+                            "firewallBlocked",
+                            format!(
+                                "UFW blocks the runtime ports; run:\n{}",
+                                ufw_remedy(&missing)
+                            ),
+                        ));
+                    }
+                }
+            }
+            Err(error) => {
+                if !error.contains("No such file or directory") {
+                    unreadable = true;
+                }
+            }
+        }
+        match self.runner.run("/usr/bin/firewall-cmd", &["--state"]) {
+            Ok(output) if output.trim() == "running" => {
+                readable = true;
+                let zone = self
+                    .runner
+                    .run("/usr/bin/firewall-cmd", &["--get-default-zone"])
+                    .map(|output| output.trim().to_string())
+                    .unwrap_or_default();
+                let zone_arg = format!("--zone={zone}");
+                let allowed = parse_firewalld_ports(
+                    &self
+                        .runner
+                        .run("/usr/bin/firewall-cmd", &[&zone_arg, "--list-ports"])
+                        .unwrap_or_default(),
+                );
+                let missing = missing_port_rules(&allowed);
+                if !missing.is_empty() {
+                    diagnostics.push(Self::error(
+                        "firewallBlocked",
+                        format!(
+                            "firewalld blocks the runtime ports; run:\n{}",
+                            firewalld_remedy(&zone, &missing)
+                        ),
+                    ));
+                }
+            }
+            Ok(_) => {
+                readable = true;
+            }
+            Err(error) => {
+                if !error.contains("No such file or directory") {
+                    unreadable = true;
+                }
+            }
+        }
+        if !readable && unreadable {
+            let mut diagnostic = Self::error(
+                "firewallUnverifiable",
+                "unable to read UFW or firewalld state; verify the high ports (5354, 8080, 8443) are allowed".into(),
+            );
+            diagnostic.status = DiagnosticStatus::Warning;
+            diagnostics.push(diagnostic);
+        }
     }
 
     fn inspect_network(
@@ -706,5 +785,39 @@ impl LinuxHostInspector {
                 }
             }
         }
+    }
+}
+
+impl LinuxHostInspector {
+    /// Warn when the distribution `nftables.service` is enabled and its
+    /// file contains `flush ruleset`: a later `systemctl reload nftables`
+    /// deletes the Own Domains table. Never edits anything.
+    fn inspect_nftables_service(&self, diagnostics: &mut Vec<Diagnostic>) {
+        const PATH: &str = "/etc/nftables.conf";
+        const UNIT: &str = "nftables.service";
+        let contents = match self.files.read(&self.host_path(PATH)) {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            // Not ours to manage: missing or unreadable here is not a
+            // finding (unlike owned artifacts checked elsewhere).
+            Err(_) => return,
+        };
+        if !contents.contains("flush ruleset") {
+            return;
+        }
+        let enabled = self
+            .systemctl(&["show", "-p", "UnitFileState", "--value", UNIT])
+            .map(|output| output.trim() == "enabled")
+            .unwrap_or(false);
+        if !enabled {
+            return;
+        }
+        let mut diagnostic = Self::error(
+            "nftablesServiceConflict",
+            format!(
+                "{UNIT} is enabled and {PATH} contains `flush ruleset`; reloading it deletes the Own Domains table"
+            ),
+        );
+        diagnostic.status = DiagnosticStatus::Warning;
+        diagnostics.push(diagnostic);
     }
 }

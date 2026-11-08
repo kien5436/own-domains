@@ -7,6 +7,7 @@
 pub mod backend;
 mod config;
 mod error;
+pub mod firewall;
 pub mod inspector;
 pub mod interfaces;
 pub mod ip;

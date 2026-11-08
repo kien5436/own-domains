@@ -893,3 +893,190 @@ fn rollback_reports_unresolved_items_and_keeps_nothing_half_written() {
         );
     }
 }
+
+fn ufw_responder(
+    status_output: &str,
+) -> impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static {
+    let status_output = status_output.to_string();
+    move |program: &str, args: &[String]| {
+        if program.ends_with("ufw") {
+            return Ok(status_output.clone());
+        }
+        fixture_responder()(program, args)
+    }
+}
+
+const UFW_ACTIVE_DENY_MISSING_UDP: &str = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n5354/tcp                   ALLOW       Anywhere\n8080/tcp                   ALLOW       Anywhere\n8443/tcp                   ALLOW       Anywhere\n\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n";
+
+const UFW_ACTIVE_DENY_COMPLETE: &str = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n5354/tcp                   ALLOW       Anywhere\n5354/udp                   ALLOW       Anywhere\n8080/tcp                   ALLOW       Anywhere\n8443/tcp                   ALLOW       Anywhere\n\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n";
+
+#[test]
+fn preflight_rejects_active_ufw_with_missing_high_port() {
+    let (_runner, installer, _root, state) =
+        responding_harness(ufw_responder(UFW_ACTIVE_DENY_MISSING_UDP));
+
+    let error = installer.apply_setup(&setup_request(&state)).unwrap_err();
+    assert!(
+        error.message.contains("ufw"),
+        "unexpected error: {}",
+        error.message
+    );
+    // Only the gap is reported; already-allowed ports are not repeated.
+    assert!(
+        error.message.contains("sudo ufw allow 5354/udp"),
+        "missing remedy: {}",
+        error.message
+    );
+    for allowed in [
+        "sudo ufw allow 5354/tcp",
+        "sudo ufw allow 8080/tcp",
+        "sudo ufw allow 8443/tcp",
+    ] {
+        assert!(
+            !error.message.contains(allowed),
+            "already-allowed {allowed} must not be repeated: {}",
+            error.message
+        );
+    }
+    assert!(
+        !state.join("applied").exists(),
+        "rejected apply must not create receipts"
+    );
+}
+
+#[test]
+fn preflight_accepts_allowed_ufw() {
+    let (_runner, installer, _root, state) =
+        responding_harness(ufw_responder(UFW_ACTIVE_DENY_COMPLETE));
+
+    installer.apply_setup(&setup_request(&state)).unwrap();
+}
+
+#[test]
+fn preflight_accepts_inactive_ufw() {
+    let (_runner, installer, _root, state) =
+        responding_harness(ufw_responder("Status: inactive\n"));
+    installer.apply_setup(&setup_request(&state)).unwrap();
+}
+
+#[test]
+fn preflight_accepts_missing_ufw() {
+    let (_runner, installer, _root, state) = responding_harness(|program, args| {
+        if program.ends_with("ufw") {
+            return Err("ufw: command not found".into());
+        }
+        fixture_responder()(program, args)
+    });
+
+    installer.apply_setup(&setup_request(&state)).unwrap();
+}
+
+fn firewalld_responder(
+    state: &str,
+    zone: &str,
+    ports: &str,
+) -> impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static {
+    let state = state.to_string();
+    let zone = zone.to_string();
+    let ports = ports.to_string();
+    move |program: &str, args: &[String]| {
+        if program.ends_with("firewall-cmd") {
+            if args.contains(&"--state".to_string()) {
+                return Ok(state.clone());
+            }
+            if args.contains(&"--get-default-zone".to_string()) {
+                return Ok(zone.clone());
+            }
+            if args.contains(&"--list-ports".to_string()) {
+                return Ok(ports.clone());
+            }
+            return Ok(String::new());
+        }
+        fixture_responder()(program, args)
+    }
+}
+
+#[test]
+fn preflight_rejects_firewalld_with_missing_high_port() {
+    let (_runner, installer, _root, state) = responding_harness(firewalld_responder(
+        "running\n",
+        "public\n",
+        "8080/tcp 8443/tcp\n",
+    ));
+
+    let error = installer.apply_setup(&setup_request(&state)).unwrap_err();
+    assert!(
+        error.message.contains("firewalld") || error.message.contains("firewall-cmd"),
+        "unexpected error: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("--add-port=5354/tcp"),
+        "missing remedy: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("--reload"),
+        "missing reload step: {}",
+        error.message
+    );
+    assert!(
+        !state.join("applied").exists(),
+        "rejected apply must not create receipts"
+    );
+}
+
+#[test]
+fn preflight_accepts_allowed_firewalld() {
+    let (_runner, installer, _root, state) = responding_harness(firewalld_responder(
+        "running\n",
+        "public\n",
+        "5354/tcp 5354/udp 8080/tcp 8443/tcp\n",
+    ));
+
+    installer.apply_setup(&setup_request(&state)).unwrap();
+}
+
+#[test]
+fn preflight_accepts_stopped_firewalld() {
+    let (_runner, installer, _root, state) =
+        responding_harness(firewalld_responder("not running\n", "public\n", "\n"));
+
+    installer.apply_setup(&setup_request(&state)).unwrap();
+}
+
+#[test]
+fn flush_ruleset_unit_reports_warning_not_failure() {
+    let (_runner, installer, root, state) = responding_harness(|program, args| {
+        if program.ends_with("systemctl")
+            && args.contains(&"UnitFileState".to_string())
+            && args.iter().any(|arg| arg == "nftables.service")
+        {
+            return Ok("enabled\n".into());
+        }
+        fixture_responder()(program, args)
+    });
+    std::fs::create_dir_all(root.join("etc")).unwrap();
+    std::fs::write(
+        root.join("etc/nftables.conf"),
+        "flush ruleset\ntable ip filter {}\n",
+    )
+    .unwrap();
+
+    let result = installer.apply_setup(&setup_request(&state)).unwrap();
+    assert_eq!(result.written.len(), 4, "{result:?}");
+    assert_eq!(result.warnings.len(), 1, "{result:?}");
+    assert!(
+        result.warnings[0].contains("nftablesServiceConflict"),
+        "{:?}",
+        result.warnings
+    );
+}
+
+#[test]
+fn no_flush_ruleset_means_no_warning() {
+    let (_runner, installer, _root, state) = responding_harness(fixture_responder());
+
+    let result = installer.apply_setup(&setup_request(&state)).unwrap();
+    assert!(result.warnings.is_empty(), "{result:?}");
+}

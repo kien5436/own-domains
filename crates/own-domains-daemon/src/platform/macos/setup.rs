@@ -62,6 +62,7 @@ pub fn apply_setup(
         written: vec![],
         unchanged: vec![],
         backups: vec![],
+        warnings: vec![],
     };
     let operation = (|| -> Result<(), String> {
         for item in planned {
@@ -153,6 +154,7 @@ pub fn apply_uninstall(
         written: vec![],
         unchanged: vec![],
         backups: vec![],
+        warnings: vec![],
     };
     if host
         .inspect_file(&paths.ca_certificate)

@@ -35,6 +35,9 @@ pub struct SetupApplyResult {
     pub written: Vec<PathBuf>,
     pub unchanged: Vec<PathBuf>,
     pub backups: Vec<PathBuf>,
+    /// Non-blocking advisories (e.g. nftablesServiceConflict). Warnings
+    /// never fail the apply; the CLI renders them after the file lines.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -12,6 +12,9 @@ use super::super::{
     HostInstaller, SetupAction, SetupApplyResult, SetupFailure, SetupPreview, SetupRequest,
     UninstallRequest,
 };
+use super::firewall::{
+    firewalld_remedy, missing_port_rules, parse_firewalld_ports, parse_ufw_status, ufw_remedy,
+};
 use super::interfaces::is_eligible_interface_name;
 use super::manifest::LinuxArtifactContent;
 use super::manifest::{build_linux_manifest, render_linux_manifest};
@@ -26,7 +29,9 @@ pub const RESOLVER_UNIT_PATH: &str = "/etc/systemd/system/own-domains-resolver.s
 pub const TRUST_CERT_PATH: &str = "/usr/local/share/ca-certificates/own-domains.crt";
 pub const INSTALL_MANIFEST_FILE: &str = "install-manifest.json";
 
+const FIREWALL_CMD_BIN: &str = "/usr/bin/firewall-cmd";
 const IP_BIN: &str = "/usr/sbin/ip";
+const UFW_BIN: &str = "/usr/sbin/ufw";
 const NFT_BIN: &str = "/usr/sbin/nft";
 const SYSTEMCTL_BIN: &str = "/usr/bin/systemctl";
 const UPDATE_CA_BIN: &str = "/usr/sbin/update-ca-certificates";
@@ -188,6 +193,98 @@ impl LinuxHostInstaller {
             ));
         }
         Ok(())
+    }
+
+    /// UFW with a default-deny incoming policy must explicitly allow the
+    /// runtime's high ports. Inactive or absent UFW passes silently; this
+    /// check never mutates firewall state.
+    fn check_ufw(&self) -> Result<(), SetupFailure> {
+        let output = match self.runner.run(UFW_BIN, &["status"]) {
+            Ok(output) => output,
+            Err(_) => return Ok(()),
+        };
+        let policy = parse_ufw_status(&output);
+        if !policy.enforced {
+            return Ok(());
+        }
+        let missing = missing_port_rules(&policy.allowed);
+        if missing.is_empty() {
+            return Ok(());
+        }
+        Err(self.failure(
+            "UFW is active with a default-deny incoming policy and blocks the runtime ports",
+            ufw_remedy(&missing),
+        ))
+    }
+
+    /// firewalld when running must explicitly allow the runtime's high
+    /// ports in the default zone. Stopped or absent firewalld passes
+    /// silently; this check never mutates firewall state.
+    fn check_firewalld(&self) -> Result<(), SetupFailure> {
+        let running = match self.runner.run(FIREWALL_CMD_BIN, &["--state"]) {
+            Ok(output) => output.trim() == "running",
+            Err(_) => return Ok(()),
+        };
+        if !running {
+            return Ok(());
+        }
+        let zone = self
+            .runner
+            .run(FIREWALL_CMD_BIN, &["--get-default-zone"])
+            .map(|output| output.trim().to_string())
+            .unwrap_or_default();
+        let zone_arg = format!("--zone={zone}");
+        let allowed = parse_firewalld_ports(
+            &self
+                .runner
+                .run(FIREWALL_CMD_BIN, &[&zone_arg, "--list-ports"])
+                .unwrap_or_default(),
+        );
+        let missing = missing_port_rules(&allowed);
+        if missing.is_empty() {
+            return Ok(());
+        }
+        Err(self.failure(
+            "firewalld is running and blocks the runtime ports",
+            firewalld_remedy(&zone, &missing),
+        ))
+    }
+
+    /// Warn (never fail) when the distribution `nftables.service` is
+    /// enabled and its file contains `flush ruleset`: a later
+    /// `systemctl reload nftables` would delete the Own Domains table.
+    /// Setup does not edit `/etc/nftables.conf` or touch the unit.
+    fn check_nftables_service(&self) -> Result<Option<String>, SetupFailure> {
+        const PATH: &str = "/etc/nftables.conf";
+        const UNIT: &str = "nftables.service";
+        let host_path = self.host_path(PATH);
+        let contents = match std::fs::read_to_string(&host_path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(self.failure(
+                    "unable to read the distribution nftables file",
+                    format!("{}: {error}", host_path.display()),
+                ));
+            }
+        };
+        if !contents.contains("flush ruleset") {
+            return Ok(None);
+        }
+        let enabled = self
+            .runner
+            .run(
+                SYSTEMCTL_BIN,
+                &["show", "-p", "UnitFileState", "--value", UNIT],
+            )
+            .map(|output| output.trim() == "enabled")
+            .unwrap_or(false);
+        if !enabled {
+            return Ok(None);
+        }
+        Ok(Some(format!(
+            "nftablesServiceConflict: {UNIT} is enabled and {PATH} contains `flush ruleset`; reloading it deletes the Own Domains table (not modified by setup)"
+        )))
     }
 
     /// Every fixed executable must exist before any mutation.
@@ -640,6 +737,8 @@ impl HostInstaller for LinuxHostInstaller {
         let (user_name, user_id) = self.target_user()?;
         self.check_state_dir(&request.state_directory, user_id)?;
         self.check_binaries()?;
+        self.check_ufw()?;
+        self.check_firewalld()?;
         let discovered = self.covered_interfaces()?;
         self.validate_selection(&discovered, request)?;
         let interfaces: Vec<String> = discovered.into_iter().map(|item| item.name).collect();
@@ -726,6 +825,10 @@ impl HostInstaller for LinuxHostInstaller {
             error.unresolved = self.rollback_journal(&journal);
             return Err(error);
         }
+        let mut warnings = Vec::new();
+        if let Some(warning) = self.check_nftables_service()? {
+            warnings.push(warning);
+        }
         // Record the selected LAN address so a later `start` serves it.
         // Receipts make a persist failure retry-safe: re-running apply
         // skips the host mutations as unchanged and retries the write.
@@ -734,6 +837,7 @@ impl HostInstaller for LinuxHostInstaller {
             written,
             unchanged,
             backups: Vec::new(),
+            warnings,
         })
     }
 
@@ -796,6 +900,7 @@ impl HostInstaller for LinuxHostInstaller {
                     written: Vec::new(),
                     unchanged: Vec::new(),
                     backups: Vec::new(),
+                    warnings: Vec::new(),
                 });
             }
             Err(error) => {
@@ -825,6 +930,7 @@ impl HostInstaller for LinuxHostInstaller {
             written: Vec::new(),
             unchanged: Vec::new(),
             backups: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 }

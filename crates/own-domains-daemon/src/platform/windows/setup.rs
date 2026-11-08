@@ -627,6 +627,7 @@ impl HostInstaller for WindowsHostInstaller {
             written,
             unchanged,
             backups: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 
@@ -662,6 +663,7 @@ impl HostInstaller for WindowsHostInstaller {
             written: Vec::new(),
             unchanged: Vec::new(),
             backups: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 }
