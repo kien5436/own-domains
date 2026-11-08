@@ -24,7 +24,8 @@
     "desktop:build:x86_64": "cargo build --release --target x86_64-apple-darwin -p own-domains-daemon -p own-domains-cli && tsx scripts/stage-desktop.ts --release --target x86_64-apple-darwin && cd crates/own-domains-desktop && pnpm exec tauri build --no-bundle --target x86_64-apple-darwin",
     "desktop:build:windows": "cargo build --release --target x86_64-pc-windows-msvc -p own-domains-daemon -p own-domains-cli && tsx scripts/stage-desktop.ts --release --target x86_64-pc-windows-msvc && cd crates/own-domains-desktop && pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis",
     "release:preflight": "tsx scripts/check-release.ts --preflight",
-    "release:check": "tsx scripts/check-release.ts"
+    "release:check": "tsx scripts/check-release.ts",
+    "desktop:build:linux": "cargo build --release --target x86_64-unknown-linux-gnu -p own-domains-daemon -p own-domains-cli && tsx scripts/stage-desktop.ts --release --target x86_64-unknown-linux-gnu && cd crates/own-domains-desktop && pnpm exec tauri build --target x86_64-unknown-linux-gnu --bundles deb"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.4",

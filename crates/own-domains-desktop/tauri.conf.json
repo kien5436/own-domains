@@ -56,7 +56,11 @@
       "minimumSystemVersion": "15.0"
     },
     "targets": [
-      "app"
-    ]
+      "app",
+      "deb"
+    ],
+    "category": "Utility",
+    "shortDescription": "Local .own domains for development",
+    "longDescription": "Own Domains maps .own hostnames to local services with a private DNS server and an HTTPS proxy."
   }
 }
