@@ -282,3 +282,74 @@ fn live_saved_but_unapplied_mutation_has_distinct_exit_and_output() {
     client.request(Command::Stop).unwrap();
     runner.join().unwrap();
 }
+
+fn fresh_state_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("od-cli-doctor-{tag}-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Stage a minimal sidecar manifest beside the test executable, mirroring
+/// the installed bundle layout (`<exe-dir>/sidecars/manifest.json`,
+/// the factory's fallback name). Without it the platform backend cannot
+/// even construct, on any platform.
+fn stage_test_manifest() {
+    let exe = std::env::current_exe().unwrap();
+    let dir = exe.parent().unwrap().join("sidecars");
+    std::fs::create_dir_all(&dir).unwrap();
+    let digest = "aa".repeat(32);
+    let manifest = format!(
+        "{{\"schemaVersion\":1,\"coredns\":{{\"version\":\"1.14.7\",\"sha256\":\"{digest}\"}},\"caddy\":{{\"version\":\"2.11.7\",\"sha256\":\"{digest}\"}}}}"
+    );
+    std::fs::write(dir.join("manifest.json"), manifest).unwrap();
+}
+
+#[test]
+fn offline_doctor_runs_live_diagnostics() {
+    stage_test_manifest();
+    // No daemon socket under a fresh state dir, so this exercises the
+    // offline path. The stub reports "no active services"; the live
+    // backend must report real diagnostics instead (no manifest here).
+    let state = fresh_state_dir("text");
+    let cli = Cli::try_parse_from([
+        "own-domains",
+        "--state-dir",
+        state.to_str().unwrap(),
+        "doctor",
+    ])
+    .unwrap();
+    let output = execute(cli);
+    assert_eq!(output.exit_code, 0, "stderr: {}", output.stderr);
+    assert!(
+        !output.stdout.contains("no active services"),
+        "offline doctor used the stub: {:?}",
+        output.stdout
+    );
+    assert!(!output.stdout.trim().is_empty(), "empty diagnostics");
+}
+
+#[test]
+fn offline_doctor_json_reports_diagnostics_array() {
+    stage_test_manifest();
+    let state = fresh_state_dir("json");
+    let cli = Cli::try_parse_from([
+        "own-domains",
+        "--state-dir",
+        state.to_str().unwrap(),
+        "--json",
+        "doctor",
+    ])
+    .unwrap();
+    let output = execute(cli);
+    assert_eq!(output.exit_code, 0, "stderr: {}", output.stderr);
+    assert!(
+        !output.stdout.contains("\"diagnostics\":[]"),
+        "offline doctor used the stub: {:?}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.to_lowercase().contains("diagnostic"),
+        "{:?}",
+        output.stdout
+    );
+}

@@ -4,11 +4,15 @@ use crate::privilege::setup_user;
 use clap::{Parser, Subcommand};
 use own_domains_client::{Client, ClientError, LifecycleError, connect_or_launch, stop_and_wait};
 use own_domains_core::{
-    ApplyStatus, DomainService, MappingInput, MappingPatch, SettingsStore, default_state_dir,
+    ApplyStatus, Diagnostic, DomainService, MappingInput, MappingPatch, Settings, SettingsStore,
+    default_state_dir,
 };
 use own_domains_daemon::{
     DaemonState, ProcessLock, UnavailableRuntimeBackend,
-    platform::{SetupApplyResult, SetupFailure, SetupPreview, SetupRequest, UninstallRequest},
+    platform::{
+        SetupApplyResult, SetupFailure, SetupPreview, SetupRequest, UninstallRequest,
+        runtime_backend,
+    },
 };
 use own_domains_protocol::{Command, CommandResult, Endpoint, ProtocolError};
 use std::{
@@ -320,6 +324,21 @@ fn run_live(client: &Client, command: &CliCommand, json: bool) -> CommandOutput 
     }
 }
 
+/// Offline doctor: no daemon is reachable, so run the platform backend's
+/// `diagnose` in-process over the state dir. Mirrors the live
+/// `Command::Doctor` handler, which calls the same backend method.
+fn offline_diagnostics(state_dir: &Path) -> Result<Vec<Diagnostic>, CommandOutput> {
+    let backend = runtime_backend(state_dir, None, None, false).map_err(|error| {
+        CommandOutput::error(4, format!("unable to load the platform backend: {error}"))
+    })?;
+    let settings = SettingsStore::new(state_dir)
+        .load()
+        .unwrap_or_else(|_| Settings::default());
+    backend
+        .diagnose(&settings)
+        .map_err(|error| CommandOutput::error(4, format!("diagnose failed: {error}")))
+}
+
 fn run_offline(
     cli: &Cli,
     state_dir: &Path,
@@ -343,11 +362,10 @@ fn run_offline(
                 Err(error) => CommandOutput::error(4, error),
             }
         }
-        CliCommand::Doctor => CommandOutput::success(if cli.json {
-            "{\"runtimeStatus\":\"stopped\",\"diagnostics\":[]}\n".into()
-        } else {
-            "runtime stopped; no active services\n".into()
-        }),
+        CliCommand::Doctor => match offline_diagnostics(state_dir) {
+            Ok(items) => render(CommandResult::Diagnostics(items), cli.json, None),
+            Err(error) => error,
+        },
         mutation => {
             let _lock = match ProcessLock::acquire(state_dir) {
                 Ok(lock) => lock,
