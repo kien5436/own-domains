@@ -78,13 +78,19 @@ Re-running `--apply` is idempotent: unchanged artifacts report
 
 ```sh
 own-domains status
-own-domains doctor          # expect zero diagnostics on a healthy host
+sudo -E own-domains doctor   # expect zero diagnostics on a healthy host
 ```
 
 `doctor` runs the same diagnostics as the GUI: manifest, nftables table,
 systemd units, resolved link, trust, sidecars, ports, and interface
 coverage. Anything it reports names the fix; warnings (e.g.
 `nftablesServiceConflict`) never block.
+
+Run `doctor` without sudo and you will see `*Unverifiable` warnings
+instead (`nftablesUnverifiable`, `firewallUnverifiable`): the table and
+the firewall policy cannot be read without privilege, so the inspector
+declines to claim they are safe. That is the designed unprivileged
+behavior, not a failure.
 
 ## 4. Uninstall
 
