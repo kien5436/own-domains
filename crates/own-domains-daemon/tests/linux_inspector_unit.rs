@@ -1119,9 +1119,10 @@ fn nft_permission_denied_is_unverifiable_not_unreadable() {
     });
     let diagnostics = inspector(&tree).inspect(&settings());
     assert!(
-        diagnostics.iter().any(|diagnostic| diagnostic.code
-            == "nftablesUnverifiable"
-            && diagnostic.status == own_domains_core::DiagnosticStatus::Warning),
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "nftablesUnverifiable"
+                && diagnostic.status == own_domains_core::DiagnosticStatus::Warning),
         "{diagnostics:?}"
     );
     assert!(

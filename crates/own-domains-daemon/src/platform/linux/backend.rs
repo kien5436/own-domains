@@ -50,13 +50,26 @@ pub fn bundled_target() -> &'static str {
 }
 
 /// Installed-bundle resources root for a daemon executable: the exe
-/// directory itself when it carries a `sidecars/` bundle layout.
+/// directory itself when it carries a `sidecars/` bundle layout. Shared
+/// by the runtime factory and the CLI setup path so both resolve the
+/// same staged sidecars.
+///
+/// Installed Linux packages (Tauri `.deb`) split the layout: binaries
+/// live in `<prefix>/bin` while resources live in
+/// `<prefix>/lib/Own Domains`. Probe that sibling too; the staged-file
+/// check in `resolve_paths` still gates acceptance, so an unrelated
+/// directory can never be mistaken for ours.
 pub fn bundled_resources_dir(exe_dir: &Path) -> Option<PathBuf> {
     if exe_dir.join("sidecars").is_dir() {
-        Some(exe_dir.to_path_buf())
-    } else {
-        None
+        return Some(exe_dir.to_path_buf());
     }
+    if let Some(prefix) = exe_dir.parent() {
+        let candidate = prefix.join("lib").join("Own Domains");
+        if candidate.join("sidecars").is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 pub fn resolve_paths(

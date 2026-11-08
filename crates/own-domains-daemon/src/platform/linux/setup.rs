@@ -943,6 +943,7 @@ impl HostInstaller for LinuxHostInstaller {
                 format!("{}: {error}", manifest_path.display()),
             )
         })?;
+        self.remove_backups_and_empty_dirs()?;
         if request.purge {
             std::fs::remove_dir_all(&request.state_directory).map_err(|error| {
                 self.failure("unable to purge the state directory", error.to_string())
@@ -1077,6 +1078,41 @@ impl LinuxHostInstaller {
             .runner
             .run("/usr/bin/resolvectl", &["revert", "own-domains0"]);
         let _ = self.runner.run(IP_BIN, &["link", "delete", "own-domains0"]);
+        Ok(())
+    }
+
+    /// Remove the root-owned setup backups, then `/etc/own-domains` itself
+    /// when empty. A non-empty directory is left alone: it holds files
+    /// this installation does not own.
+    fn remove_backups_and_empty_dirs(&self) -> Result<(), SetupFailure> {
+        const OWN_DOMAINS_DIR: &str = "/etc/own-domains";
+        const BACKUPS_DIR: &str = "/etc/own-domains/backups";
+        match std::fs::remove_dir_all(self.host_path(BACKUPS_DIR)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(self.failure(
+                    "unable to remove the setup backups",
+                    format!("{}: {error}", self.host_path(BACKUPS_DIR).display()),
+                ));
+            }
+        }
+        let dir = self.host_path(OWN_DOMAINS_DIR);
+        let empty = std::fs::read_dir(&dir)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(true);
+        if empty {
+            match std::fs::remove_dir(&dir) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(self.failure(
+                        "unable to remove the empty host directory",
+                        format!("{}: {error}", dir.display()),
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 

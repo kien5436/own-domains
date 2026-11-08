@@ -507,3 +507,35 @@ fn live_diagnose_runs_inspector_after_healthy_manifest() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn bundled_resources_dir_detects_tauri_installed_layout() {
+    // Installed FHS layout: binaries in <prefix>/bin, resources in
+    // <prefix>/lib/Own Domains (what `dpkg -L own-domains` shows).
+    let base = tmp_dir("installed-layout");
+    let bin = base.join("usr/bin");
+    let resources = base.join("usr/lib").join("Own Domains");
+    let triple = bundled_target();
+    let staged = resources.join("sidecars").join(triple);
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::write(staged.join(format!("coredns-{triple}")), b"fake").unwrap();
+    std::fs::write(staged.join(format!("caddy-{triple}")), b"fake").unwrap();
+
+    assert_eq!(bundled_resources_dir(&bin), Some(resources.clone()));
+
+    // resolve_paths through the installed layout finds triple-infixed names.
+    let paths = resolve_paths(&base.join("state"), &base, &bin, Some(&resources), None).unwrap();
+    assert_eq!(paths.coredns_exe, staged.join(format!("coredns-{triple}")));
+    assert_eq!(paths.caddy_exe, staged.join(format!("caddy-{triple}")));
+}
+
+#[test]
+fn bundled_resources_dir_ignores_lib_without_staged_sidecars() {
+    let base = tmp_dir("installed-no-staged");
+    let bin = base.join("usr/bin");
+    std::fs::create_dir_all(bin.join("../lib").join("Own Domains")).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+
+    assert_eq!(bundled_resources_dir(&bin), None);
+}

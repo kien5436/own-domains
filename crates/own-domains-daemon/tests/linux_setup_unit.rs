@@ -1117,3 +1117,29 @@ fn preflight_accepts_clean_global_block() {
 
     installer.apply_setup(&setup_request(&state)).unwrap();
 }
+
+#[test]
+fn uninstall_removes_backups_and_empty_host_directories() {
+    let (_runner, installer, root, state) = responding_harness(fixture_responder());
+    installer.apply_setup(&setup_request(&state)).unwrap();
+    // Simulate a backup from a drifted re-apply.
+    let backup_dir = root.join("etc/own-domains/backups");
+    std::fs::create_dir_all(&backup_dir).unwrap();
+    std::fs::write(backup_dir.join("nftables.conf.prev"), b"old").unwrap();
+
+    installer
+        .apply_uninstall(&UninstallRequest {
+            state_directory: state.clone(),
+            purge: false,
+        })
+        .unwrap();
+
+    assert!(
+        !backup_dir.exists(),
+        "root-owned backups must be removed by uninstall"
+    );
+    assert!(
+        !root.join("etc/own-domains").exists(),
+        "empty host directory must be removed by uninstall"
+    );
+}

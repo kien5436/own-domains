@@ -15,12 +15,12 @@ use super::super::windows::setup::CommandRunner;
 use super::firewall::{
     firewalld_remedy, missing_port_rules, parse_firewalld_ports, parse_ufw_status, ufw_remedy,
 };
-use super::ip::{discover_covered_interfaces, LinuxInterface};
+use super::ip::{LinuxInterface, discover_covered_interfaces};
 use super::manifest::RESOLVER_LINK;
-use super::manifest::{parse_linux_manifest, LinuxInstallManifest};
-use super::nftables::{render_nftables, NFTABLES_TABLE};
+use super::manifest::{LinuxInstallManifest, parse_linux_manifest};
+use super::nftables::{NFTABLES_TABLE, render_nftables};
 use super::systemd::{
-    render_nftables_unit, render_resolver_unit, NFTABLES_UNIT_NAME, RESOLVER_UNIT_NAME,
+    NFTABLES_UNIT_NAME, RESOLVER_UNIT_NAME, render_nftables_unit, render_resolver_unit,
 };
 use super::trust::{certificate_der, certificate_sha256};
 
