@@ -163,11 +163,17 @@ pub fn execute(cli: Cli) -> CommandOutput {
     };
     // Start waits for sidecar readiness inside the daemon (two bounded
     // probes plus spawn margin); cold boots observed near 30 s, so the
-    // request budget is twice the combined readiness deadlines.
-    let client_timeout = if matches!(cli.command, CliCommand::Start) {
-        Duration::from_secs(120)
-    } else {
-        Duration::from_secs(5)
+    // request budget is twice the combined readiness deadlines. Stop may
+    // wait out two graceful sidecar shutdowns (5 s each) plus the setup
+    // server. Everything else only needs the full inspector sweep to
+    // finish, which spawns ~20 short-lived helpers; 15 s covers slow or
+    // loaded hosts while still failing fast on a wedged daemon (Linux
+    // reports read-timeout expiry as EAGAIN, translated to a proper
+    // timeout error by the client).
+    let client_timeout = match &cli.command {
+        CliCommand::Start => Duration::from_secs(120),
+        CliCommand::Stop => Duration::from_secs(30),
+        _ => Duration::from_secs(15),
     };
     match Client::with_timeout(&endpoint, client_timeout) {
         Ok(client) if matches!(cli.command, CliCommand::Stop) => {

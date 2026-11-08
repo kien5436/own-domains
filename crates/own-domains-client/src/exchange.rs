@@ -28,16 +28,14 @@ pub fn exchange<S: Read + Write>(
     // connection, so its frame must be read byte-precise with no prefetch.
     // Every other command gets a fresh connection per request, where
     // buffering is safe and avoids a syscall per byte on large frames.
-    let line = if subscribed {
-        match read_frame(stream)? {
-            Some(line) => line,
-            None => return Err(unexpected_eof()),
-        }
-    } else {
-        match read_buffered(stream)? {
-            Some(line) => line,
-            None => return Err(unexpected_eof()),
-        }
+    //
+    // Blocking reads on a socket with SO_RCVTIMEO report deadline expiry
+    // as WouldBlock (not TimedOut) on Linux. All client streams carry a
+    // read timeout, so WouldBlock here unambiguously means the daemon was
+    // too slow — report it as a timeout instead of leaking the raw errno.
+    let line = match read_frame_or_buffered(stream, subscribed)? {
+        Some(line) => line,
+        None => return Err(unexpected_eof()),
     };
     let response: ResponseEnvelope = serde_json::from_slice(&line)?;
     if response.protocol_version != PROTOCOL_VERSION {
@@ -70,6 +68,25 @@ fn unexpected_eof() -> ClientError {
         "daemon disconnected mid-frame",
     )
     .into()
+}
+
+fn read_frame_or_buffered<S: Read>(
+    stream: &mut S,
+    subscribed: bool,
+) -> Result<Option<Vec<u8>>, ClientError> {
+    let result = if subscribed {
+        read_frame(stream)
+    } else {
+        read_buffered(stream)
+    };
+    match result {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("daemon did not respond in time ({error})"),
+        )
+        .into()),
+        result => result.map_err(Into::into),
+    }
 }
 
 /// Single-frame read with chunked syscalls. Only for connections that carry
@@ -132,4 +149,52 @@ pub fn parse_event(frame: &[u8]) -> Result<EventEnvelope, ClientError> {
         });
     }
     Ok(event)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stream whose reads always report WouldBlock, as Linux does when a
+    /// `SO_RCVTIMEO` read deadline expires. Writes succeed into a sink.
+    struct WouldBlockStream {
+        written: Vec<u8>,
+    }
+
+    impl Read for WouldBlockStream {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "Resource temporarily unavailable (os error 11)",
+            ))
+        }
+    }
+
+    impl Write for WouldBlockStream {
+        fn write(&mut self, chunk: &[u8]) -> std::io::Result<usize> {
+            self.written.extend_from_slice(chunk);
+            Ok(chunk.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn would_block_read_reports_a_timeout_not_a_raw_os_error() {
+        let mut stream = WouldBlockStream {
+            written: Vec::new(),
+        };
+        let error = exchange(&mut stream, Command::Snapshot).unwrap_err();
+        let message = error.to_string();
+        assert!(
+            !message.contains("IPC error: Resource temporarily unavailable"),
+            "leaked raw WouldBlock as the whole error: {message}"
+        );
+        assert!(
+            message.contains("did not respond in time"),
+            "expected a timeout error, got: {message}"
+        );
+    }
 }
