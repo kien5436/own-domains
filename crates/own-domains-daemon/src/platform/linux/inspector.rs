@@ -470,32 +470,42 @@ impl LinuxHostInspector {
     }
 
     /// Any other link claiming `~own` shadows the dummy link. Link names
-    /// come from `resolvectl link`; the scan is capped so a pathological
+    /// come from `ip -j link` (already a required binary; `resolvectl`
+    /// has no list-links verb); the scan is capped so a pathological
     /// host cannot turn inspection into a fork bomb.
     fn inspect_domain_conflicts(
         &self,
         manifest: &LinuxInstallManifest,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
-        let listing = match self.resolvectl(&["--no-pager", "link"]) {
+        #[derive(serde::Deserialize)]
+        struct LinkName {
+            ifname: String,
+        }
+        let listing = match self.runner.run("/usr/sbin/ip", &["-j", "link"]) {
             Ok(listing) => listing,
             Err(error) => {
                 diagnostics.push(Self::error(
                     "resolverUnreadable",
-                    format!("unable to list resolved links: {error}"),
+                    format!("unable to list links: {error}"),
                 ));
                 return;
             }
         };
-        let mut others: Vec<String> = listing
-            .lines()
-            .skip_while(|line| line.trim_start().starts_with("IDX"))
-            .filter_map(|line| {
-                line.split_whitespace()
-                    .nth(1)
-                    .filter(|name| *name != RESOLVER_LINK)
-                    .map(str::to_string)
-            })
+        let links: Vec<LinkName> = match serde_json::from_str(&listing) {
+            Ok(links) => links,
+            Err(error) => {
+                diagnostics.push(Self::error(
+                    "resolverUnreadable",
+                    format!("unable to parse `ip -j link` output: {error}"),
+                ));
+                return;
+            }
+        };
+        let mut others: Vec<String> = links
+            .into_iter()
+            .map(|link| link.ifname)
+            .filter(|name| name != RESOLVER_LINK)
             .collect();
         others.truncate(manifest.interfaces.len() + 8);
         for link in others {

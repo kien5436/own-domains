@@ -25,8 +25,18 @@ fn healthy_host_reports_no_diagnostics() {
     let settings = SettingsStore::new(&state)
         .load()
         .expect("setup must have persisted settings in the state dir");
-    let backend =
-        runtime_backend(&state, None, None, false).expect("the live Linux backend must construct");
+    // Sidecars resolve from the installed bundle layout
+    // (`<exe-dir>/sidecars/<triple>/`): the test executable lives in
+    // `target/debug/deps/`, so its grandparent is the staging root the
+    // setup instructions populate with the fetched Linux sidecars.
+    let resources = std::env::current_exe()
+        .expect("test executable path must be known")
+        .parent()
+        .and_then(|dir| dir.parent())
+        .expect("test executable must live under target/debug/deps")
+        .to_path_buf();
+    let backend = runtime_backend(&state, Some(resources), None, false)
+        .expect("the live Linux backend must construct");
     let diagnostics = backend.diagnose(&settings).expect("diagnose must succeed");
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }

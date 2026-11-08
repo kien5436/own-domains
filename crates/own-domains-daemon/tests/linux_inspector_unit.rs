@@ -62,9 +62,6 @@ impl CommandRunner for FakeRunner {
         if program.ends_with("resolvectl") {
             let subcommand = args.first().copied().unwrap_or("");
             let link = args.get(1).copied().unwrap_or("");
-            if subcommand == "--no-pager" {
-                return Ok("IDX LINK TYPE OPERATIONAL SETUP\n  1 lo loopback carrier unmanaged\n  4 own-domains0 ether routable configured\n".into());
-            }
             if link == "own-domains0" {
                 return Ok(match subcommand {
                     "dns" => "Link 4 (own-domains0): 127.0.0.1:5354\n",
@@ -427,7 +424,6 @@ fn resolved_output(
     default_route: &str,
     dnssec: &str,
     tls: &str,
-    links: &str,
     other_domains: &[(&str, &str)],
 ) -> impl Fn(&str, &[String]) -> Result<String, String> + Send + 'static {
     let dns = dns.to_string();
@@ -435,7 +431,6 @@ fn resolved_output(
     let default_route = default_route.to_string();
     let dnssec = dnssec.to_string();
     let tls = tls.to_string();
-    let links = links.to_string();
     let other: Vec<(String, String)> = other_domains
         .iter()
         .map(|(link, output)| (link.to_string(), output.to_string()))
@@ -479,9 +474,6 @@ fn resolved_output(
         if program.ends_with("resolvectl") {
             let subcommand = args.first().map(String::as_str).unwrap_or("");
             let link = args.get(1).map(String::as_str).unwrap_or("");
-            if subcommand == "--no-pager" {
-                return Ok(links.clone());
-            }
             if link == "own-domains0" {
                 return Ok(match subcommand {
                     "dns" => dns.clone(),
@@ -503,8 +495,6 @@ fn resolved_output(
     }
 }
 
-const HEALTHY_LINKS: &str = "IDX LINK TYPE OPERATIONAL SETUP\n  1 lo loopback carrier unmanaged\n  4 own-domains0 ether routable configured\n";
-
 #[test]
 fn resolved_dns_mismatch_is_reported() {
     let tree = healthy_tree();
@@ -514,7 +504,6 @@ fn resolved_dns_mismatch_is_reported() {
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): no\n",
-        HEALTHY_LINKS,
         &[],
     ));
     let diagnostics = inspector(&tree).inspect(&settings());
@@ -535,7 +524,6 @@ fn resolved_domain_mismatch_is_reported() {
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): no\n",
-        HEALTHY_LINKS,
         &[],
     ));
     let diagnostics = inspector(&tree).inspect(&settings());
@@ -556,7 +544,6 @@ fn resolved_default_route_is_reported() {
         "Link 4 (own-domains0): yes\n",
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): no\n",
-        HEALTHY_LINKS,
         &[],
     ));
     let diagnostics = inspector(&tree).inspect(&settings());
@@ -577,7 +564,6 @@ fn resolved_hardening_mismatch_is_reported() {
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): yes\n",
         "Link 4 (own-domains0): opportunistic\n",
-        HEALTHY_LINKS,
         &[],
     ));
     let diagnostics = inspector(&tree).inspect(&settings());
@@ -598,7 +584,6 @@ fn competing_own_claim_is_reported() {
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): no\n",
-        "IDX LINK TYPE OPERATIONAL SETUP\n  1 lo loopback carrier unmanaged\n  3 enp3s0 ether routable configured\n  4 own-domains0 ether routable configured\n",
         &[("enp3s0", "Link 3 (enp3s0): ~own\n")],
     ));
     let diagnostics = inspector(&tree).inspect(&settings());
@@ -620,7 +605,6 @@ fn healthy_resolved_tree_is_silent() {
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): no\n",
         "Link 4 (own-domains0): no\n",
-        HEALTHY_LINKS,
         &[],
     ));
     let diagnostics = inspector(&tree).inspect(&settings());
@@ -651,7 +635,7 @@ fn trust_fingerprint_mismatch_is_reported() {
 #[test]
 fn untrusted_cert_is_reported() {
     let tree = healthy_tree();
-    tree.runner.set_responder(|program, _args| {
+    tree.runner.set_responder(|program, args| {
         if program.ends_with("nft") {
             return Ok("table ip own_domains {\n\tchain prerouting {\n\t}\n\n\tchain output {\n\t}\n}".into());
         }
@@ -659,7 +643,10 @@ fn untrusted_cert_is_reported() {
             return Ok("enabled\n".into());
         }
         if program.ends_with("resolvectl") {
-            return Ok("Link 4 (own-domains0): 127.0.0.1:5354\nLink 4 (own-domains0): ~own\nLink 4 (own-domains0): no\n".into());
+            if args.get(1).map(String::as_str) == Some("own-domains0") {
+                return Ok("Link 4 (own-domains0): 127.0.0.1:5354\nLink 4 (own-domains0): ~own\nLink 4 (own-domains0): no\n".into());
+            }
+            return Ok(String::new());
         }
         if program.ends_with("coredns-test") {
             return Ok("CoreDNS-1.14.7\n".into());
@@ -804,10 +791,6 @@ fn network_responder(
             return Ok(String::new());
         }
         if program.ends_with("resolvectl") {
-            let subcommand = args.first().map(String::as_str).unwrap_or("");
-            if subcommand == "--no-pager" {
-                return Ok("IDX LINK TYPE OPERATIONAL SETUP\n  1 lo loopback carrier unmanaged\n  4 own-domains0 ether routable configured\n".into());
-            }
             if args.get(1).map(String::as_str) == Some("own-domains0") {
                 return Ok("Link 4 (own-domains0): 127.0.0.1:5354\nLink 4 (own-domains0): ~own\nLink 4 (own-domains0): no\n".into());
             }
