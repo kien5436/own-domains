@@ -50,7 +50,7 @@ fn live_backend_reports_missing_sidecars() {
     assert!(
         diagnostics
             .iter()
-            .all(|diagnostic| diagnostic.code == "missingSidecar"),
+            .all(|diagnostic| diagnostic.code == "sidecarMissing"),
         "{diagnostics:?}"
     );
 }

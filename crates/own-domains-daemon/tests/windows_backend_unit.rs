@@ -363,7 +363,7 @@ fn diagnose_flags_missing_sidecars_with_remedies() {
     let diagnostics = backend.diagnose(&settings()).unwrap();
     assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
     for diagnostic in &diagnostics {
-        assert_eq!(diagnostic.code, "missingSidecar");
+        assert_eq!(diagnostic.code, "sidecarMissing");
         assert_eq!(diagnostic.status, own_domains_core::DiagnosticStatus::Error);
         assert!(
             diagnostic

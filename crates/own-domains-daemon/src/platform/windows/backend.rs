@@ -391,7 +391,7 @@ impl crate::RuntimeBackend for WindowsRuntimeBackend<'_> {
         ] {
             if !exe.is_file() {
                 diagnostics.push(Diagnostic {
-                    code: "missingSidecar".into(),
+                    code: "sidecarMissing".into(),
                     status: DiagnosticStatus::Error,
                     message: format!("{label} executable not found at {}", exe.display()),
                     remedy: Some(format!(
