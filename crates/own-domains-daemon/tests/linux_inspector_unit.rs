@@ -283,7 +283,7 @@ fn digest_mismatch_names_the_path() {
         .collect();
     assert!(codes.contains(&"artifactMismatch"), "{diagnostics:?}");
     // The tampered file also drifts from the rendered ruleset.
-    assert!(codes.contains(&"nftablesMismatch"), "{diagnostics:?}");
+    assert!(codes.contains(&"nftablesRulesInvalid"), "{diagnostics:?}");
     assert!(
         diagnostics.iter().any(|diagnostic| diagnostic
             .message
@@ -408,7 +408,7 @@ fn disabled_unit_is_reported() {
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "unitDisabled"),
+            .any(|diagnostic| diagnostic.code == "systemdUnitDisabled"),
         "{diagnostics:?}"
     );
 }
@@ -422,7 +422,7 @@ fn inactive_unit_is_reported() {
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "unitInactive"),
+            .any(|diagnostic| diagnostic.code == "systemdUnitInactive"),
         "{diagnostics:?}"
     );
 }
@@ -642,7 +642,7 @@ fn trust_fingerprint_mismatch_is_reported() {
 }
 
 #[test]
-fn untrusted_cert_is_reported() {
+fn cert_absent_from_bundle_is_store_mismatch() {
     let tree = healthy_tree();
     tree.runner.set_responder(|program, args| {
         if program.ends_with("nft") {
@@ -672,14 +672,41 @@ fn untrusted_cert_is_reported() {
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "caUntrusted"),
+            .any(|diagnostic| diagnostic.code == "caStoreMismatch"),
         "{diagnostics:?}"
     );
     assert!(
         diagnostics
             .iter()
-            .all(|diagnostic| diagnostic.code != "caFingerprintMismatch"),
+            .all(|diagnostic| diagnostic.code != "caFingerprintMismatch"
+                && diagnostic.code != "caNotTrusted"),
         "file fingerprint still matches: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn unverifiable_bundle_trust_is_not_trusted() {
+    // openssl failing outright means trust cannot be verified at all:
+    // the shared caNotTrusted fallback, not a store mismatch claim.
+    let tree = healthy_tree();
+    tree.runner.set_responder(|program, args| {
+        if program.ends_with("openssl") {
+            return Err("openssl: command not found".into());
+        }
+        healthy_probe(program, args)
+    });
+    let diagnostics = inspector(&tree).inspect(&settings());
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "caNotTrusted"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "caStoreMismatch"),
+        "{diagnostics:?}"
     );
 }
 
@@ -877,7 +904,7 @@ fn stopped_unit_reports_inactive_not_unknown() {
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "unitInactive"
+            .any(|diagnostic| diagnostic.code == "systemdUnitInactive"
                 && diagnostic.message.contains("own-domains-nftables")),
         "{diagnostics:?}"
     );
@@ -949,7 +976,7 @@ fn blocked_ufw_ports_are_reported() {
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "firewallBlocked"),
+            .any(|diagnostic| diagnostic.code == "firewallConflict"),
         "{diagnostics:?}"
     );
 }
@@ -1129,6 +1156,51 @@ fn nft_permission_denied_is_unverifiable_not_unreadable() {
         diagnostics
             .iter()
             .all(|diagnostic| diagnostic.code != "nftablesUnreadable"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn resolved_unavailable_when_unit_inactive() {
+    let tree = healthy_tree();
+    tree.runner.set_responder(|program, args| {
+        if program.ends_with("systemctl") && args.iter().any(|arg| arg.contains("systemd-resolved"))
+        {
+            return Ok("inactive\n".into());
+        }
+        healthy_probe(program, args)
+    });
+    let diagnostics = inspector(&tree).inspect(&settings());
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "resolvedUnavailable"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.code.starts_with("resolver")),
+        "no cascading per-link findings when resolved is down: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn resolved_link_missing_when_unknown_link() {
+    let tree = healthy_tree();
+    tree.runner.set_responder(|program, args| {
+        if program.ends_with("resolvectl")
+            && args.get(1).map(String::as_str) == Some("own-domains0")
+        {
+            return Err("Failed to get link data for own-domains0: Unknown link\n".into());
+        }
+        healthy_probe(program, args)
+    });
+    let diagnostics = inspector(&tree).inspect(&settings());
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "resolvedLinkMissing"),
         "{diagnostics:?}"
     );
 }

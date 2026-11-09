@@ -1166,3 +1166,65 @@ fn uninstall_removes_backups_and_empty_host_directories() {
         "empty host directory must be removed by uninstall"
     );
 }
+
+#[test]
+fn uninstall_warns_when_bundle_still_trusts_cert() {
+    // Another copy of the certificate in the bundle: after our file is
+    // removed and the store refreshed, openssl still reports the
+    // fingerprint. Uninstall must succeed but warn caStillTrusted, and
+    // must not touch the other copy.
+    use std::sync::{Arc, Mutex};
+    let fingerprint_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let slot = fingerprint_slot.clone();
+    let link = fixture("ip-link.json");
+    let addr = fixture("ip-addr.json");
+    let uid = test_target_uid().to_string();
+    let (_runner, installer, _root, state) = responding_harness(move |program, args| {
+        if program.ends_with("trust") {
+            if let Some(fingerprint) = slot.lock().unwrap().clone() {
+                return Ok(format!("SHA256 Fingerprint={fingerprint}\n"));
+            }
+            return Ok(String::new());
+        }
+        if program == "id" {
+            return Ok("0\n".into());
+        }
+        if program.ends_with("stat") {
+            return Ok(format!("{uid}\n"));
+        }
+        if program.ends_with("ip") && args.contains(&"-j".to_string()) {
+            if args.contains(&"link".to_string()) {
+                return Ok(link.clone());
+            }
+            if args.contains(&"addr".to_string()) {
+                return Ok(addr.clone());
+            }
+        }
+        Ok(String::new())
+    });
+    installer.apply_setup(&setup_request(&state)).unwrap();
+    let receipt: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(state.join("applied/trust.json")).unwrap())
+            .unwrap();
+    let fingerprint = receipt
+        .get("fingerprint")
+        .and_then(|value| value.as_str())
+        .unwrap()
+        .to_string();
+    *fingerprint_slot.lock().unwrap() = Some(fingerprint);
+
+    let result = installer
+        .apply_uninstall(&UninstallRequest {
+            state_directory: state.clone(),
+            purge: false,
+        })
+        .unwrap();
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("caStillTrusted")),
+        "expected a caStillTrusted warning, got: {:?}",
+        result.warnings
+    );
+}

@@ -36,6 +36,7 @@ const UFW_BIN: &str = "/usr/sbin/ufw";
 const NFT_BIN: &str = "/usr/sbin/nft";
 const SYSTEMCTL_BIN: &str = "/usr/bin/systemctl";
 const UPDATE_CA_BIN: &str = "/usr/sbin/update-ca-certificates";
+const TRUST_LIST_BIN: &str = "/usr/bin/trust";
 const CHOWN_BIN: &str = "/usr/bin/chown";
 const STAT_BIN: &str = "/usr/bin/stat";
 const ID_BIN: &str = "id";
@@ -1014,7 +1015,10 @@ impl HostInstaller for LinuxHostInstaller {
                 ));
             }
         }
-        self.remove_trust_checked(&request.state_directory)?;
+        let mut warnings = Vec::new();
+        if let Some(warning) = self.remove_trust_checked(&request.state_directory)? {
+            warnings.push(warning);
+        }
         self.remove_resolver_checked(&request.state_directory)?;
         self.remove_nftables_unit_checked(&request.state_directory)?;
         self.remove_nftables_checked(&request.state_directory)?;
@@ -1035,7 +1039,7 @@ impl HostInstaller for LinuxHostInstaller {
             written: Vec::new(),
             unchanged: Vec::new(),
             backups: Vec::new(),
-            warnings: Vec::new(),
+            warnings,
         })
     }
 }
@@ -1198,16 +1202,18 @@ impl LinuxHostInstaller {
         Ok(())
     }
 
-    fn remove_trust_checked(&self, state: &Path) -> Result<(), SetupFailure> {
+    fn remove_trust_checked(&self, state: &Path) -> Result<Option<String>, SetupFailure> {
         let receipt = self.receipt(state, "trust.json");
         if !receipt.is_file() {
-            return Ok(());
+            return Ok(None);
         }
         let value = self.read_receipt(&receipt)?;
-        self.remove_trust(&value)
+        let warning = self
+            .remove_trust(&value)
             .map_err(|error| self.failure("trust.json removal failed", error))?;
         std::fs::remove_file(&receipt)
-            .map_err(|error| self.failure("unable to delete the receipt", error.to_string()))
+            .map_err(|error| self.failure("unable to delete the receipt", error.to_string()))?;
+        Ok(warning)
     }
 
     fn caddy_data_directory(state: &Path) -> PathBuf {
@@ -1430,7 +1436,7 @@ impl LinuxHostInstaller {
         Ok(())
     }
 
-    fn remove_trust(&self, receipt: &serde_json::Value) -> Result<(), String> {
+    fn remove_trust(&self, receipt: &serde_json::Value) -> Result<Option<String>, String> {
         let expected = receipt
             .get("fingerprint")
             .and_then(|value| value.as_str())
@@ -1455,7 +1461,27 @@ impl LinuxHostInstaller {
             // refresh and recheck (idempotent trust removal).
             self.runner.run(UPDATE_CA_BIN, &[])?;
         }
-        Ok(())
+        // Another copy of the same certificate may live in the bundle
+        // under a different path. `trust list` enumerates the anchors; a
+        // surviving fingerprint earns a warning, never a second removal.
+        let still_trusted = self
+            .runner
+            .run(TRUST_LIST_BIN, &["list", "--filter=ca-anchors"])
+            .map(|output| {
+                output
+                    .chars()
+                    .filter(|byte| byte.is_ascii_hexdigit())
+                    .collect::<String>()
+                    .to_lowercase()
+                    .contains(expected)
+            })
+            .unwrap_or(false);
+        if still_trusted {
+            return Ok(Some(format!(
+                "caStillTrusted: {TRUST_CERT_PATH} was removed but the system bundle still trusts the certificate; remove the other trusted copy manually"
+            )));
+        }
+        Ok(None)
     }
 }
 

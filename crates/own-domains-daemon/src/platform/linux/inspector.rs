@@ -72,6 +72,16 @@ pub(crate) fn global_block(output: &str) -> &str {
     &output[..offset]
 }
 
+/// resolvectl reports a missing link as an "unknown link" failure.
+/// Shared by the per-link checks so a deleted dummy link yields one
+/// `resolvedLinkMissing` instead of five per-query mismatches.
+fn is_unknown_link(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    lower.contains("unknown link")
+        || lower.contains("unknown interface")
+        || lower.contains("no such device")
+}
+
 pub struct LinuxHostInspector {
     runner: Box<dyn CommandRunner>,
     files: Box<dyn InspectFiles>,
@@ -222,7 +232,7 @@ impl LinuxHostInspector {
                     let missing = missing_port_rules(&policy.allowed);
                     if !missing.is_empty() {
                         diagnostics.push(Self::error(
-                            "firewallBlocked",
+                            "firewallConflict",
                             format!(
                                 "UFW blocks the runtime ports; run:\n{}",
                                 ufw_remedy(&missing)
@@ -255,7 +265,7 @@ impl LinuxHostInspector {
                 let missing = missing_port_rules(&allowed);
                 if !missing.is_empty() {
                     diagnostics.push(Self::error(
-                        "firewallBlocked",
+                        "firewallConflict",
                         format!(
                             "firewalld blocks the runtime ports; run:\n{}",
                             firewalld_remedy(&zone, &missing)
@@ -486,7 +496,7 @@ impl LinuxHostInspector {
             ));
             return;
         }
-        let output = self.runner.run(
+        let trusted = match self.runner.run(
             "/usr/bin/openssl",
             &[
                 "x509",
@@ -496,21 +506,35 @@ impl LinuxHostInspector {
                 "-fingerprint",
                 "-sha256",
             ],
-        );
-        let trusted = output
-            .map(|text| {
-                text.chars()
+        ) {
+            // The bundle was read: a missing fingerprint means the
+            // certificate is not in the store.
+            Ok(output) => Some(
+                output
+                    .chars()
                     .filter(|byte| byte.is_ascii_hexdigit())
                     .collect::<String>()
                     .to_lowercase()
-                    .contains(&manifest.ca_fingerprint_sha256)
-            })
-            .unwrap_or(false);
-        if !trusted {
-            diagnostics.push(Self::error(
-                "caUntrusted",
-                "installed certificate is not trusted by the system bundle".into(),
-            ));
+                    .contains(&manifest.ca_fingerprint_sha256),
+            ),
+            // Trust itself is unverifiable: the shared fallback, never a
+            // claim about the store.
+            Err(_) => None,
+        };
+        match trusted {
+            Some(true) => {}
+            Some(false) => {
+                diagnostics.push(Self::error(
+                    "caStoreMismatch",
+                    "installed certificate matches the manifest but is not in the system bundle; run `update-ca-certificates` or rerun setup".into(),
+                ));
+            }
+            None => {
+                diagnostics.push(Self::error(
+                    "caNotTrusted",
+                    "installed certificate trust cannot be verified".into(),
+                ));
+            }
         }
     }
 
@@ -521,9 +545,46 @@ impl LinuxHostInspector {
     }
 
     fn inspect_resolved(&self, manifest: &LinuxInstallManifest, diagnostics: &mut Vec<Diagnostic>) {
-        let check =
-            |label: &str, code: &str, output: Result<String, String>, want: &[&str]| match output {
+        // systemd-resolved down (or absent) makes every per-link query
+        // meaningless: report the root cause once instead of cascading
+        // per-query mismatches.
+        match self.systemctl(&[
+            "show",
+            "-p",
+            "ActiveState",
+            "--value",
+            "systemd-resolved.service",
+        ]) {
+            Ok(output) if output.trim() == "active" => {}
+            Ok(output) => {
+                diagnostics.push(Self::error(
+                    "resolvedUnavailable",
+                    format!(
+                        "systemd-resolved is not active ({}); enable systemd-resolved and retry",
+                        output.trim()
+                    ),
+                ));
+                return;
+            }
+            Err(error) => {
+                diagnostics.push(Self::error(
+                    "resolvedUnavailable",
+                    format!("unable to query systemd-resolved state: {error}"),
+                ));
+                return;
+            }
+        }
+        let check = |label: &str, code: &str, output: Result<String, String>, want: &[&str]| {
+            match output {
                 Ok(text) if want.iter().all(|token| text.contains(token)) => None,
+                // A missing dummy link surfaces from every per-link query;
+                // report it once as the root cause, not five mismatches.
+                Err(error) if is_unknown_link(&error) => Some(Self::error(
+                    "resolvedLinkMissing",
+                    format!(
+                        "resolvectl {label} {RESOLVER_LINK} reports an unknown link; restart the resolver unit or rerun setup"
+                    ),
+                )),
                 Ok(text) => Some(Self::error(
                     code,
                     format!(
@@ -535,7 +596,8 @@ impl LinuxHostInspector {
                     code,
                     format!("unable to query resolvectl {label} {RESOLVER_LINK}: {error}"),
                 )),
-            };
+            }
+        };
         for diagnostic in [
             check(
                 "dns",
@@ -575,6 +637,18 @@ impl LinuxHostInspector {
             // link must not become a default route, full stop.
             diagnostics.push(diagnostic);
         }
+        // A missing dummy link trips every per-link query; keep the first
+        // `resolvedLinkMissing` as the root cause.
+        let mut kept_missing = false;
+        diagnostics.retain(|diagnostic| {
+            if diagnostic.code == "resolvedLinkMissing" {
+                if kept_missing {
+                    return false;
+                }
+                kept_missing = true;
+            }
+            true
+        });
         self.inspect_domain_conflicts(manifest, diagnostics);
     }
 
@@ -658,7 +732,7 @@ impl LinuxHostInspector {
                 }
                 Err(error) => {
                     diagnostics.push(Self::error(
-                        "unitMissing",
+                        "systemdUnitMissing",
                         format!("{system_path} is missing: {error}"),
                     ));
                 }
@@ -670,7 +744,7 @@ impl LinuxHostInspector {
                 Ok(output) if output.trim() == "enabled" => {}
                 Ok(output) => {
                     diagnostics.push(Self::error(
-                        "unitDisabled",
+                        "systemdUnitDisabled",
                         format!("{name} is not enabled ({})", output.trim()),
                     ));
                 }
@@ -685,7 +759,7 @@ impl LinuxHostInspector {
                 Ok(output) if output.trim() == "active" => {}
                 Ok(output) => {
                     diagnostics.push(Self::error(
-                        "unitInactive",
+                        "systemdUnitInactive",
                         format!("{name} is not active ({})", output.trim()),
                     ));
                 }
@@ -711,7 +785,7 @@ impl LinuxHostInspector {
         match (expected, self.files.read(&path)) {
             (Ok(expected), Ok(actual)) if expected.as_bytes() != actual.as_slice() => {
                 diagnostics.push(Self::error(
-                    "nftablesMismatch",
+                    "nftablesRulesInvalid",
                     "/etc/own-domains/nftables.conf content does not match the covered interfaces"
                         .into(),
                 ));
