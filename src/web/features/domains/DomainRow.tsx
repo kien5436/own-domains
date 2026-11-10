@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import type { DomainMapping } from './api';
+import type { DomainMapping } from '../../../shared/types';
 
 const RESERVED_PORTS = new Set([53, 80, 443, 4780]);
 

@@ -1,6 +1,8 @@
 # Setup
 
-Own Domains requires Caddy, dnsmasq, and administrator-approved macOS service configuration. Start the API and dashboard during development with `pnpm run dev:server` and `pnpm run dev` in separate terminals.
+> Retired workflow notice: the TypeScript `src/server` API, `src/cli` scripts (`pnpm run setup/doctor/uninstall`), and the browser-only dashboard were removed. Host setup is performed by the native daemon plus the Rust CLI (`own-domains setup --apply`, `own-domains doctor`). What follows is historical and kept for the manual steps (router, phone DNS) that still apply.
+
+Own Domains requires Caddy, dnsmasq, and administrator-approved macOS service configuration. Start the dashboard during development with `pnpm run dev`.
 
 After building and applying setup, open the installed dashboard at `http://registry.own`. Under **Network settings**, enter the same LAN address used for setup, save it, and refresh the page. This persists the address required by dashboard DNS diagnostics. Direct access at `http://127.0.0.1:4780` remains available on the Mac.
 

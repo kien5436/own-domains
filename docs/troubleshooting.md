@@ -1,5 +1,7 @@
 # Troubleshooting
 
+> Retired workflow notice: entries mentioning `install.sh`, `pnpm run doctor`, or the TypeScript CLI refer to the removed legacy stack. Host setup and diagnostics now run through the native daemon and the Rust CLI. Device-side steps (phone DNS, CA trust, firewall) still apply.
+
 - **dnsmasq listener warning after first setup:** open **Network settings**, enter the same Mac LAN address used by `install.sh`, save it, and refresh the dashboard. If the warning remains, run `dig +short @127.0.0.1 healthcheck.own A` and `dig +short @<MAC_LAN_IP> healthcheck.own A`; both must return the Mac LAN address.
 - **Domain does not resolve:** confirm the phone can reach the Mac, uses the Mac as its only Wi-Fi DNS server, and is not on an isolated guest network or overriding DNS through a VPN/private DNS feature.
 - **502 response:** start the target app on the configured IPv4 loopback port. Some development servers must allow the custom `.own` Host header.

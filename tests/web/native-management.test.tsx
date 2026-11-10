@@ -66,7 +66,7 @@ it('manages domains and network through IPC without HTTP and shows stopped truth
   expect(screen.getByRole('alert')).toHaveTextContent('reload failed');
   state = { ...state, settings: { ...state.settings, revision: 9, mappings: [{ id: 'cli', hostname: 'cli.own', upstreamPort: 8080, enabled: true, tls: false }] }, desiredRevision: 9, latestEventSequence: 9 };
   emit({ protocolVersion: 2, sequence: 9, event: { type: 'settingsChanged', payload: { revision: 9 } } });
-  await screen.findByText('cli.own'); expect(screen.getByText('Revision 9')).toBeInTheDocument();
+  await screen.findByText('cli.own'); expect(screen.queryByText(/Revision/)).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Start routing' }));
   await screen.findByText('Runtime unavailable');
   expect(fetch).not.toHaveBeenCalled(); view.unmount(); fetch.mockRestore();

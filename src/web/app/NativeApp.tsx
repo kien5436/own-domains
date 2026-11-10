@@ -82,7 +82,7 @@ export function NativeApp({ store, onStart, onStop, onQuit, onError }: { store: 
     {(actionError || state.error) && <p className="mb-4 rounded bg-red-50 p-3 text-red-800" role="alert">{actionError || state.error}</p>}
     <div className="grid gap-8 lg:grid-cols-[22rem_1fr]">
       <section><h2 className="mb-3 text-lg font-semibold">Register a domain</h2><DomainForm busy={busy} onSubmit={(input) => store.mutate({ type: 'create', payload: { input, expected_revision: revision } })} /></section>
-      <section><h2 className="text-lg font-semibold">Your domains</h2><p>Revision {revision}</p>{snapshot
+      <section><h2 className="text-lg font-semibold">Your domains</h2>{snapshot
         ? <DomainTable busy={busy} mappings={snapshot.settings.mappings}
           onRemove={(mapping) => store.mutate({ type: 'remove', payload: { id: mapping.id, expected_revision: revision } })}
           onSetTls={(mapping) => store.mutate({ type: 'update', payload: { id: mapping.id, patch: { tls: !mapping.tls }, expected_revision: revision } })}

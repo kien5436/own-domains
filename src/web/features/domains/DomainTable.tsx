@@ -1,4 +1,4 @@
-import type { DomainMapping } from './api';
+import type { DomainMapping } from '../../../shared/types';
 import { DomainRow } from './DomainRow';
 
 type Props = { mappings: DomainMapping[]; busy: boolean; onToggle: (mapping: DomainMapping) => Promise<void>; onSetTls: (mapping: DomainMapping) => Promise<void>; onUpdatePort: (mapping: DomainMapping, upstreamPort: number) => Promise<void>; onRemove: (mapping: DomainMapping) => Promise<void> };
