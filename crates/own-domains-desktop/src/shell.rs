@@ -309,6 +309,7 @@ pub fn run() {
         std::process::exit(2);
     });
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             Host(app.clone()).show();
         }))
@@ -374,8 +375,14 @@ pub fn run() {
                 MenuItem::with_id(app, SHOW_MENU_ID, "Show Own Domains", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, QUIT_MENU_ID, "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
-            // Small built-in RGBA icon keeps tray availability independent of bundle assets.
-            let icon = tauri::image::Image::new_owned([32, 90, 200, 255].repeat(16 * 16), 16, 16);
+            // Bundled tray icon, pre-decoded from icons/32x32.png (see
+            // icons/README.md): Tauri 2.12 has no PNG loader here, and raw
+            // RGBA keeps the tray independent of extra decoder crates.
+            let icon = tauri::image::Image::new_owned(
+                include_bytes!("../icons/tray-32x32.rgba").to_vec(),
+                32,
+                32,
+            );
             TrayIconBuilder::with_id("main-tray")
                 .icon(icon)
                 .menu(&menu)

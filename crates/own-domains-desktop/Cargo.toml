@@ -17,7 +17,7 @@ uuid = { version = "1.28.0", features = ["v4"] }
 
 [features]
 default = []
-desktop = ["dep:tauri", "dep:tauri-plugin-single-instance", "dep:tauri-build"]
+desktop = ["dep:tauri", "dep:tauri-plugin-single-instance", "dep:tauri-build", "dep:tauri-plugin-opener"]
 
 [dependencies.tauri]
 version = "=2.12.4"
@@ -26,6 +26,10 @@ features = ["tray-icon"]
 
 [dependencies.tauri-plugin-single-instance]
 version = "=2.5.4"
+optional = true
+
+[dependencies.tauri-plugin-opener]
+version = "2"
 optional = true
 
 [build-dependencies.tauri-build]

@@ -24,7 +24,9 @@
         "label": "main",
         "title": "Own Domains",
         "width": 1100,
-        "height": 800
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600
       }
     ],
     "security": {

@@ -11,4 +11,11 @@ describe('DeviceInstructions', () => {
     expect(screen.getByText('192.168.1.20')).toBeInTheDocument();
     expect(screen.getByText(/full certificate trust/i)).toBeInTheDocument();
   });
+
+  it('covers certificate installation and common failures', () => {
+    render(<DeviceInstructions lanAddress="192.168.1.20" />);
+
+    expect(screen.getByRole('heading', { name: /certificate/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /troubleshoot/i })).toBeInTheDocument();
+  });
 });

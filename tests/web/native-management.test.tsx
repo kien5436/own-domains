@@ -37,36 +37,43 @@ it('manages domains and network through IPC without HTTP and shows stopped truth
   const view = render(<NativeApp store={store} onStart={async () => { throw new Error('Runtime unavailable') }} onStop={async () => {}} onQuit={async () => {}} />);
 
   await screen.findByText('No domains registered yet.');
-  expect(screen.getByText('Runtime: stopped')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Stop routing' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Start routing' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Start routing' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Stop routing' })).not.toBeInTheDocument();
   expect(screen.queryByText(/Configuration applied/)).not.toBeInTheDocument();
-  await user.type(screen.getByLabelText('Domain'), 'shop'); await user.click(screen.getByRole('button', { name: 'Register domain' }));
+  await user.type(screen.getByLabelText('Search domains'), 'shop'); await user.click(screen.getByRole('button', { name: 'Register domain' }));
   await screen.findByText('shop.own');
-  await user.click(screen.getByRole('button', { name: 'Disable' }));
-  await screen.findByRole('button', { name: 'Enable' });
-  await user.click(screen.getByRole('button', { name: 'Turn TLS on' }));
-  await screen.findByText('127.0.0.1:3000 · HTTPS');
+  await user.click(screen.getByRole('switch', { name: 'Enable shop.own' }));
+  expect(screen.getByRole('switch', { name: 'Enable shop.own' })).toHaveAttribute('aria-checked', 'false');
+  await user.click(screen.getByRole('switch', { name: 'HTTPS for shop.own' }));
+  await screen.findByText('127.0.0.1:3000');
   await user.click(screen.getByRole('button', { name: 'Edit shop.own' }));
   await user.clear(screen.getByLabelText('Upstream port for shop.own'));
   await user.type(screen.getByLabelText('Upstream port for shop.own'), '4000');
-  await user.click(screen.getByRole('button', { name: 'Save shop.own' }));
-  await screen.findByText('127.0.0.1:4000 · HTTPS');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  await screen.findByText('127.0.0.1:4000');
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
 
-  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  await user.click(screen.getByRole('button', { name: 'Delete shop.own' }));
   expect(confirm).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Confirm delete' }));
   await screen.findByText('No domains registered yet.');
   confirm.mockRestore();
+  await user.click(screen.getByRole('button', { name: 'Settings' }));
   await user.type(screen.getByLabelText('Mac LAN IPv4'), '192.168.1.20'); await user.click(screen.getByRole('button', { name: 'Save network settings' }));
   await waitFor(() => expect(state.settings.lanAddress).toBe('192.168.1.20'));
-  await screen.findByText('Runtime: degraded');
+  await user.click(screen.getByRole('button', { name: 'Dashboard' }));
+  await screen.findByRole('button', { name: 'Stop routing' });
   expect(screen.getByRole('button', { name: 'Stop routing' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: 'Diagnostic' }));
   expect(screen.getByText(/pending: desired 6, applied 0/)).toBeInTheDocument();
   expect(screen.getByRole('alert')).toHaveTextContent('reload failed');
   state = { ...state, settings: { ...state.settings, revision: 9, mappings: [{ id: 'cli', hostname: 'cli.own', upstreamPort: 8080, enabled: true, tls: false }] }, desiredRevision: 9, latestEventSequence: 9 };
   emit({ protocolVersion: 2, sequence: 9, event: { type: 'settingsChanged', payload: { revision: 9 } } });
+  await user.click(screen.getByRole('button', { name: 'Dashboard' }));
   await screen.findByText('cli.own'); expect(screen.queryByText(/Revision/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Stop routing' }));
+  await screen.findByRole('button', { name: 'Start routing' });
   await user.click(screen.getByRole('button', { name: 'Start routing' }));
   await screen.findByText('Runtime unavailable');
   expect(fetch).not.toHaveBeenCalled(); view.unmount(); fetch.mockRestore();
@@ -88,13 +95,14 @@ it('stops routing through the desktop lifecycle command without quitting', async
   const store = new RuntimeStore(client);
   const view = render(<NativeApp store={store} onStart={async () => {}} onStop={onStop} onQuit={onQuit} />);
 
-  await screen.findByText('Runtime: running');
+  await screen.findByRole('button', { name: 'Stop routing' });
   await user.click(screen.getByRole('button', { name: 'Stop routing' }));
 
   expect(onStop).toHaveBeenCalledOnce();
   expect(onQuit).not.toHaveBeenCalled();
-  expect(await screen.findByText('Runtime: disconnected')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Stop routing' })).toBeDisabled();
+  expect(await screen.findByRole('button', { name: 'Start routing' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Start routing' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Stop routing' })).not.toBeInTheDocument();
   view.unmount();
 });
 
@@ -121,14 +129,15 @@ it('stops routing while degraded without quitting', async () => {
   const store = new RuntimeStore(client);
   const view = render(<NativeApp store={store} onStart={async () => {}} onStop={onStop} onQuit={onQuit} />);
 
-  await screen.findByText('Runtime: degraded');
+  await screen.findByRole('button', { name: 'Stop routing' });
   expect(screen.getByRole('button', { name: 'Stop routing' })).toBeEnabled();
   await user.click(screen.getByRole('button', { name: 'Stop routing' }));
 
   expect(onStop).toHaveBeenCalledOnce();
   expect(onQuit).not.toHaveBeenCalled();
-  expect(await screen.findByText('Runtime: disconnected')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Stop routing' })).toBeDisabled();
+  expect(await screen.findByRole('button', { name: 'Start routing' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Start routing' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Stop routing' })).not.toBeInTheDocument();
   view.unmount();
 });
 
@@ -147,7 +156,9 @@ it('clears a slow Start error when the reconnected runtime is running', async ()
   const store = new RuntimeStore(client);
   const view = render(<NativeApp store={store} onStart={onStart} onStop={async () => {}} onQuit={async () => {}} />);
 
-  await screen.findByText('Runtime: running');
+  await screen.findByRole('button', { name: 'Stop routing' });
+  await user.click(screen.getByRole('button', { name: 'Stop routing' }));
+  await screen.findByRole('button', { name: 'Start routing' });
   await user.click(screen.getByRole('button', { name: 'Start routing' }));
 
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
@@ -174,14 +185,14 @@ it('reconnects after a failed Start following Stop', async () => {
   const store = new RuntimeStore(client);
   const view = render(<NativeApp store={store} onStart={onStart} onStop={async () => {}} onQuit={async () => {}} />);
 
-  await screen.findByText('Runtime: running');
+  await screen.findByRole('button', { name: 'Stop routing' });
   await user.click(screen.getByRole('button', { name: 'Stop routing' }));
-  await screen.findByText('Runtime: disconnected');
+  await screen.findByRole('button', { name: 'Start routing' });
   expect(subscribe).toHaveBeenCalledOnce();
 
   await user.click(screen.getByRole('button', { name: 'Start routing' }));
 
-  await screen.findByText('Runtime: error');
+  await screen.findByRole('button', { name: 'Stop routing' });
   expect(subscribe).toHaveBeenCalledTimes(2);
   expect(screen.getByRole('button', { name: 'Stop routing' })).toBeEnabled();
   expect(screen.getByRole('alert')).toHaveTextContent('setupMissing');
@@ -204,7 +215,8 @@ it('does not relabel Register while an unrelated action is running', async () =>
   const store = new RuntimeStore(client);
   const view = render(<NativeApp store={store} onStart={onStart} onStop={async () => {}} onQuit={async () => {}} />);
 
-  await screen.findByText('Runtime: stopped');
+  await screen.findByRole('button', { name: 'Start routing' });
+  await user.type(screen.getByLabelText('Search domains'), 'shop');
   await user.click(screen.getByRole('button', { name: 'Start routing' }));
 
   expect(screen.getByRole('button', { name: 'Register domain' })).toBeDisabled();
@@ -249,7 +261,8 @@ it('saves a LAN address change without asking for privileged setup', async () =>
   const store = new RuntimeStore(client);
   const view = render(<NativeApp store={store} onStart={async () => {}} onStop={async () => {}} onQuit={async () => {}} />);
 
-  await screen.findByText('Runtime: running');
+  await screen.findByRole('button', { name: 'Stop routing' });
+  await user.click(screen.getByRole('button', { name: 'Settings' }));
   const input = screen.getByLabelText('Mac LAN IPv4');
 
   await user.clear(input);
