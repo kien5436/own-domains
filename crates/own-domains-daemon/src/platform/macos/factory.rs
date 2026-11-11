@@ -19,11 +19,7 @@ pub(crate) fn runtime_backend(
         };
         let resources = match resources {
             Some(resources) => resources,
-            None => default_resource_directory(
-                std::env::current_exe()?
-                    .parent()
-                    .ok_or("the daemon executable has no parent directory")?,
-            ),
+            None => default_resource_directory(&executable_directory(&std::env::current_exe()?)?),
         };
         let manifest_path = sidecars.unwrap_or_else(|| {
             sidecar_manifest_path(&resources, macos_target_triple(macos_architecture()))
@@ -46,6 +42,14 @@ pub(crate) fn runtime_backend(
         return Ok(Arc::new(MacOsRuntimeBackend::try_new(paths, sidecars)?));
     }
     Ok(Arc::new(UnavailableRuntimeBackend))
+}
+
+fn executable_directory(executable: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let executable = executable.canonicalize()?;
+    executable
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "the daemon executable has no parent directory".into())
 }
 
 fn default_resource_directory(executable_directory: &Path) -> PathBuf {
@@ -86,5 +90,37 @@ fn macos_architecture() -> MacOsArchitecture {
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     {
         compile_error!("the macOS runtime requires an Apple silicon or Intel build")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::executable_directory;
+
+    #[test]
+    #[cfg(unix)]
+    fn executable_directory_follows_a_symlink_into_the_app_bundle() {
+        let root = std::env::temp_dir().join(format!(
+            "own-domains-factory-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let contents = root.join("Own Domains.app").join("Contents");
+        let macos = contents.join("MacOS");
+        std::fs::create_dir_all(&macos).unwrap();
+        let daemon = macos.join("own-domains-daemon");
+        std::fs::write(&daemon, b"daemon").unwrap();
+        let link = root.join("own-domains-daemon");
+        std::os::unix::fs::symlink(&daemon, &link).unwrap();
+
+        assert_eq!(
+            executable_directory(&link).unwrap(),
+            macos.canonicalize().unwrap()
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

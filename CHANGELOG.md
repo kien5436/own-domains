@@ -1,15 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 - 2026-11-11
+
+First stable release: native app and CLI on macOS, Ubuntu, and Windows.
 
 ### Added
 
+- Standalone CLI install: a self-contained prefix (`<prefix>/lib/own-domains` with an `own-domains` symlink on PATH) carrying its own daemon and sidecars, so the CLI works without the app bundle. `scripts/install.sh` and `scripts/uninstall.sh` take `--cli-only` / `--app-only` (default installs both) and `--prefix=DIR`.
 - Linux native runtime: CoreDNS/Caddy backend, host inspector, privileged setup/uninstall transactions, and `.deb` packaging with per-arch sidecars.
 - Diagnostic codes aligned with the design tables, including new `resolvedUnavailable`, `resolvedLinkMissing`, `caStoreMismatch`, and `caStillTrusted` findings.
 - Single-shell dashboard: sidebar navigation, theme-aware logo, standard modal dialogs, and a responsive domain-card grid.
 
 ### Fixed
 
+- Standalone and symlinked CLI copies resolve the daemon and sidecars through the installed layout instead of failing with manifest/`ENOENT` errors.
+- macOS installer builds the `.app` bundle with the CLI inside (the package scripts skip bundling) instead of installing a stale bundle.
 - Linux IPC reads translate `EAGAIN` expiry into daemon-timeout errors; `stop` and general commands carry realistic budgets.
 - Privileged setup hands the state tree back to the target user and tightens user files, so unprivileged CLI/GUI runs are no longer locked out.
 - Installed-layout sidecar resolution for the Tauri `.deb` FHS layout; uninstall prunes the backups tree and `/etc/own-domains`.

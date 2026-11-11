@@ -44,12 +44,17 @@ try_step() {
 
 dry_run=false
 purge=false
+mode=both
+prefix=/usr/local
 
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=true ;;
     --purge) purge=true ;;
-    *) printf 'Usage: %s [--dry-run] [--purge]\n' "$0" >&2; exit 2 ;;
+    --cli-only) mode=cli ;;
+    --app-only) mode=app ;;
+    --prefix=*) prefix=${argument#--prefix=} ;;
+    *) printf 'Usage: %s [--dry-run] [--purge] [--cli-only] [--app-only] [--prefix=DIR]\n' "$0" >&2; exit 2 ;;
   esac
 done
 
@@ -63,6 +68,12 @@ cd "$repository_root"
 export PATH="$HOME/.cargo/bin:$PATH"
 
 os=$(uname -s)
+
+if [ "$prefix" = /usr/local ]; then
+  file_sudo=sudo
+else
+  file_sudo=
+fi
 
 # Prefer the installed CLI (the Linux package puts it on PATH); fall back to
 # a debug build from this checkout for macOS and uninstalled checkouts.
@@ -93,19 +104,38 @@ fi
 
 case "$os" in
   Darwin)
-    target_app="/Applications/Own Domains.app"
-    if [ -d "$target_app" ]; then
-      printf 'UNINSTALL app from %s (administrator approval required)\n' "$target_app"
-      try_step 'could not remove the installed app' sudo rm -rf "$target_app"
+    if [ "$mode" != cli ]; then
+      target_app="/Applications/Own Domains.app"
+      if [ -d "$target_app" ]; then
+        printf 'UNINSTALL app from %s (administrator approval required)\n' "$target_app"
+        try_step 'could not remove the installed app' sudo rm -rf "$target_app"
+      fi
     fi
-    if [ -f /usr/local/bin/own-domains ]; then
-      try_step 'could not remove the own-domains CLI' sudo rm -f /usr/local/bin/own-domains
+    if [ "$mode" != app ]; then
+      if [ -e "$prefix/bin/own-domains" ] || [ -L "$prefix/bin/own-domains" ]; then
+        try_step 'could not remove the own-domains CLI link' $file_sudo rm -f "$prefix/bin/own-domains"
+      fi
+      if [ -d "$prefix/lib/own-domains" ]; then
+        printf 'UNINSTALL CLI prefix from %s\n' "$prefix/lib/own-domains"
+        try_step 'could not remove the CLI prefix' $file_sudo rm -rf "$prefix/lib/own-domains"
+      fi
     fi
     ;;
   Linux)
-    if dpkg -s own-domains >/dev/null 2>&1; then
-      printf 'UNINSTALL own-domains package (administrator approval required)\n'
-      try_step 'could not remove the own-domains package' sudo dpkg -r own-domains
+    if [ "$mode" != cli ]; then
+      if dpkg -s own-domains >/dev/null 2>&1; then
+        printf 'UNINSTALL own-domains package (administrator approval required)\n'
+        try_step 'could not remove the own-domains package' sudo dpkg -r own-domains
+      fi
+    fi
+    if [ "$mode" != app ]; then
+      if [ -e "$prefix/bin/own-domains" ] || [ -L "$prefix/bin/own-domains" ]; then
+        try_step 'could not remove the own-domains CLI link' $file_sudo rm -f "$prefix/bin/own-domains"
+      fi
+      if [ -d "$prefix/lib/own-domains" ]; then
+        printf 'UNINSTALL CLI prefix from %s\n' "$prefix/lib/own-domains"
+        try_step 'could not remove the CLI prefix' $file_sudo rm -rf "$prefix/lib/own-domains"
+      fi
     fi
     ;;
 esac

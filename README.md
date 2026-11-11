@@ -18,9 +18,9 @@ Own Domains gives your computer private `.own` web addresses (like `my-site.own`
 
 | Platform | Status |
 | --- | --- |
-| Apple silicon macOS 15+ | Native beta, fully working |
+| Apple silicon macOS 15+ | Stable, fully working |
 | Intel macOS 15+ | Builds; not acceptance-tested |
-| Windows 10/11 (x64) | Beta (`beta.3` NSIS installer) |
+| Windows 10/11 (x64) | Stable (NSIS installer) |
 | Ubuntu 24+ | Working native runtime (`.deb` + `setup`) |
 
 Local testing uses an ad-hoc-signed macOS app; no paid Apple Developer account is needed. Signed, notarized releases are distribution work only. See `docs/platform-support.md` for the full matrix.
@@ -58,6 +58,8 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 <LAN_IPv4>
 ```
 
 The script installs dependencies, builds the desktop app and CLI, installs the app (`/Applications/Own Domains.app` on macOS, the `.deb` package on Ubuntu, the per-user NSIS installer on Windows), previews the host setup, and then applies it once. On macOS and Ubuntu that means `sudo`; on Windows it means one UAC elevation. That setup installs the `.own` resolver rule, firewall entries, and the local root certificate. Everything else — builds, previews, and running the app — stays unprivileged.
+
+The app and the CLI install independently. By default you get both; pass `--cli-only` for just the self-contained CLI prefix (`<prefix>/lib/own-domains` with an `own-domains` symlink on PATH, `/usr/local` by default, overridable with `--prefix=DIR`), or `--app-only` for just the desktop bundle. Either one works on its own afterwards. The same flags exist on `scripts/uninstall.sh`.
 
 Preview without changing the system (builds only the CLI, no elevation):
 

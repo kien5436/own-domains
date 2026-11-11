@@ -526,9 +526,7 @@ fn start_daemon(
     state_dir: &Path,
     endpoint: &own_domains_protocol::Endpoint,
 ) -> CommandOutput {
-    let executable = std::env::var_os("OWN_DOMAINS_DAEMON")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("own-domains-daemon"));
+    let executable = crate::platform::daemon_executable();
     // Same budget as an already-running daemon: Start waits for sidecar
     // readiness inside the daemon, which exceeds the generic 30 s launch
     // timeout on cold boots.
