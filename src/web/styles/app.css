@@ -1,4 +1,9 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+
+/* Scan only the dashboard sources. Without this, Tailwind v4 walks the
+   whole checkout (including the Rust workspace) for class candidates. */
+@source "../../index.html";
+@source "../";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
