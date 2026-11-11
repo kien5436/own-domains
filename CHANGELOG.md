@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Linux native runtime: CoreDNS/Caddy backend, host inspector, privileged setup/uninstall transactions, and `.deb` packaging with per-arch sidecars.
+- Diagnostic codes aligned with the design tables, including new `resolvedUnavailable`, `resolvedLinkMissing`, `caStoreMismatch`, and `caStillTrusted` findings.
+- Single-shell dashboard: sidebar navigation, theme-aware logo, standard modal dialogs, and a responsive domain-card grid.
+
+### Fixed
+
+- Linux IPC reads translate `EAGAIN` expiry into daemon-timeout errors; `stop` and general commands carry realistic budgets.
+- Privileged setup hands the state tree back to the target user and tightens user files, so unprivileged CLI/GUI runs are no longer locked out.
+- Installed-layout sidecar resolution for the Tauri `.deb` FHS layout; uninstall prunes the backups tree and `/etc/own-domains`.
+
+### Changed
+
+- Retired the legacy TypeScript server, CLI, browser shell, and Playwright e2e suite. `src/` now holds only shared types and the web app.
+
 ## 0.1.0-beta.3 - 2026-10-28
 
 First beta with Windows host support (Windows 10/11, x64), alongside the native macOS app.
