@@ -1,9 +1,9 @@
-//! Linux runtime backend skeleton for Milestone 1.
+//! Linux runtime backend: manifest gate plus the live backend.
 //!
-//! The manifest gate only: `diagnose` reports `setupRequired` when the state
-//! directory has no install manifest and `setupManifestInvalid` when it
-//! cannot be read, parsed, or validated. No processes are started; the full
-//! runtime lands in Milestone 2.
+//! `LinuxRuntimeBackend` keeps the manifest-gate `diagnose` used by the
+//! platform contract tests. Production constructs the live backend through
+//! `super::backend::runtime_backend`, which renders configs, spawns both
+//! sidecars, and serves readiness — `apply` no longer reports unavailable.
 
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
@@ -44,7 +44,7 @@ pub(crate) fn setup_required(path: &Path) -> Diagnostic {
             "Linux host setup has not run ({} is missing)",
             path.display()
         ),
-        remedy: Some("run setup --apply to install the Linux host integration".into()),
+        remedy: Some("run setup to install the Linux host integration".into()),
     }
 }
 
@@ -53,7 +53,7 @@ pub(crate) fn setup_manifest_invalid(message: String) -> Diagnostic {
         code: "setupManifestInvalid".into(),
         status: DiagnosticStatus::Error,
         message,
-        remedy: Some("re-run setup --apply to regenerate the install manifest".into()),
+        remedy: Some("re-run setup to regenerate the install manifest".into()),
     }
 }
 

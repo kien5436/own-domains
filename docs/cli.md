@@ -1,6 +1,6 @@
 # Native CLI
 
-The Rust CLI and daemon are additive during migration; the existing TypeScript commands remain available until the macOS acceptance gate passes.
+The Rust CLI manages the daemon:
 
 ```sh
 cargo run -p own-domains-daemon -- --state-dir .own-domains
@@ -12,7 +12,7 @@ The command surface is `start`, `stop`, `status`, `list`, `add`, `edit`, `enable
 
 When no daemon is running, reads report a stopped runtime and mutations take the exclusive state lock, save through the same daemon command handler, print `saved; runtime stopped`, and exit without starting DNS or proxy services. `start` launches `own-domains-daemon`; set `OWN_DOMAINS_DAEMON` to an explicit binary path when it is not on `PATH`.
 
-On macOS, `start` activates the bundled CoreDNS and Caddy sidecars behind the host integration installed by privileged setup. Other platforms intentionally return `runtimeUnavailable`.
+`start` activates the bundled CoreDNS and Caddy sidecars behind the host integration installed by privileged setup (macOS, Ubuntu, and Windows).
 
 ## macOS sidecar layout
 
@@ -39,28 +39,29 @@ Set `OWN_DOMAINS_RESOURCES` to an absolute resource directory for local developm
 
 ## Privileged setup
 
-Run setup previews as the logged-in user. Applying changes requires `sudo`, so the CLI receives the target account in `SUDO_USER` and `SUDO_UID`:
+Run setup previews with `--dry-run` as the logged-in user. Applying changes is the default and requires `sudo`, so the CLI receives the target account in `SUDO_USER` and `SUDO_UID`:
 
 ```sh
 own-domains --state-dir "$HOME/Library/Application Support/OwnDomains" \
-  setup --lan-address 192.168.1.20 --interface en0
+  setup --dry-run --lan-address <LAN_IPv4> --interface en0
 
 sudo own-domains --state-dir "$HOME/Library/Application Support/OwnDomains" \
-  setup --apply --lan-address 192.168.1.20 --interface en0
+  setup --lan-address <LAN_IPv4> --interface en0
 ```
 
-Setup validates the selected interface address, writes only the owned resolver and PF anchor, backs up replaced host files, installs the Caddy root certificate, and reloads PF. If no Caddy CA exists, it generates the persistent CA as the target user before installing trust; it never installs trust itself during CA generation.
+Setup validates the selected interface address, writes only the owned resolver and PF anchor, backs up replaced host files, installs the Caddy root certificate, and reloads PF. Replace `<LAN_IPv4>` with the machine's reserved LAN address. If no Caddy CA exists, it generates the persistent CA as the target user before installing trust; it never installs trust itself during CA generation.
 
-Setup covers every eligible interface present at apply time. The privileged anchor references `(if:0)` and contains no selected LAN address; the manifest records covered interface names without storing a LAN address. Re-running setup with the same interface set is a no-op. Re-run setup only when a new hardware interface must be added. Normal LAN address changes are saved by the app and do not require `setup`. A schema 1 installation is migrated by the next `setup --apply`; it does not require the old address to be active.
+Setup covers every eligible interface present at apply time. The privileged anchor references `(if:0)` and contains no selected LAN address; the manifest records covered interface names without storing a LAN address. Re-running setup with the same interface set is a no-op. Re-run setup only when a new hardware interface must be added. Normal LAN address changes are saved by the app and do not require `setup`. A schema 1 installation is migrated by the next `setup`; it does not require the old address to be active.
 
 Uninstall is reversible and preserves settings unless `--purge` is explicit:
 
 ```sh
-sudo own-domains --state-dir "$HOME/Library/Application Support/OwnDomains" uninstall --apply
-sudo own-domains --state-dir "$HOME/Library/Application Support/OwnDomains" uninstall --apply --purge
+own-domains --state-dir "$HOME/Library/Application Support/OwnDomains" uninstall --dry-run
+sudo own-domains --state-dir "$HOME/Library/Application Support/OwnDomains" uninstall
+sudo own-domains --state-dir "$HOME/Library/Application Support/OwnDomains" uninstall --purge
 ```
 
-Only use `--purge` for a disposable acceptance state: it removes settings, backups, logs, and the Caddy CA.
+Only use `--purge` for a disposable acceptance state: it removes settings, backups, logs, and the Caddy CA. `--purge` cannot be combined with `--dry-run`.
 
 Exit codes:
 

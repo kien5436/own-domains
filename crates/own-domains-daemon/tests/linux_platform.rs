@@ -1,6 +1,8 @@
-//! Linux backend skeleton: manifest-gated diagnose over a state directory.
+//! Linux manifest-gate tests over a state directory.
 //!
-//! No processes are started; the full runtime lands in Milestone 2.
+//! These cover the manifest-gated `diagnose` on the test-only
+//! `LinuxRuntimeBackend`. Production uses the live backend in
+//! `platform::linux::backend`, covered by `linux_backend_e2e`.
 
 use own_domains_core::{DiagnosticStatus, Settings};
 use own_domains_daemon::{

@@ -1,12 +1,12 @@
 # Platform support
 
-Own Domains has one native runtime backend today: macOS. A platform is not supported until its adapter exists and its acceptance evidence is recorded; buildability alone does not imply runtime support.
+Own Domains ships native runtime backends for macOS, Ubuntu, and Windows. A platform is not supported until its adapter exists and its acceptance evidence is recorded; buildability alone does not imply runtime support.
 
 | Platform | Native runtime status | Acceptance |
 | --- | --- | --- |
 | Apple silicon macOS 15+ | Implemented; first beta | Passed 2026-10-22: ad-hoc-signed arm64 app and CLI, automated runner, GUI checks, and one physical-phone pass |
 | Intel macOS 15+ | Buildable; runtime not acceptance-tested | Not required |
-| Ubuntu 24+ | Milestone 1 done: artifacts render byte-exact, backend skeleton with manifest gate; full runtime pending (Milestone 2) | Recorded in `docs/linux-acceptance.md` |
+| Ubuntu 24+ | Implemented; install via `.deb`, then `setup` | Covered by `linux_backend_e2e` plus `docs/linux-install.md` |
 | Windows 10/11 | Implemented; beta.3 unsigned NSIS installer (x64; ARM64 runs the x64 build emulated) | Recorded in `docs/windows-acceptance.md` |
 
 ## Host integration boundary
@@ -33,9 +33,10 @@ Intel macOS is buildable with `pnpm run desktop:build:x86_64`. It is not accepta
 ## Ubuntu and Windows
 
 Windows 10/11 is supported as of beta.3 (see `docs/windows-acceptance.md`).
-Ubuntu 24+ has Milestone 1 done — artifact rendering and the backend
-skeleton with manifest gating (see `docs/linux-acceptance.md`) — while the
-full runtime backend is still Milestone 2, at which point `apply` stops
-reporting `runtimeUnavailable`. Each platform keeps its own architecture
+Ubuntu 24+ ships a working runtime: the `LinuxLiveBackend` renders configs,
+spawns both sidecars, and passes the end-to-end backend suite
+(`linux_backend_e2e`); Milestone 1 rendering records remain in
+`docs/linux-acceptance.md` as history, and the install walkthrough is in
+`docs/linux-install.md`. Each platform keeps its own architecture
 design, implementation plan, and acceptance record before this matrix
 claims runtime support.

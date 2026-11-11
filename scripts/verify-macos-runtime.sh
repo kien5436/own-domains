@@ -177,15 +177,15 @@ preflight() {
   for port in 5354 8080 8443 4781; do
     check_listener_absent "$port"
   done
-  [ ! -e /etc/resolver/own ] || die "existing /etc/resolver/own must be removed by the legacy uninstall first"
+  [ ! -e /etc/resolver/own ] || die "existing /etc/resolver/own must be removed by own-domains uninstall first"
   if grep -q '# BEGIN OWN DOMAINS' /etc/pf.conf 2>/dev/null; then
-    die "existing owned PF block must be removed by the legacy uninstall first"
+    die "existing owned PF block must be removed by own-domains uninstall first"
   fi
   record "host" "passed" "no conflicting resolver, PF block, or fixed-port listener"
 
   if [ -n "$LAN_ADDRESS" ] && [ -n "$INTERFACE" ]; then
     FAILED_STEP="setup-preview"
-    run_capture "setup-preview" "$CLI" --state-dir "$STATE_DIR" setup \
+    run_capture "setup-preview" "$CLI" --state-dir "$STATE_DIR" setup --dry-run \
       --lan-address "$LAN_ADDRESS" --interface "$INTERFACE"
     [ -n "$CAPTURED_OUTPUT" ] || die "setup preview produced no output"
   else
@@ -290,7 +290,7 @@ apply() {
   export OWN_DOMAINS_DAEMON="$APP/Contents/MacOS/own-domains-daemon"
 
   preflight
-  run_step "setup-apply" sudo "$CLI" --state-dir "$STATE_DIR" setup --apply \
+  run_step "setup-apply" sudo "$CLI" --state-dir "$STATE_DIR" setup \
     --lan-address "$LAN_ADDRESS" --interface "$INTERFACE"
   run_step "start" "$CLI" --state-dir "$STATE_DIR" start
   wait_for_port 5354
@@ -327,14 +327,14 @@ apply() {
   for port in 5354 8080 8443 4781; do check_port_closed "$port"; done
   check_no_owned_sidecars
 
-  run_step "uninstall" sudo "$CLI" --state-dir "$STATE_DIR" uninstall --apply
+  run_step "uninstall" sudo "$CLI" --state-dir "$STATE_DIR" uninstall
   [ ! -e /etc/resolver/own ] || die "uninstall left /etc/resolver/own in place"
   if grep -q '# BEGIN OWN DOMAINS' /etc/pf.conf 2>/dev/null; then
     die "uninstall left the owned PF block in place"
   fi
   record "restoration" "passed" "resolver and PF ownership removed"
   if [ "$PURGE" -eq 1 ]; then
-    run_step "purge" sudo "$CLI" --state-dir "$STATE_DIR" uninstall --apply --purge
+    run_step "purge" sudo "$CLI" --state-dir "$STATE_DIR" uninstall --purge
     [ ! -e "$STATE_DIR" ] || die "purge left the acceptance state directory in place"
     record "purge" "passed" "acceptance state removed"
   fi

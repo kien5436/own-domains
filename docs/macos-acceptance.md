@@ -282,8 +282,8 @@ If a step fails, keep the JSONL log and command log. The state directory contain
 Preview uninstall before retrying:
 
 ```bash
+own-domains --state-dir "$OWN_DOMAINS_STATE_DIR" uninstall --dry-run
 sudo own-domains --state-dir "$OWN_DOMAINS_STATE_DIR" uninstall
-sudo own-domains --state-dir "$OWN_DOMAINS_STATE_DIR" uninstall --apply
 ```
 
 If setup failed before the install manifest existed, inspect `/etc/resolver/own`, `/etc/pf.conf`, `/etc/pf.anchors/dev.owndomains`, and the trust store; setup rollback should have restored byte-identical files, but the log is authoritative. Never hand-edit PF or trust entries without recording the original contents.

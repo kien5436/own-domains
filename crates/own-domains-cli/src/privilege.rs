@@ -18,7 +18,7 @@ pub fn validate_privileged_setup_identity(
         return Ok(None);
     }
     if effective_user_id != 0 {
-        return Err("setup --apply must run as root through sudo".into());
+        return Err("setup must run as root through sudo".into());
     }
     let user_name = sudo_user
         .filter(|user| {
@@ -27,11 +27,11 @@ pub fn validate_privileged_setup_identity(
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
         })
-        .ok_or_else(|| "setup --apply requires a valid SUDO_USER".to_string())?;
+        .ok_or_else(|| "setup requires a valid SUDO_USER".to_string())?;
     let user_id = sudo_uid
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|user_id| *user_id != 0)
-        .ok_or_else(|| "setup --apply requires a non-root numeric SUDO_UID".to_string())?;
+        .ok_or_else(|| "setup requires a non-root numeric SUDO_UID".to_string())?;
 
     Ok(Some(PrivilegedIdentity {
         user_name: user_name.into(),

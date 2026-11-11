@@ -1,12 +1,16 @@
 # Linux install guide (Ubuntu 24.04 x86_64, GUI + CLI)
 
 This installs the Tauri desktop app (bundled daemon, CLI, and sidecars),
-then runs privileged host setup once. Greenfield installs only; reinstalls
-and upgrades are not covered yet.
+then runs privileged host setup once. Re-running the script updates the app;
+re-run setup only when a new network interface appears.
+
+`scripts/install.sh` performs the build, package install, and host setup in one
+step (see the [README](../README.md#install)). The manual steps below are the
+same flow spelled out for debugging the build on a fresh VM.
 
 ## 1. Build and install the `.deb`
 
-All commands run from the repo root on the Ubuntu VM (`feat/linux-deb`):
+All commands run from the repository root:
 
 ```sh
 # System deps for Tauri v2 (record the exact set that works on 24.04):
@@ -39,13 +43,13 @@ pnpm run sidecars:fetch -- --verify-only
 ```
 
 pnpm run desktop:build:linux
-ls crates/own-domains-desktop/target/release/bundle/deb/
+ls target/x86_64-unknown-linux-gnu/release/bundle/deb/
 ```
 
 Then install:
 
 ```sh
-sudo dpkg -i crates/own-domains-desktop/target/release/bundle/deb/own-domains_0.1.0-beta.3_amd64.deb
+sudo dpkg -i target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
 sudo apt-get install -f   # only if dpkg reports missing dependencies
 ```
 
@@ -64,14 +68,14 @@ ip -brief addr show
 # example: enp3s0 UP 192.168.64.5/24 → interface enp3s0, address 192.168.64.5
 ```
 
-Preview (read-only, no sudo needed), then apply:
+Preview (read-only with `--dry-run`, no sudo needed), then apply:
 
 ```sh
-own-domains setup --lan-address <guest-ip> --interface <iface>
-sudo -E own-domains setup --apply --lan-address <guest-ip> --interface <iface>
+own-domains setup --dry-run --lan-address <guest-ip> --interface <iface>
+sudo -E own-domains setup --lan-address <guest-ip> --interface <iface>
 ```
 
-Re-running `--apply` is idempotent: unchanged artifacts report
+Re-running setup is idempotent: unchanged artifacts report
 `unchanged`, drifted ones are backed up and rewritten.
 
 ## 3. Verify the runtime
@@ -97,7 +101,8 @@ behavior, not a failure.
 Remove host integration first, then the package:
 
 ```sh
-sudo -E own-domains uninstall --apply [--purge]
+own-domains uninstall --dry-run          # preview, no sudo
+sudo -E own-domains uninstall [--purge]
 sudo dpkg -r own-domains
 ```
 

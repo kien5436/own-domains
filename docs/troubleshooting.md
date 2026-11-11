@@ -1,12 +1,12 @@
 # Troubleshooting
 
-> Retired workflow notice: entries mentioning `install.sh`, `pnpm run doctor`, or the TypeScript CLI refer to the removed legacy stack. Host setup and diagnostics now run through the native daemon and the Rust CLI. Device-side steps (phone DNS, CA trust, firewall) still apply.
+Host setup and diagnostics run through the native daemon and the Rust CLI. Device-side steps (phone DNS, CA trust, firewall) are listed below.
 
-- **dnsmasq listener warning after first setup:** open **Network settings**, enter the same Mac LAN address used by `install.sh`, save it, and refresh the dashboard. If the warning remains, run `dig +short @127.0.0.1 healthcheck.own A` and `dig +short @<MAC_LAN_IP> healthcheck.own A`; both must return the Mac LAN address.
-- **Domain does not resolve:** confirm the phone can reach the Mac, uses the Mac as its only Wi-Fi DNS server, and is not on an isolated guest network or overriding DNS through a VPN/private DNS feature.
+- **DNS listener warning after first setup:** open **Network settings**, enter the same LAN address used during setup, save it, and refresh the app. If the warning remains, resolve one of your own names locally and over the LAN with `dig +short @127.0.0.1 <site>.own A` and `dig +short @<LAN_IPv4> <site>.own A`; both must return the LAN address.
+- **Domain does not resolve:** confirm the phone can reach the machine, uses the machine as its only Wi-Fi DNS server, and is not on an isolated guest network or overriding DNS through a VPN/private DNS feature.
 - **502 response:** start the target app on the configured IPv4 loopback port. Some development servers must allow the custom `.own` Host header.
-- **HTTPS warning:** install Caddy's public root certificate on the device and explicitly enable SSL trust. Certificate issuance alone does not establish device trust.
-- **Works on the Mac only:** check firewall access to TCP 80/443 and UDP/TCP 53, then confirm the Mac's LAN address has not changed.
+- **HTTPS warning:** install the public root certificate from `http://setup.own` on the device and explicitly enable SSL trust. Certificate issuance alone does not establish device trust.
+- **Works on the machine only:** check firewall access to TCP 80/443 and UDP/TCP 53, then confirm the LAN address has not changed.
 - **Configuration pending:** keep the previous working route, inspect the reported Caddy or DNS validation error, fix it, and reconcile again.
 
-Run `pnpm run doctor` for a local prerequisite report. Run `./scripts/uninstall.sh --dry-run` to preview reversible removal steps. A `PRESERVE` result means the file changed after installation and must be reviewed manually. Remove the Caddy root certificate separately from every phone or computer where it was trusted; use `./scripts/uninstall.sh --purge` to remove local CA data.
+Run `sudo own-domains doctor` for a prerequisite report (without administrator rights, items it cannot read show as `*Unverifiable`, which is normal). Run `own-domains uninstall --dry-run` to preview reversible removal steps. Remove the root certificate separately from every phone or computer where it was trusted; use `sudo own-domains uninstall --purge` to remove local CA data.

@@ -88,7 +88,7 @@ pub enum CliCommand {
     Doctor,
     Setup {
         #[arg(long)]
-        apply: bool,
+        dry_run: bool,
         #[arg(long)]
         lan_address: String,
         #[cfg_attr(target_os = "macos", arg(long))]
@@ -97,7 +97,7 @@ pub enum CliCommand {
     },
     Uninstall {
         #[arg(long)]
-        apply: bool,
+        dry_run: bool,
         #[arg(long)]
         purge: bool,
     },
@@ -139,15 +139,15 @@ pub fn execute(cli: Cli) -> CommandOutput {
         }
     };
     if let CliCommand::Setup {
-        apply,
+        dry_run,
         lan_address,
         interface,
     } = &cli.command
     {
-        return execute_setup(*apply, &state_dir, lan_address, interface);
+        return execute_setup(!*dry_run, &state_dir, lan_address, interface);
     }
-    if let CliCommand::Uninstall { apply, purge } = &cli.command {
-        return execute_uninstall(*apply, *purge, &state_dir);
+    if let CliCommand::Uninstall { dry_run, purge } = &cli.command {
+        return execute_uninstall(!*dry_run, *purge, &state_dir);
     }
     let endpoint = match (&cli.socket, &cli.pipe) {
         (Some(_), Some(_)) => return CommandOutput::error(2, "use either --socket or --pipe"),
@@ -251,11 +251,11 @@ fn execute_setup(
     }
     #[cfg(target_os = "windows")]
     if apply && !crate::platform::windows::is_elevated() {
-        return CommandOutput::error(2, "setup --apply must run from an elevated prompt");
+        return CommandOutput::error(2, "setup must run from an elevated prompt");
     }
     #[cfg(target_os = "linux")]
     if apply && !crate::platform::linux::is_root() {
-        return CommandOutput::error(2, "setup --apply must run as root through sudo");
+        return CommandOutput::error(2, "setup must run as root through sudo");
     }
     #[cfg(target_os = "macos")]
     let (_, identity) = match setup_user(apply) {
@@ -264,7 +264,7 @@ fn execute_setup(
     };
     #[cfg(target_os = "macos")]
     if apply && identity.is_none() {
-        return CommandOutput::error(2, "setup --apply must run as root through sudo");
+        return CommandOutput::error(2, "setup must run as root through sudo");
     }
     let request = SetupRequest {
         state_directory: state_directory.to_path_buf(),
@@ -289,15 +289,15 @@ fn execute_uninstall(apply: bool, purge: bool, state_directory: &Path) -> Comman
         return CommandOutput::error(3, "macOS host uninstall is unsupported on this platform");
     }
     if purge && !apply {
-        return CommandOutput::error(2, "uninstall --purge requires --apply");
+        return CommandOutput::error(2, "uninstall --purge cannot run with --dry-run");
     }
     #[cfg(target_os = "windows")]
     if apply && !crate::platform::windows::is_elevated() {
-        return CommandOutput::error(2, "uninstall --apply must run from an elevated prompt");
+        return CommandOutput::error(2, "uninstall must run from an elevated prompt");
     }
     #[cfg(target_os = "linux")]
     if apply && !crate::platform::linux::is_root() {
-        return CommandOutput::error(2, "uninstall --apply must run as root through sudo");
+        return CommandOutput::error(2, "uninstall must run as root through sudo");
     }
     #[cfg(target_os = "macos")]
     let (_, identity) = match setup_user(apply) {
@@ -306,7 +306,7 @@ fn execute_uninstall(apply: bool, purge: bool, state_directory: &Path) -> Comman
     };
     #[cfg(target_os = "macos")]
     if apply && identity.is_none() {
-        return CommandOutput::error(2, "uninstall --apply must run as root through sudo");
+        return CommandOutput::error(2, "uninstall must run as root through sudo");
     }
     let request = UninstallRequest {
         state_directory: state_directory.to_path_buf(),

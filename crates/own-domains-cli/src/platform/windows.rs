@@ -2,7 +2,7 @@
 //!
 //! `fltmc` without arguments exits zero only for elevated callers and ships
 //! with every Windows install, so no new dependency is needed to gate
-//! `--apply` on elevation.
+//! privileged setup and uninstall on elevation.
 
 use std::path::{Path, PathBuf};
 

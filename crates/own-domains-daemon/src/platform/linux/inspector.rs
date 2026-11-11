@@ -157,7 +157,7 @@ impl LinuxHostInspector {
             code: code.into(),
             status: DiagnosticStatus::Error,
             message,
-            remedy: Some("re-run setup --apply to repair the host integration".into()),
+            remedy: Some("re-run setup to repair the host integration".into()),
         }
     }
 
@@ -320,7 +320,7 @@ impl LinuxHostInspector {
                     diagnostics.push(Self::error(
                         "interfaceCoverageMissing",
                         format!(
-                            "{} serves {} but is not covered; re-run setup --apply",
+                            "{} serves {} but is not covered; re-run setup",
                             item.name, settings.lan_address,
                         ),
                     ));

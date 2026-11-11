@@ -87,17 +87,51 @@ fn parses_complete_command_surface() {
     .unwrap();
     assert!(matches!(
         setup.command,
-        CliCommand::Setup { apply: false, .. }
+        CliCommand::Setup { dry_run: false, .. }
     ));
-    let uninstall =
-        Cli::try_parse_from(["own-domains", "uninstall", "--apply", "--purge"]).unwrap();
+    let setup_preview = Cli::try_parse_from([
+        "own-domains",
+        "setup",
+        "--dry-run",
+        "--lan-address",
+        "192.168.1.20",
+        "--interface",
+        "en0",
+    ])
+    .unwrap();
+    assert!(matches!(
+        setup_preview.command,
+        CliCommand::Setup { dry_run: true, .. }
+    ));
+    let uninstall = Cli::try_parse_from(["own-domains", "uninstall", "--purge"]).unwrap();
     assert!(matches!(
         uninstall.command,
         CliCommand::Uninstall {
-            apply: true,
+            dry_run: false,
             purge: true
         }
     ));
+    let uninstall_preview = Cli::try_parse_from(["own-domains", "uninstall", "--dry-run"]).unwrap();
+    assert!(matches!(
+        uninstall_preview.command,
+        CliCommand::Uninstall {
+            dry_run: true,
+            purge: false
+        }
+    ));
+    assert!(
+        Cli::try_parse_from([
+            "own-domains",
+            "setup",
+            "--apply",
+            "--lan-address",
+            "192.168.1.20",
+            "--interface",
+            "en0"
+        ])
+        .is_err()
+    );
+    assert!(Cli::try_parse_from(["own-domains", "uninstall", "--apply"]).is_err());
 }
 
 #[test]

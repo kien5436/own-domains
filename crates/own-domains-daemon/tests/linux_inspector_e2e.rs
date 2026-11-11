@@ -8,7 +8,7 @@
 //!     OWN_DOMAINS_TEST_STATE_DIR=<state dir setup used> \
 //!     cargo test -p own-domains-daemon --test linux_inspector_e2e
 //!
-//! The state dir must be the one `setup --apply` wrote (default or the
+//! The state dir must be the one `setup` wrote (default or the
 //! explicit `--state-dir`); setup persists the selected LAN address there,
 //! so no LAN env var is needed.
 

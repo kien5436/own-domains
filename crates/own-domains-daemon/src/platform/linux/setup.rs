@@ -830,7 +830,7 @@ impl HostInstaller for LinuxHostInstaller {
         // apply a no-op (every artifact matches); preflight always runs.
         if !self.is_root()? {
             return Err(SetupFailure::new(
-                "Linux setup --apply must run as root through sudo",
+                "Linux setup must run as root through sudo",
             ));
         }
         // Target user for the nftables owner match and the manifest.

@@ -1,102 +1,162 @@
 # Own Domains
 
-Own Domains registers private `.own` hostnames for web applications running on your Mac. It provides a React dashboard, dnsmasq DNS, Caddy reverse proxying, optional local HTTPS, and access from devices on the same network.
+Own Domains gives your computer private `.own` web addresses (like `my-site.own`) for the apps you build. It runs a small DNS server and a web proxy on your machine, so browsers on your computer — and phones on the same Wi-Fi — can open your local projects by name, with optional HTTPS.
 
-The native Tauri client and Rust CLI are documented in [Desktop development](docs/desktop.md) and [Native CLI](docs/cli.md). The first macOS beta can activate bundled CoreDNS and Caddy after privileged setup on Apple silicon macOS 15+. Ad-hoc-signed arm64 acceptance and physical-phone checks passed on 2026-10-22; Developer ID signing and notarization remain distribution work. Intel macOS is buildable but not acceptance-required. Ubuntu 24+ and Windows 10/11 are support targets whose runtime adapters are not implemented, so the native runtime reports `runtimeUnavailable` there. The legacy TypeScript runtime remains available for existing installations.
+## Contents
 
-## Platform support
+- [Supported platforms](#supported-platforms)
+- [Requirements](#requirements)
+- [Prerequisites](#prerequisites)
+- [Install](#install)
+- [Use on your computer](#use-on-your-computer)
+- [Use on your phone](#use-on-your-phone)
+- [Update and uninstall](#update-and-uninstall)
+- [Troubleshooting](#troubleshooting)
+- [Learn more](#learn-more)
 
-| Platform | Native runtime status |
+## Supported platforms
+
+| Platform | Status |
 | --- | --- |
-| Apple silicon macOS 15+ | Native beta; implemented |
-| Intel macOS 15+ | Buildable; not acceptance-required |
-| Ubuntu 24+ | Support target; runtime not implemented |
-| Windows 10/11 | Support target; IPC and runtime not implemented |
+| Apple silicon macOS 15+ | Native beta, fully working |
+| Intel macOS 15+ | Builds; not acceptance-tested |
+| Windows 10/11 (x64) | Beta (`beta.3` NSIS installer) |
+| Ubuntu 24+ | Working native runtime (`.deb` + `setup`) |
 
-`v0.1.0-beta.2` is a source release. No Developer ID-signed or notarized binary is published. Local acceptance uses an ad-hoc-signed arm64 package and does not require an Apple Developer Program account. Developer ID signing and notarization are required only for distribution. See [Platform support](docs/platform-support.md) for the full matrix.
-
-## Native macOS beta
-
-The native client packages pinned CoreDNS and Caddy sidecars, verifies their digests, and resolves them from the app bundle. A one-time privileged setup installs the `.own` resolver, a dedicated PF anchor, and the Caddy root certificate. Setup covers every eligible LAN interface present at that time, including interfaces without a current IPv4 address, and writes dynamic `(if:0)` PF rules. Changing the selected LAN address or switching between covered interfaces needs no administrator access; adding a previously absent hardware interface may require one more setup. The install manifest stores covered interface names but no LAN address. An existing schema 1 setup is migrated by running setup once. The [macOS acceptance gate](docs/macos-acceptance.md) passed for an ad-hoc-signed arm64 package, including automated routing, GUI lifecycle, and physical-phone checks. Do not remove the legacy source or its migration/uninstall support while beta users still depend on it.
+Local testing uses an ad-hoc-signed macOS app; no paid Apple Developer account is needed. Signed, notarized releases are distribution work only. See `docs/platform-support.md` for the full matrix.
 
 ## Requirements
 
-- macOS 15+; Apple silicon is required for native acceptance, while Intel is buildable
-- [Homebrew](https://brew.sh/) for the legacy runtime
-- A reserved LAN IPv4 address for the Mac
-- Ports 53, 80, and 443 available on that address
+- A reserved LAN IPv4 address for your machine, so it does not change.
+- Ports 53 (DNS), 80 (HTTP), and 443 (HTTPS) free on that address.
+- Your phone and computer on the same Wi-Fi (only needed for phone access).
+- Administrator access, one time, for the network setup step.
 
-Install the required tools:
+## Prerequisites
 
-```bash
-brew install node pnpm caddy dnsmasq
+Building from source needs:
+
+- [Rust](https://www.rust-lang.org/tools/install) 1.90 or newer
+- [pnpm](https://pnpm.io/installation) with Node.js
+- [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/) for your system (Ubuntu also needs GTK 3, WebKitGTK 4.1, and AppIndicator dev libraries)
+
+The installer runs `pnpm install` for you. Full build details, sidecar fetching, and per-architecture commands are in `docs/desktop.md`; Ubuntu specifics are in `docs/linux-install.md`.
+
+## Install
+
+Run the installer from the repository root with your machine's reserved LAN IPv4 address:
+
+```sh
+# macOS (interface required, usually en0 for Wi-Fi)
+./scripts/install.sh --interface=en0 <LAN_IPv4>
+
+# Ubuntu (interface may be omitted; all interfaces are then covered)
+./scripts/install.sh <LAN_IPv4>
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 <LAN_IPv4>
 ```
 
-## Installation
+The script installs dependencies, builds the desktop app and CLI, installs the app (`/Applications/Own Domains.app` on macOS, the `.deb` package on Ubuntu, the per-user NSIS installer on Windows), previews the host setup, and then applies it once. On macOS and Ubuntu that means `sudo`; on Windows it means one UAC elevation. That setup installs the `.own` resolver rule, firewall entries, and the local root certificate. Everything else — builds, previews, and running the app — stays unprivileged.
 
-The commands in this section install the legacy TypeScript runtime. Native desktop development and acceptance are documented in [Desktop development](docs/desktop.md).
+Preview without changing the system (builds only the CLI, no elevation):
 
-Clone the repository, then run the installer with the Mac's LAN address:
-
-```bash
-git clone <repository-url>
-cd domains
-./scripts/install.sh 192.168.1.20
+```sh
+./scripts/install.sh --dry-run --interface=en0 <LAN_IPv4>
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -DryRun <LAN_IPv4>
 ```
 
-Find the address with `ipconfig getifaddr en0` or, when needed, `ipconfig getifaddr en1`. The script installs locked dependencies, builds the dashboard, previews system changes, and requests administrator approval before installing launchd services.
+Re-running setup is only needed when a new network interface appears; changing the LAN address afterwards does not need administrator access.
 
-After installation:
+Check everything is healthy:
 
-1. Open `http://registry.own`.
-2. Under **Network settings**, enter the same LAN address passed to `install.sh`.
-3. Keep or change the upstream DNS addresses, then click **Save network settings**.
-4. Refresh the dashboard and confirm that the LAN address and dnsmasq checks are healthy.
+```sh
+own-domains status
+sudo own-domains doctor
+```
 
-Use `pnpm doctor` to check prerequisites.
+`doctor` run without administrator shows `*Unverifiable` warnings for items it cannot read — that is normal, not a failure.
 
-## Register and Run a Website
+## Use on your computer
 
-Start the website on an IPv4 loopback port, for example:
+**With the app:** open Own Domains, add a site (for example `my-site.own`, port `3000`), and choose **Start**. Open `http://my-site.own` in your browser.
 
-```bash
-cd ~/projects/my-site
+**With the command line:**
+
+```sh
+own-domains add my-site.own --port 3000 --revision 0
+own-domains start
+own-domains status
+own-domains list
+```
+
+Use the revision number shown by `status` for every change (`edit`, `enable`, `disable`, `remove`). Add `--https` when registering if you want `https://my-site.own`. The app you are building must be running on that port on your computer, for example:
+
+```sh
 pnpm dev -- --host 127.0.0.1 --port 3000
 ```
 
-Open `http://registry.own`, register `my-site.own` with port `3000`, and choose whether to enable HTTPS. Then visit `http://my-site.own` or `https://my-site.own`. The app must remain running on the registered port and accept the custom Host header.
+Some dev servers need to allow the custom `.own` Host header.
 
-## Phone Access and HTTPS
+Stop routing any time with `own-domains stop` or the **Stop** button. The app's settings live in the platform folder (`~/Library/Application Support/OwnDomains` on macOS, `%LOCALAPPDATA%\OwnDomains` on Windows, `~/.local/state/own-domains` on Linux); pass the same `--state-dir` to the app and CLI if you use a custom one.
 
-Connect the phone to the same Wi-Fi and set its DNS server to the Mac's LAN address. Disable conflicting VPN/private DNS handling or configure `.own` as a local-domain fallback. Visit `http://setup.own` to download the iOS profile or root certificate. On iOS, install the profile and enable it under **Settings → General → About → Certificate Trust Settings**.
+## Use on your phone
 
-## Removal
+Your phone must be on the same Wi-Fi as your computer. Point the phone's Wi-Fi DNS at your computer's LAN address, then open `http://setup.own` on the phone to install the profile/certificate and enable trust. See `docs/setup.md` for the per-system steps.
 
-Preview removal, then uninstall the services and managed files:
+If `.own` names stop working on the phone, switch its DNS back to automatic.
 
-```bash
-./scripts/uninstall.sh --dry-run
+## Update and uninstall
+
+To update, re-run the install script with the same LAN address and interface (the Windows script takes the same address), then open the app.
+
+To remove the host setup and the installed app (settings are kept for a later reinstall):
+
+```sh
+# macOS / Ubuntu
 ./scripts/uninstall.sh
+
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1
 ```
 
-For a clean first-run test, also erase saved mappings, backups, and the local Caddy CA:
+To also delete settings, backups, logs, and the local certificate authority:
 
-```bash
+```sh
+# macOS / Ubuntu
 ./scripts/uninstall.sh --purge
+
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 -Purge
 ```
 
-Uninstall is best-effort: independent cleanup steps continue after an error, every failure is reported, and the script returns a nonzero status at the end if anything failed. Trusted certificates installed on phones or other computers must be removed manually on those devices.
+Preview the removal without changing anything (no elevation):
+
+```sh
+# macOS / Ubuntu
+./scripts/uninstall.sh --dry-run
+
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 -DryRun
+```
+
+Certificates you trusted on phones or other computers must be removed on those devices by hand.
 
 ## Troubleshooting
 
-If the dashboard says **dnsmasq is not listening on the required port 53 addresses** immediately after installation, first check **Network settings**. Enter the Mac LAN address used during installation, save it, and refresh the page. The dashboard cannot run its LAN DNS probe until this value is saved.
+- **Dashboard says DNS is not listening:** open Network settings in the app, enter the same LAN address used during setup, save, and refresh.
+- **Site does not resolve:** the computer and phone must be on the same Wi-Fi, the phone must use only your computer as its DNS, and no VPN or private-DNS feature may override it.
+- **`502` error:** start your app on the registered port and let it accept the `.own` Host header.
+- **HTTPS warning on a device:** install the root certificate from `http://setup.own` and explicitly enable trust for it.
+- **Works on the computer but not the phone:** allow ports 53, 80, 443 through the computer firewall and check the LAN address has not changed.
+- **Still stuck:** run `sudo own-domains doctor` and read `docs/troubleshooting.md`.
 
-If the warning remains, run:
+## Learn more
 
-```bash
-pnpm doctor
-dig +short @127.0.0.1 healthcheck.own A
-dig +short @<MAC_LAN_IP> healthcheck.own A
-```
-
-Both `dig` commands should return the Mac LAN address. If they do not, rerun `./scripts/install.sh <MAC_LAN_IP>` to validate the configuration and restart the managed services.
+- `docs/setup.md` — setup details and phone DNS steps
+- `docs/troubleshooting.md` — full problem list
+- `docs/desktop.md` — building and developing the desktop app
+- `docs/cli.md` — every CLI command, flags, and exit codes
+- `docs/platform-support.md` — platform matrix and signing policy
+- `docs/linux-install.md` — Ubuntu install walkthrough
+- `docs/macos-acceptance.md`, `docs/windows-acceptance.md` — acceptance records

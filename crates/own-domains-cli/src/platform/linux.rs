@@ -1,6 +1,6 @@
 //! Linux CLI platform: live installer delegation and root gating.
 //!
-//! `sudo` is the only privileged path: `--apply` requires euid 0, and the
+//! `sudo` is the only privileged path: applying setup requires euid 0, and the
 //! installer resolves the target user from `SUDO_USER`/`SUDO_UID` itself.
 //! SSH sessions are fine — root writes system paths either way.
 
